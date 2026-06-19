@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    Shared MSBuild properties applied to EVERY project in this repository.
+    Keep cross-target-framework friendly: projects here target netstandard2.0,
+    net8.0 and net48, so do not put TFM-specific settings in this file.
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Prototype: do not fail the build on warnings while we iterate. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Pure abstractions + DTOs. No Tekla, no MCP, no I/O.
+    Targets netstandard2.0 so BOTH the net8.0 (macOS dev) and net48 (Windows + Tekla)
+    builds can reference it.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>TeklaMcp.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

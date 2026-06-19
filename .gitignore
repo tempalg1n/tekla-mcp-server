@@ -1,0 +1,43 @@
+# ---- .NET ----
+bin/
+obj/
+out/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+project.lock.json
+artifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+!**/packages/build/
+
+# Rider / VS Code
+.idea/
+.vscode/
+*.DotSettings.user
+
+# MSBuild binary logs
+*.binlog
+
+# ---- Claude Code (local, per-machine) ----
+.claude/settings.local.json
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- Tekla (never commit model data or licenses) ----
+*.db1
+*.db2
+*.model/
+TeklaStructuresModels/

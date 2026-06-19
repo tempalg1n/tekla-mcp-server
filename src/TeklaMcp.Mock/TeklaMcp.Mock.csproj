@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cross-platform fake implementation of ITeklaModelService.
+    netstandard2.0 so it works in BOTH the net8.0 (macOS) and net48 (Windows) builds.
+    Lets you run and exercise the whole MCP server without Tekla installed.
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>TeklaMcp.Mock</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TeklaMcp.Core\TeklaMcp.Core.csproj" />
+  </ItemGroup>
+
+</Project>
