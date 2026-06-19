@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-19
+
+Patch release focused on improving `tekla_select_objects` usability for agent workflows.
+
+### Added
+
+- `tekla_select_objects` now accepts `guidIn` (comma/semicolon/newline separated list of GUIDs) for explicit object allow-list selection
+
+### Changed
+
+- `tekla_select_objects` description now explicitly documents UDA/attribute-capable filtering
+- Object query pipeline in both Mock and Tekla backends now honors GUID allow-list filtering, enabling deterministic selection passes after discovery
+
 ## [0.2.0] - 2026-06-19
 
 Major MCP capability expansion focused on attribute discoverability, spatial context, and profile connection analytics.
@@ -86,7 +99,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tempalg1n/tekla-mcp-server/releases/tag/v0.1.0

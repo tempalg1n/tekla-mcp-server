@@ -75,6 +75,11 @@ public sealed class MockTeklaModelService : ITeklaModelService
     public IReadOnlyList<ModelObjectInfo> FindObjects(ObjectQuery query, int? limit = null)
     {
         IEnumerable<ModelObjectInfo> q = _objects;
+        if (query.GuidIn != null && query.GuidIn.Count > 0)
+        {
+            var guidSet = new HashSet<string>(query.GuidIn.Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
+            q = q.Where(o => guidSet.Contains(o.Guid));
+        }
         if (!string.IsNullOrWhiteSpace(query.Type)) q = q.Where(o => Eq(o.Type, query.Type));
         if (!string.IsNullOrWhiteSpace(query.Class)) q = q.Where(o => Eq(o.Class, query.Class));
         if (!string.IsNullOrWhiteSpace(query.Profile)) q = q.Where(o => Contains(o.Profile, query.Profile));

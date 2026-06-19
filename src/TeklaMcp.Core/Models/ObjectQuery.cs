@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace TeklaMcp.Core.Models;
 
 /// <summary>
@@ -38,4 +40,9 @@ public sealed class ObjectQuery
 
     /// <summary>Substring attribute value match (case-insensitive).</summary>
     public string? AttributeContains { get; set; }
+
+    /// <summary>
+    /// Optional explicit GUID allow-list. When provided, only objects from this list are matched.
+    /// </summary>
+    public List<string> GuidIn { get; set; } = new List<string>();
 }

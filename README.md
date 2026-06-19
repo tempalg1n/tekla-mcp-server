@@ -103,7 +103,7 @@ All tools use the `tekla_` prefix.
 | `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`). |
 | `tekla_list_distinct_values` | Distinct values for a field with count + weight. |
 | `tekla_analyze_profile_connections` | Estimate unique connection/node types for members of a profile. |
-| `tekla_select_objects` | Select matching objects in the Tekla UI; returns `selectedCount` + preview. |
+| `tekla_select_objects` | Select matching objects in the Tekla UI; supports UDA/attribute filters and `guidIn`; returns `selectedCount` + preview. |
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
 | `tekla_set_udas_by_filter` | Bulk UDA update by filter (`apply=false` by default). |
@@ -119,6 +119,7 @@ Most query and analytics tools accept:
 - `nameContains` — name substring
 - `udaName` + `udaEquals` — exact UDA match
 - `attributeName` + `attributeEquals` / `attributeContains` — exact/substring match for any known attribute
+- `guidIn` — explicit GUID allow-list (for `tekla_select_objects`)
 
 ### Example prompts
 

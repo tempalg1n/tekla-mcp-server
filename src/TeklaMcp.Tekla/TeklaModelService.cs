@@ -511,6 +511,9 @@ public sealed class TeklaModelService : ITeklaModelService
 
     private static bool Matches(ModelObjectInfo o, ObjectQuery q)
     {
+        if (q.GuidIn != null && q.GuidIn.Count > 0 &&
+            !q.GuidIn.Exists(g => string.Equals(g, o.Guid, StringComparison.OrdinalIgnoreCase)))
+            return false;
         if (!string.IsNullOrWhiteSpace(q.Type) &&
             !string.Equals(o.Type, q.Type, StringComparison.OrdinalIgnoreCase)) return false;
         if (!string.IsNullOrWhiteSpace(q.Class) &&

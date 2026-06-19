@@ -116,7 +116,7 @@ public static class ModelWorkflowTools
         => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, limit);
 
     [McpServerTool(Name = "tekla_select_objects")]
-    [Description("Select objects in Tekla UI by filters and return selected count + preview.")]
+    [Description("Select objects in Tekla UI by filters (including UDA/attribute filters or explicit GUID list) and return selected count + preview.")]
     public static SelectionResult SelectObjects(
         ITeklaModelService model,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
@@ -129,8 +129,9 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Optional GUID list (comma/semicolon/newline separated). If set, only these GUIDs are considered.")] string? guidIn = null,
         [Description("Safety limit for selected objects. Default 2000.")] int limit = 2000)
-        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains), limit);
+        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, ParseList(guidIn)), limit);
 
     private static ObjectQuery BuildQuery(
         string? type,
@@ -142,7 +143,8 @@ public static class ModelWorkflowTools
         string? udaEquals = null,
         string? attributeName = null,
         string? attributeEquals = null,
-        string? attributeContains = null) =>
+        string? attributeContains = null,
+        IReadOnlyList<string>? guidIn = null) =>
         new ObjectQuery
         {
             Type = type,
@@ -155,7 +157,21 @@ public static class ModelWorkflowTools
             AttributeName = attributeName,
             AttributeEquals = attributeEquals,
             AttributeContains = attributeContains,
+            GuidIn = guidIn is null ? new List<string>() : guidIn.ToList(),
         };
+
+    private static IReadOnlyList<string>? ParseList(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var parts = raw!.Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        var result = new List<string>();
+        foreach (var part in parts)
+        {
+            var trimmed = part.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed)) result.Add(trimmed);
+        }
+        return result;
+    }
 
     private static string GetGroupKey(ModelObjectInfo obj, string groupBy)
     {
