@@ -7,13 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-19
+
+Recommended public release. Adds open-source documentation and project polish that were not included in v0.1.0.
+
 ### Added
-- GitHub Actions CI and automated release workflow
-- Issue and pull request templates
+
+- MIT [LICENSE](LICENSE)
+- [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/releasing.md](docs/releasing.md)
+- English [README.md](README.md) as the primary documentation
+- Russian [README.ru.md](README.ru.md) as a secondary translation
+- CI status badge in README
+
+### Changed
+
+- Rewrote project documentation for GitHub open-source audience
+- [AGENTS.md](AGENTS.md), [docs/architecture.md](docs/architecture.md), and [docs/tekla-api-notes.md](docs/tekla-api-notes.md) cleaned up and aligned with public release
+- Updated `.csproj` comments to remove internal dev-machine references
+
+### Removed
+
+- `TeklaMcp.Mac.slnf` (platform-specific solution filter no longer needed in public docs)
 
 ## [0.1.0] - 2026-06-19
 
-First public release. Verified on Windows with Tekla Structures 2023.
+Initial tagged release. Core MCP server and release automation.
 
 ### Added
 
@@ -37,10 +55,11 @@ First public release. Verified on Windows with Tekla Structures 2023.
 - Multi-target server: `net8.0` (mock, no Tekla) and `net48` (live Tekla on Windows)
 - MCP stdio transport via the official C# SDK
 
-**Documentation:**
+**Release infrastructure:**
 
-- README (English) and README.ru.md (Russian)
-- Architecture and Tekla API notes
+- GitHub Actions CI and automated release workflow
+- Issue and pull request templates
+- `CHANGELOG.md` and release notes template
 
 ### Notes
 
@@ -48,5 +67,6 @@ First public release. Verified on Windows with Tekla Structures 2023.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tempalg1n/tekla-mcp-server/releases/tag/v0.1.0
