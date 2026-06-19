@@ -1,0 +1,79 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please fill in what you can — Tekla version and steps to reproduce help the most.
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - Live Tekla (net48 / Windows)
+        - Mock (net8.0 / no Tekla)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: tekla-version
+    attributes:
+      label: Tekla Structures version
+      placeholder: e.g. 2023, 2024, 2026
+    validations:
+      required: false
+
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version
+      description: Release tag, commit hash, or "main branch"
+      placeholder: e.g. v0.1.0
+    validations:
+      required: false
+
+  - type: input
+    id: dotnet-version
+    attributes:
+      label: .NET SDK / runtime version
+      placeholder: output of `dotnet --version`
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Tekla with model X
+        2. Configure MCP client with ...
+        3. Call tekla_find_objects with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error messages
+      description: MCP client logs or stderr from the server process (not stdout — that is MCP protocol traffic)
+      render: shell
+    validations:
+      required: false

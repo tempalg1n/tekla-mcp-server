@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/tempalg1n/tekla-mcp-server#readme
+    about: README, architecture, and tool reference
+  - name: Releasing guide
+    url: https://github.com/tempalg1n/tekla-mcp-server/blob/main/docs/releasing.md
+    about: How to create versions and attach release binaries

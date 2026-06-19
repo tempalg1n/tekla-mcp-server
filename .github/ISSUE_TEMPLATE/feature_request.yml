@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a new MCP tool or capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the workflow you want to enable. New tools should follow the `tekla_<verb>_<noun>` naming convention.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do in Tekla with an AI assistant?
+      placeholder: e.g. "I need to list all bolts in an assembly and sum their weights"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Optional tool name, parameters, or example prompt
+      placeholder: e.g. "Add tekla_list_bolts with filter by assembly GUID"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: mutating
+    attributes:
+      label: Would this modify the Tekla model?
+      options:
+        - "No — read-only"
+        - "Yes — write/update"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for duplicates
+          required: true
