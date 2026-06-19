@@ -1,80 +1,60 @@
-# Заметки по Tekla Open API + чек-лист проверки
+# Tekla Open API notes
 
-Здесь собрано то, что известно про Tekla Open API на момент создания каркаса, и
-**что обязательно проверить на Windows-машине**. Когда проверишь/поправишь пункт —
-отметь его и впиши результат, чтобы следующий агент не копал заново.
+Technical reference for Tekla Open API usage in this project.
 
-Официальная справка: https://developer.tekla.com/doc/tekla-structures/2026/tekla-structures-64304
+Official documentation: https://developer.tekla.com/doc/tekla-structures/2026/tekla-structures-64304
 
-## Факты про Tekla 2026 (подтверждено в докладах/релиз-нотах)
+## Tekla 2026 API facts
 
-- API-сборки таргетят **.NET Framework 4.8 / .NET Standard 2.0**.
-- Поддерживаются **только x64** расширения (новое в 2026).
-- **COM-поддержка убрана** из Open API сборок; сборки **больше не регистрируются в GAC**.
-- Идёт постепенный переход с .NET Framework на современный .NET (начат в 2024) — в
-  будущем, возможно, заработает и под `net8.0`. Пока ориентируемся на `net48`.
-- Есть **NuGet-пакеты**: `Tekla.Structures`, `Tekla.Structures.Model`,
-  `Tekla.Structures.Plugins` и др., версии вида `2026.0.x`.
+- API assemblies target **.NET Framework 4.8 / .NET Standard 2.0**.
+- **x64 only** for extensions (new in Tekla 2026).
+- **COM support removed** from Open API assemblies; assemblies are **no longer GAC-registered**.
+- Gradual migration from .NET Framework to modern .NET started in 2024; this project
+  currently targets **`net48`** for live Tekla integration.
+- NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`, `Tekla.Structures.Plugins`,
+  etc., with versions like `2026.0.x` (project currently pins `2023.0.0` for tested environments).
 
-## Модель подключения (важно)
+## Connection model
 
-Сервер — **standalone-процесс**, который подключается к **уже запущенной** Tekla с
-открытой моделью. Связь устанавливает `new Tekla.Structures.Model.Model()`, статус —
-`model.GetConnectionStatus()`. Это НЕ плагин внутри Tekla (плагин — другой сценарий,
-`Tekla.Structures.Plugins`).
+The server is a **standalone process** that connects to an **already running** Tekla instance
+with an open model. Connection is established via `new Tekla.Structures.Model.Model()` and
+checked with `model.GetConnectionStatus()`. This is not an in-process Tekla plugin (that
+would use `Tekla.Structures.Plugins`).
 
-## Что использовано в `TeklaModelService.cs` — и что проверено
+## APIs used in `TeklaModelService.cs`
 
-Проверено на Windows + Tekla 2023 (см. журнал ниже):
+| Area | API | Status |
+|---|---|---|
+| Connection | `new TSM.Model()` + `GetConnectionStatus()` | Verified (Tekla 2023) |
+| Model info | `model.GetInfo()` → `ModelInfo.ModelName`, `ModelPath` | Verified |
+| Enumeration | `GetModelObjectSelector().GetAllObjects()` | Verified |
+| Parts | Cast `mo is TSM.Part`; read `Name`, `Class`, `Profile`, `Material`, `Finish` | Verified |
+| Identifiers | `part.Identifier.ID`, `part.Identifier.GUID` | Verified |
+| Report props | `GetReportProperty("WEIGHT"`, `"LENGTH"`, `"ASSEMBLY_POS"`, …) | Verified; confirm units per template |
+| Lookup by GUID | `new Identifier(guid)` + `SelectModelObject(identifier)` | Verified |
+| UI selection read | `Model.UI.ModelObjectSelector().GetSelectedObjects()` | Verified |
+| UI selection write | `ModelObjectSelector.Select(ArrayList)` | Verified |
+| UDA read | `GetUserProperty(name, ref …)` | Implemented; verify on your template |
+| UDA write | `SetUserProperty` + `Modify()` | Implemented; verify on your template |
 
-- [x] `new TSM.Model()` + `model.GetConnectionStatus()` → bool — базовое подключение.
-- [x] `model.GetInfo()` → `ModelInfo`; поля `.ModelName`, `.ModelPath`.
-      Проверить точные имена полей.
-- [x] `model.GetModelObjectSelector().GetAllObjects()` → `ModelObjectEnumerator`;
-      перебор через `while (en.MoveNext()) { var mo = en.Current; }`.
-- [x] Каст `mo is TSM.Part part` для деталей. У `Part`: `.Name`, `.Class` (string),
-      `.Profile.ProfileString`, `.Material.MaterialString`, `.Finish`.
-- [x] `part.Identifier.ID` (int) и `part.Identifier.GUID` (System.Guid).
-- [x] Report-свойства: `part.GetReportProperty("WEIGHT", ref double)`,
-      `"LENGTH"` (ref double), `"ASSEMBLY_POS"` (ref string).
-      **Проверить имена свойств и единицы** (вес — кг? длина — мм?).
-- [x] Поиск по GUID: `new Tekla.Structures.Identifier(guid)` +
-      `model.SelectModelObject(identifier)`. Уточнить сигнатуру/наличие метода.
-- [x] Выделение в UI: `new Tekla.Structures.Model.UI.ModelObjectSelector()` +
-      `.GetSelectedObjects()` → `ModelObjectEnumerator`.
-- [x] Программное выделение в UI: `ModelObjectSelector.Select(ArrayList)` (добавлен `tekla_select_objects`).
-- [ ] UDA-чтение: `GetUserProperty(name, ref string/int/double)` на нужных UDA вашего шаблона.
-- [ ] UDA-запись: `SetUserProperty(name, value)` + `Modify()` на объектах нужных типов.
+### Useful report properties
 
-### Полезные report-свойства (для будущих инструментов)
-`WEIGHT`, `WEIGHT_NET`, `LENGTH`, `HEIGHT`, `WIDTH`, `AREA`, `VOLUME`,
-`PROFILE`, `MATERIAL`, `CLASS`, `NAME`, `ASSEMBLY_POS`, `PART_POS`, `PHASE`.
-Полный список — в справке Tekla (раздел Template/Report properties).
+`WEIGHT`, `WEIGHT_NET`, `LENGTH`, `HEIGHT`, `WIDTH`, `AREA`, `VOLUME`, `PROFILE`, `MATERIAL`,
+`CLASS`, `NAME`, `ASSEMBLY_POS`, `PART_POS`, `PHASE`. Full list in Tekla documentation
+(Template/Report properties section).
 
-## Сборка под Windows: окружение
+## Windows build environment
 
-- Windows x64; **Tekla Structures** установлена и **открыта с моделью**.
-- **.NET SDK 8+** и **.NET Framework 4.8 Developer Pack** (targeting pack).
-- Версии NuGet `Tekla.Structures.*` должны совпадать с установленной Tekla
-  (сейчас в csproj стоит `2023.0.0` под проверенное окружение). Альтернатива NuGet —
-  локальные `<Reference>` с `<HintPath>` на `...\Tekla Structures\...\bin\*.dll`.
+- Windows x64; Tekla Structures installed and running with a model open.
+- .NET SDK 8+ and .NET Framework 4.8 Developer Pack.
+- `Tekla.Structures.*` NuGet versions should match the installed Tekla version, or use
+  local `<Reference>` with `<HintPath>` to Tekla installation DLLs.
 
-## Риск: MCP SDK на .NET Framework 4.8
+## MCP SDK on .NET Framework 4.8
 
-MCP C# SDK официально таргетит `netstandard2.0` + `net8.0`. Через `netstandard2.0` он
-**должен** подключаться к `net48`, но возможны конфликты транзитивных зависимостей
-(`System.Text.Json`, `Microsoft.Extensions.*`) и потребность в binding redirects
-(в csproj уже включены `AutoGenerateBindingRedirects`).
+The MCP C# SDK targets `netstandard2.0` + `net8.0`. It should work on `net48`, but
+transitive dependency conflicts (`System.Text.Json`, `Microsoft.Extensions.*`) may require
+binding redirects (`AutoGenerateBindingRedirects` is enabled in the server project).
 
-- [x] Проверить, что `net48`-сборка сервера реально стартует и отвечает по stdio.
-- Если не взлетит — переходим на **план B** (отдельный `net48`-воркер + `net8.0`-сервер),
-  см. [architecture.md](architecture.md#запасной-план-b-два-процесса).
-
-## Журнал проверок (заполнять при работе на Windows)
-
-| Дата | Кто/агент | Что проверили | Результат / правка |
-|------|-----------|---------------|--------------------|
-| 2026-06-19 | Agent | `net48` сборка + MCP вызовы (`tools/list`, `tekla_get_connection_info`, `tekla_get_model_summary`, `tekla_find_objects`, `tekla_get_object_by_guid`, `tekla_get_selected_objects`) | Работает на живой модели Tekla 2023. |
-| 2026-06-19 | Agent | Совместимость пакетов Tekla | Переключено с `2026.0.3` на `2023.0.0` в `TeklaMcp.Tekla.csproj`. |
-| 2026-06-19 | Agent | Программное выделение в UI Tekla | Добавлен `tekla_select_objects` через `ModelObjectSelector.Select(ArrayList)`. |
-| 2026-06-19 | Agent | Добавлены UDA tools | `tekla_get_object_udas`, `tekla_set_object_udas`, `tekla_set_udas_by_filter` (с preview по умолчанию). |
+If the single-process `net48` build fails to start, consider the two-process fallback
+described in [architecture.md](architecture.md).

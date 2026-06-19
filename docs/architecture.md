@@ -1,85 +1,89 @@
-# Архитектура
+# Architecture
 
-Документ объясняет, **почему** проект устроен именно так. Конвенции для агентов — в
-[../AGENTS.md](../AGENTS.md), обзор — в [../README.md](../README.md).
+This document explains **why** the project is structured the way it is. Conventions for
+contributors and AI agents are in [../AGENTS.md](../AGENTS.md); overview in
+[../README.md](../README.md).
 
-## Главное ограничение
+## Core constraint
 
-Tekla Open API — это набор **.NET-сборок под Windows** (`.NET Framework 4.8`, только x64
-начиная с Tekla 2026). Разработка же ведётся на **macOS, где Tekla нет** и где её нельзя
-установить. Значит, нужна архитектура, которая:
+Tekla Open API is a set of **Windows .NET assemblies** (`.NET Framework 4.8`, x64 from
+Tekla 2026 onward). The MCP server must therefore run on Windows to talk to a live model,
+while still allowing development and testing **without Tekla installed**.
 
-1. позволяет писать и **запускать** код на Mac (хотя бы каркас MCP);
-2. переносится на Windows и там работает с реальной Tekla без переписывания.
+## Solution: interface + two backends + multi-targeting
 
-## Решение: интерфейс + две реализации + мультитаргет
+### Abstraction layer
 
-### Слой абстракции
-`ITeklaModelService` (в `TeklaMcp.Core`) описывает все операции чтения. MCP-инструменты
-знают только про него. Две реализации:
+`ITeklaModelService` (in `TeklaMcp.Core`) describes all model operations. MCP tools
+depend only on this interface. Two implementations:
 
-- `MockTeklaModelService` — фейковые данные, кросс-платформенно (`netstandard2.0`).
-- `TeklaModelService` — реальный Tekla Open API (`net48`, Windows-only).
+- `MockTeklaModelService` — synthetic data, cross-platform (`netstandard2.0`).
+- `TeklaModelService` — real Tekla Open API (`net48`, Windows-only).
 
-### Почему `netstandard2.0` для Core и Mock
-`netstandard2.0` — общий знаменатель: его понимают и современный `.NET 8`, и старый
-`.NET Framework 4.8`. Поэтому одни и те же `Core`/`Mock` подключаются в обе сборки сервера.
+### Why `netstandard2.0` for Core and Mock
 
-### Почему мультитаргет сервера `net8.0; net48`
-Ключевое совпадение, которое всё упрощает:
+`netstandard2.0` is the common denominator understood by both modern `.NET 8` and
+`.NET Framework 4.8`, so the same `Core`/`Mock` assemblies plug into both server builds.
 
-| Компонент | Поддерживаемые таргеты |
+### Why the server multi-targets `net8.0` and `net48`
+
+| Component | Supported targets |
 |---|---|
 | MCP C# SDK (`ModelContextProtocol`) | `netstandard2.0`, `net8.0` |
-| Tekla Open API 2026 | `.NET Framework 4.8`, `netstandard2.0` |
+| Tekla Open API | `.NET Framework 4.8`, `netstandard2.0` |
 
-Оба совместимы с `netstandard2.0`, поэтому **один процесс `net48` на Windows может
-одновременно хостить и MCP SDK, и Tekla**. Разносить на два процесса не нужно. Отсюда:
+Both are compatible with `netstandard2.0`, so a single **`net48` process on Windows**
+can host the MCP SDK and Tekla Open API together — no two-process split required for the
+prototype. Hence:
 
-- **`net8.0`** — сборка для Mac/разработки. Только `Core` + `Mock`. Запускается везде.
-- **`net48`** — сборка для Windows. Дополнительно подключает `TeklaMcp.Tekla` и реальный
-  бэкенд. Собирается только на Windows.
+- **`net8.0`** — cross-platform build with `Core` + `Mock` only. Runs without Tekla.
+- **`net48`** — Windows build that additionally references `TeklaMcp.Tekla` for the live
+  backend.
 
-Выбор бэкенда — через `#if NET48` в `Program.cs`. Плюс переменная `TEKLA_MCP_USE_MOCK=1`
-форсит мок даже в `net48`-сборке (удобно для проверки без открытой модели).
+Backend selection is via `#if NET48` in `Program.cs`. Set `TEKLA_MCP_USE_MOCK=1` to force
+the mock backend even in the `net48` build.
 
-### Почему `net48`-таргет отключается на не-Windows
-В `TeklaMcp.Server.csproj`:
+### Why `net48` is disabled on non-Windows
+
+In `TeklaMcp.Server.csproj`:
+
 ```xml
 <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net8.0;net48</TargetFrameworks>
 <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0</TargetFrameworks>
 ```
-Так на Mac сервер собирается только как `net8.0` и **не тянет** Windows-only проект
-`TeklaMcp.Tekla` (который ссылается на Tekla-сборки, недоступные на Mac).
 
-## Транспорт MCP: stdio
+Non-Windows builds target only `net8.0` and never reference the Windows-only
+`TeklaMcp.Tekla` project.
 
-Сервер общается с клиентом по **stdio** (JSON-RPC через stdin/stdout). Поэтому:
-- stdout зарезервирован под протокол — логи идут **только в stderr**
-  (`LogToStandardErrorThreshold` в `Program.cs`);
-- клиент сам запускает процесс сервера (см. конфиг в README).
+## MCP transport: stdio
 
-HTTP/SSE-транспорт можно добавить позже (пакет `ModelContextProtocol.AspNetCore`), но для
-локального инструмента рядом с Tekla stdio проще и безопаснее.
+The server communicates over **stdio** (JSON-RPC on stdin/stdout). Therefore:
 
-## Поток данных одного вызова
+- stdout is reserved for the protocol — logs go **only to stderr**
+  (`LogToStandardErrorThreshold` in `Program.cs`);
+- the MCP client launches the server process (see README for configuration).
+
+HTTP/SSE transport could be added later (`ModelContextProtocol.AspNetCore`), but stdio is
+the simplest choice for a local tool running beside Tekla.
+
+## Request flow
 
 ```
-Клиент → JSON-RPC (stdin) → MCP SDK → метод инструмента [tekla_*]
+Client → JSON-RPC (stdin) → MCP SDK → tool method [tekla_*]
        → ITeklaModelService (Mock | Tekla)
-       → (на Windows) Tekla Open API → открытая модель
-       → DTO (TeklaMcp.Core.Models.*) → JSON → (stdout) → клиент
+       → (Windows) Tekla Open API → open model
+       → DTO (TeklaMcp.Core.Models.*) → JSON → (stdout) → client
 ```
 
-## Запасной план B: два процесса
+## Fallback: two-process design
 
-Если на `net48` MCP SDK будет конфликтовать по зависимостям (классическая боль .NET
-Framework: `System.Text.Json`, binding redirects), запасная архитектура:
+If the `net48` build hits dependency conflicts (common on .NET Framework: `System.Text.Json`,
+binding redirects), a fallback architecture is:
 
-- MCP-сервер остаётся `net8.0` (кросс-платформенный);
-- появляется отдельный маленький `net48`-воркер, который ссылается на Tekla и общается
-  с сервером по stdio/именованным каналам.
+- MCP server stays on `net8.0` (cross-platform);
+- a small separate `net48` worker references Tekla and talks to the server over stdio or
+  named pipes.
 
-Это надёжнее по изоляции, но сложнее. Для прототипа выбран одно-процессный вариант; план B
-описан, чтобы будущий агент не изобретал его заново. Подробности и риск — в
-[tekla-api-notes.md](tekla-api-notes.md).
+The single-process design is preferred for simplicity; the two-process option is documented
+here so it does not need to be rediscovered. See [tekla-api-notes.md](tekla-api-notes.md)
+for dependency notes.

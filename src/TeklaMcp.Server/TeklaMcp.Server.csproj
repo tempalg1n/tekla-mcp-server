@@ -4,13 +4,12 @@
     The MCP server host (stdio transport).
 
     Multi-targeting:
-      * net8.0  — cross-platform. Used on macOS/dev. Uses the Mock backend only.
-      * net48   — Windows + Tekla. Uses the real Tekla backend. Built ONLY on Windows
-                  (the net48 TFM is dropped on non-Windows OSes below) so that macOS
-                  builds never try to pull in the Windows-only Tekla project.
+      * net8.0  — cross-platform. Mock backend only (no Tekla required).
+      * net48   — Windows + Tekla. Real Tekla backend. Built ONLY on Windows
+                  (the net48 TFM is dropped on non-Windows OSes below).
 
-    On macOS just run:   dotnet run [project path]
-    On Windows build:    dotnet build TeklaMcp.sln -c Release   (or open in Visual Studio)
+    Mock backend:  dotnet run with project src/TeklaMcp.Server
+    Windows build: dotnet build TeklaMcp.sln -c Release
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>

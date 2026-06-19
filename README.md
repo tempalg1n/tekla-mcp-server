@@ -1,198 +1,215 @@
 # Tekla MCP Server
 
-MCP-сервер для **Tekla Structures (проверено на 2023)**: даёт ИИ-ассистентам (Claude и др.) инструменты
-для **чтения и анализа** элементов открытой модели через
-[Tekla Open API](https://developer.tekla.com/doc/tekla-structures/2026/tekla-structures-64304).
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/tempalg1n/tekla-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/tempalg1n/tekla-mcp-server/actions/workflows/ci.yml)
 
-> **Статус: рабочий прототип.** Сервер собирается и запускается на Windows, проверен
-> на живой модели в Tekla 2023. Набор инструментов уже покрывает базовые запросы по
-> фильтрации, весам, группировкам и выделению объектов в UI.
+An [MCP](https://modelcontextprotocol.io/) server that connects AI assistants to **Tekla Structures** models via the [Tekla Open API](https://developer.tekla.com/doc/tekla-structures/2026/tekla-structures-64304).
+
+Ask natural-language questions about steel structures — weights, counts, materials, profiles, selections — and let the assistant query the open model for you.
+
+> **Status: early development.** The server builds and runs on Windows and has been exercised on live Tekla 2023 models. The tool set is growing; APIs and behavior may change between releases. See [Roadmap](#roadmap).
+
+**Languages:** English (this file) · [Русский](README.ru.md)
 
 ---
 
-## Зачем это и как устроено
+## Why this project
 
-Tekla Open API — это **.NET-сборки под Windows** (`.NET Framework 4.8`, x64), работающие
-внутри/рядом с процессом Tekla Structures. Поэтому сервер написан на **C#**. Но разработка
-идёт на **macOS без Tekla**, поэтому проект устроен так, чтобы **запускаться и на Mac на
-фейковых данных**, и на рабочем Windows-компе на реальной модели.
+Tekla Structures holds rich BIM data — parts, assemblies, weights, classes, user-defined attributes — but that data is locked behind a Windows-only .NET API. AI assistants need a structured, safe bridge to read (and selectively update) model data without manual export or custom macros.
 
-Ключ к этому — интерфейс `ITeklaModelService` с двумя реализациями:
+This server provides that bridge through the **Model Context Protocol**: a standard way for Claude, Cursor, and other MCP clients to call typed tools against the open Tekla model.
 
-| Реализация | Где работает | Что отдаёт |
+**What you can do today:**
+
+- Inspect connection status, model name, and object counts
+- Filter and search parts by type, class, profile, material, and name
+- Compute weights and counts with the same filters used across tools
+- Group metrics by field (type, class, profile, material, name)
+- Analyze material breakdowns (bill-of-materials style)
+- Read the current UI selection in Tekla
+- Select objects in the Tekla UI by filter
+- Read and write user-defined attributes (UDAs) with safe preview-by-default writes
+
+---
+
+## Architecture
+
+The server is written in **C#** because Tekla Open API ships as .NET assemblies (`.NET Framework 4.8`, x64). All MCP tools depend on a single abstraction — `ITeklaModelService` — with two backends:
+
+| Backend | Build | Purpose |
 |---|---|---|
-| `MockTeklaModelService` | где угодно (Mac/Linux/Windows), `net8.0` | синтетический стальной каркас (~42 объекта) |
-| `TeklaModelService` | только Windows + Tekla, `net48` | реальные данные из открытой модели (проверено на Tekla 2023) |
-
-MCP-инструменты зависят только от интерфейса, поэтому **один и тот же набор инструментов**
-работает с любым бэкендом.
+| `MockTeklaModelService` | `net8.0` | Synthetic steel frame (~42 objects) for development and testing without Tekla |
+| `TeklaModelService` | `net48` (Windows) | Live data from the open Tekla model (verified on Tekla 2023) |
 
 ```
 ┌──────────────┐  stdio (JSON-RPC)   ┌───────────────────────────────────────┐
-│  MCP-клиент  │ ──────────────────► │            TeklaMcp.Server            │
-│ (Claude и    │                     │  MCP-инструменты (tekla_*)            │
-│  др.)        │ ◄────────────────── │            │                          │
+│  MCP client  │ ──────────────────► │            TeklaMcp.Server            │
+│ (Claude,     │                     │  MCP tools (tekla_*)                  │
+│  Cursor, …)  │ ◄────────────────── │            │                          │
 └──────────────┘                     │            ▼  ITeklaModelService      │
                                      │   ┌─────────────────┐  ┌────────────┐ │
                                      │   │ Mock (net8.0)   │  │Tekla(net48)│ │
-                                     │   │ фейк-данные     │  │реальн. API │ │
+                                     │   │ synthetic data  │  │ Open API   │ │
                                      │   └─────────────────┘  └─────┬──────┘ │
                                      └──────────────────────────────┼────────┘
                                                                     ▼
-                                                       Tekla Structures 2026
+                                                       Tekla Structures (open model)
 ```
 
-Подробнее — [docs/architecture.md](docs/architecture.md).
+Details: [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## Структура репозитория
+## Repository layout
 
 ```
-tekla-mcp/
-├── README.md                  ← этот файл
-├── AGENTS.md                  ← инструкция для ИИ-агентов (читать первым!)
+tekla-mcp-server/
+├── README.md              ← you are here
+├── README.ru.md           ← Russian translation
+├── LICENSE
+├── CONTRIBUTING.md
+├── AGENTS.md              ← conventions for AI-assisted development
 ├── docs/
-│   ├── architecture.md        ← архитектура и обоснование решений
-│   ├── tekla-api-notes.md     ← заметки по Tekla Open API + что проверить
-│   └── dotnet-for-python-devs.md ← шпаргалка по C#/.NET для питониста
-├── TeklaMcp.sln               ← решение (всё) — собирать на Windows
-├── TeklaMcp.Mac.slnf          ← фильтр без Tekla-проекта — для сборки на Mac
+│   ├── architecture.md
+│   └── tekla-api-notes.md
+├── TeklaMcp.sln
 └── src/
-    ├── TeklaMcp.Core/         ← интерфейс + DTO (netstandard2.0)
-    ├── TeklaMcp.Mock/         ← фейковая реализация (netstandard2.0)
-    ├── TeklaMcp.Tekla/        ← реальная реализация (net48, Windows-only)
-    └── TeklaMcp.Server/       ← MCP-хост + инструменты (net8.0; +net48 на Windows)
+    ├── TeklaMcp.Core/     ← interface + DTOs (netstandard2.0)
+    ├── TeklaMcp.Mock/     ← mock backend (netstandard2.0)
+    ├── TeklaMcp.Tekla/    ← Tekla Open API backend (net48, Windows)
+    └── TeklaMcp.Server/   ← MCP host + tools (net8.0; +net48 on Windows)
 ```
 
 ---
 
-## Инструменты (tools)
+## Tools
 
-Основные инструменты для чтения/аналитики, UI-выделения и работы с UDA.
-Имена с префиксом `tekla_`.
+All tools use the `tekla_` prefix.
 
-| Инструмент | Назначение |
+| Tool | Description |
 |---|---|
-| `tekla_get_connection_info` | Проверить связь: есть ли открытая модель, имя/путь, активный бэкенд. |
-| `tekla_get_model_summary` | Сводка по всей модели: кол-во объектов, общий вес, разбивки по типу/классу/профилю/материалу. |
-| `tekla_list_objects` | Список объектов с основными свойствами (с лимитом). |
-| `tekla_find_objects` | Поиск по фильтрам: тип, класс, профиль, материал, имя. |
-| `tekla_get_object_by_guid` | Один объект по GUID. |
-| `tekla_get_selected_objects` | Что пользователь выделил в UI Tekla. |
-| `tekla_analyze_by_material` | Разбивка «ведомость металла» по маркам стали (кол-во + вес). |
-| `tekla_count_objects` | Подсчёт количества объектов по фильтрам (тип/класс/профиль/материал/имя). |
-| `tekla_sum_weight` | Подсчёт суммарного веса по фильтрам (включая кол-во объектов с весом). |
-| `tekla_group_weight_by` | Группировка count + weight по полю (`type`, `class`, `profile`, `material`, `name`). |
-| `tekla_list_distinct_values` | Список уникальных значений поля с count + weight. |
-| `tekla_select_objects` | Выделить объекты в UI Tekla по фильтру и вернуть `selectedCount` + preview. |
-| `tekla_get_object_udas` | Прочитать UDA-поля у конкретного объекта по GUID. |
-| `tekla_set_object_udas` | Записать/изменить UDA у объекта по GUID (`apply=false` по умолчанию). |
-| `tekla_set_udas_by_filter` | Массово записать/изменить UDA по фильтру (`apply=false` по умолчанию). |
+| `tekla_get_connection_info` | Check whether a model is open; return name, path, and active backend. |
+| `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. |
+| `tekla_list_objects` | List objects with core properties (with limit). |
+| `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
+| `tekla_get_object_by_guid` | Fetch a single object by GUID. |
+| `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
+| `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
+| `tekla_count_objects` | Count objects matching filters. |
+| `tekla_sum_weight` | Sum weight for objects matching filters. |
+| `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`). |
+| `tekla_list_distinct_values` | Distinct values for a field with count + weight. |
+| `tekla_select_objects` | Select matching objects in the Tekla UI; returns `selectedCount` + preview. |
+| `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
+| `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
+| `tekla_set_udas_by_filter` | Bulk UDA update by filter (`apply=false` by default). |
 
-### Ключевые аргументы фильтрации
+### Shared filter parameters
 
-Большинство query/analytics инструментов поддерживают один и тот же набор фильтров:
+Most query and analytics tools accept:
 
-- `type` — точное совпадение типа (`Beam`, `ContourPlate`, `Bolt`, ...);
-- `class` — точное совпадение класса;
-- `profile` — подстрока по профилю;
-- `material` — подстрока по материалу;
-- `nameContains` — подстрока по имени.
+- `type` — exact object type (`Beam`, `ContourPlate`, `Bolt`, …)
+- `class` — exact class
+- `profile` — profile substring
+- `material` — material substring
+- `nameContains` — name substring
 
-### Примеры команд к LLM
+### Example prompts
 
-- «Посчитай вес только колонн (тип `Beam`, имя содержит `Колонна`)».
-- «Посчитай вес только настила (тип `ContourPlate`)».
-- «Покажи топ материалов по весу в текущей модели».
-- «Сгруппируй балки по профилю и покажи вес по каждой группе».
-- «Сколько элементов класса 20 в модели?».
-- «Выдели в Tekla все элементы класса 20».
-- «Найди все объекты из материала `C245` и выведи первые 30».
-- «Возьми выделенные элементы и посчитай их суммарный вес».
-- «Прочитай UDA `USER_FIELD_1` и `USER_PHASE` у объекта с таким GUID».
-- «Превью: проставь `USER_FIELD_1=KMD;USER_PHASE=2` для всех колонн профиля `I30K1`, но без применения».
-- «Применить: проставь те же UDA для колонн профиля `I30K1` (`apply=true`)».
+- “What is the total weight of columns (type `Beam`, name contains `Column`)?”
+- “Show the top materials by weight in the current model.”
+- “Group beams by profile and show weight per group.”
+- “How many objects have class 20?”
+- “Select all class-20 objects in Tekla.”
+- “Read UDA `USER_FIELD_1` and `USER_PHASE` for this GUID.”
+- “Preview setting `USER_FIELD_1=KMD; USER_PHASE=2` on all `I30K1` columns without applying.”
 
-### Безопасность UDA-записи
+### UDA write safety
 
-`tekla_set_object_udas` и `tekla_set_udas_by_filter` сделаны с безопасным поведением:
-
-- по умолчанию `apply=false` — это только preview (без изменений в модели);
-- чтобы реально записать UDA, нужно явно передать `apply=true`;
-- для массовой записи есть ограничение `limit` (по умолчанию 200 объектов).
+`tekla_set_object_udas` and `tekla_set_udas_by_filter` default to **preview mode** (`apply=false`). Pass `apply=true` to commit changes. Bulk writes are capped by `limit` (default 200 objects).
 
 ---
 
-## Запуск на macOS (фейковые данные, без Tekla)
+## Requirements
 
-Нужен **.NET SDK 8+** (Tekla не нужна). Если SDK ещё нет:
+**Production (live Tekla model):**
 
-```bash
-brew install --cask dotnet-sdk     # или скачать с https://dotnet.microsoft.com/download
-dotnet --version                   # должно показать 8.x или новее
-```
+- Windows x64
+- Tekla Structures installed, **running with a model open**
+- [.NET SDK 8+](https://dotnet.microsoft.com/download)
+- [.NET Framework 4.8 Developer Pack](https://dotnet.microsoft.com/download/dotnet-framework/net48)
 
-Сборка и запуск сервера с мок-бэкендом:
+**Development / testing (mock backend, no Tekla):**
 
-```bash
-# на Mac TargetFramework у сервера = только net8.0, Tekla-проект не подтягивается
-dotnet run --project src/TeklaMcp.Server
-```
-
-Сервер общается по stdio и сам по себе «висит» в ожидании MCP-клиента — это нормально.
-Чтобы проверить, что инструменты реально вызываются, подключите его к MCP-клиенту (ниже)
-или к MCP Inspector:
-
-```bash
-npx @modelcontextprotocol/inspector dotnet run --project src/TeklaMcp.Server
-```
+- [.NET SDK 8+](https://dotnet.microsoft.com/download)
 
 ---
 
-## Запуск на Windows (реальная Tekla)
+## Quick start
 
-Требования: Windows x64, **Tekla Structures** установлена и **открыта с моделью**,
-**.NET SDK 8+** и таргет-пак **.NET Framework 4.8 Developer Pack**.
+### Windows — live Tekla model
 
 ```powershell
-# Откройте Tekla Structures и загрузите модель, затем:
+# Open Tekla Structures and load a model, then:
 dotnet build TeklaMcp.sln -c Release
-# Запуск .NET Framework сборки, которая разговаривает с Tekla:
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release
 ```
 
-Принудительно использовать мок даже на Windows (например, без открытой модели):
+Force the mock backend even on Windows (e.g. when Tekla is not open):
 
 ```powershell
 $env:TEKLA_MCP_USE_MOCK = "1"
 dotnet run --project src/TeklaMcp.Server -f net48
 ```
 
+### Mock backend (no Tekla)
+
+```bash
+dotnet run --project src/TeklaMcp.Server
+```
+
+The server speaks MCP over **stdio** and waits for a client — that is expected. To exercise tools interactively:
+
+```bash
+npx @modelcontextprotocol/inspector dotnet run --project src/TeklaMcp.Server
+```
+
+A Python smoke-test script is available at [scripts/mcp_smoke_test.py](scripts/mcp_smoke_test.py).
+
+### Install from a GitHub Release (recommended for Windows)
+
+1. Open **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** and download `TeklaMcp.Server-{version}-net48-win-x64.zip`.
+2. Extract the zip to a folder (keep all `.dll` files next to the `.exe`).
+3. Point your MCP client at `TeklaMcp.Server.exe` (see [MCP client configuration](#mcp-client-configuration)).
+
+See [docs/releasing.md](docs/releasing.md) for how maintainers publish releases.
+
 ---
 
-## Подключение к MCP-клиенту
+## MCP client configuration
 
-Пример конфигурации (Claude Desktop / Claude Code, `mcpServers`). На **Mac** (мок):
+Example for Claude Desktop, Claude Code, or Cursor (`mcpServers`):
+
+**Mock backend** (development):
 
 ```json
 {
   "mcpServers": {
     "tekla": {
       "command": "dotnet",
-      "args": ["run", "--project", "/абсолютный/путь/tekla-mcp/src/TeklaMcp.Server"]
+      "args": ["run", "--project", "/absolute/path/to/tekla-mcp-server/src/TeklaMcp.Server"]
     }
   }
 }
 ```
 
-На **Windows** (реальная Tekla) — лучше указывать на собранный `.exe`, а не `dotnet run`:
+**Live Tekla** (Windows — prefer a built executable):
 
 ```json
 {
   "mcpServers": {
     "tekla": {
-      "command": "C:\\путь\\tekla-mcp\\src\\TeklaMcp.Server\\bin\\Release\\net48\\TeklaMcp.Server.exe"
+      "command": "C:\\path\\to\\tekla-mcp-server\\src\\TeklaMcp.Server\\bin\\Release\\net48\\TeklaMcp.Server.exe"
     }
   }
 }
@@ -200,31 +217,30 @@ dotnet run --project src/TeklaMcp.Server -f net48
 
 ---
 
-## Что ещё проверить на Windows
+## Roadmap
 
-Базовый сценарий уже проверен на Tekla 2023 (подключение, summary, list/find, select).
-Для следующих итераций всё ещё полезно перепроверять:
+- [x] Core read tools: connection, summary, list, find, selection
+- [x] Analytics: count, weight sum, grouping, material breakdown
+- [x] UI selection via `tekla_select_objects`
+- [x] UDA read/write with preview-by-default safety
+- [ ] Broader object coverage: bolts, assemblies, rebar, geometry
+- [ ] Automated tests for Core and Mock layers
+- [ ] Compatibility matrix for Tekla 2023–2026
 
-- report-свойства (`WEIGHT`, `LENGTH`, `ASSEMBLY_POS`) и единицы измерения на ваших шаблонах;
-- корректность `SelectModelObject(Identifier)` на разных типах объектов;
-- поведение `tekla_select_objects` на больших выборках;
-- соответствие версии `Tekla.Structures.*` версии установленной Tekla.
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Подробные заметки — в [docs/tekla-api-notes.md](docs/tekla-api-notes.md).
-
----
-
-## Дорожная карта
-
-- [ ] Скомпилировать и запустить мок-сервер на Mac (проверить MCP-обвязку).
-- [ ] Скомпилировать `net48`-сборку на Windows, поднять связь с Tekla.
-- [ ] Проверить и поправить вызовы Tekla Open API на живой модели.
-- [ ] Расширить чтение: болты, сборки (assemblies), арматура, UDA, геометрия.
-- [x] Добавлены базовые операции записи UDA с защитой `apply=false` по умолчанию.
+Release history: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-## Для ИИ-агентов
+## Credits
 
-**Перед любыми изменениями прочитайте [AGENTS.md](AGENTS.md)** — там конвенции, карта
-кода, где можно/нельзя ломать совместимость и как тестировать на Mac vs Windows.
+This project was **designed and developed with [Claude Opus 4.8](https://www.anthropic.com/claude)** (Anthropic), using AI-assisted architecture, implementation, and documentation.
+
+Tekla Structures is a product of [Trimble](https://www.tekla.com/). This project is not affiliated with or endorsed by Trimble.
+
+---
+
+## License
+
+[MIT](LICENSE) — see the LICENSE file for details.

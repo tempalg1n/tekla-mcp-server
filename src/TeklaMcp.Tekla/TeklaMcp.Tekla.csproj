@@ -5,7 +5,7 @@
 
     Tekla Structures Open API assemblies are Windows-only and target .NET Framework.
     so this project does too. It is referenced by the server ONLY in its net48 build
-    (see TeklaMcp.Server.csproj). It will NOT build on macOS — that is expected.
+    (see TeklaMcp.Server.csproj). It builds on Windows only.
 
     The Tekla.Structures.* packages are restored from NuGet on the Windows machine.
     The package VERSION must match the installed Tekla Structures.
