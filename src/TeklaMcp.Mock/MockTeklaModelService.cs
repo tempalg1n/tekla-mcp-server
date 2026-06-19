@@ -20,6 +20,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
 {
     private const string BackendName = "Mock";
     private readonly List<ModelObjectInfo> _objects = BuildSampleModel();
+    private readonly Dictionary<string, Dictionary<string, string>> _udasByGuid =
+        new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+    private List<ModelObjectInfo> _selectedObjects;
+
+    public MockTeklaModelService()
+    {
+        _selectedObjects = _objects.Take(3).ToList();
+        SeedUdas();
+    }
 
     public ConnectionInfo GetConnectionInfo() => new()
     {
@@ -65,8 +74,131 @@ public sealed class MockTeklaModelService : ITeklaModelService
     public ModelObjectInfo? GetObjectByGuid(string guid) =>
         _objects.FirstOrDefault(o => string.Equals(o.Guid, guid, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Pretend the user has selected the first few objects in the UI.</summary>
-    public IReadOnlyList<ModelObjectInfo> GetSelectedObjects() => _objects.Take(3).ToList();
+    /// <summary>Pretend the user has selected objects in the UI.</summary>
+    public IReadOnlyList<ModelObjectInfo> GetSelectedObjects() => _selectedObjects;
+
+    public SelectionResult SelectObjects(ObjectQuery query, int? limit = null)
+    {
+        _selectedObjects = FindObjects(query, limit).ToList();
+        return new SelectionResult
+        {
+            SelectedCount = _selectedObjects.Count,
+            Preview = _selectedObjects.Take(20).ToList(),
+            Backend = BackendName,
+        };
+    }
+
+    public ObjectUdaResult GetObjectUdas(string guid, IReadOnlyList<string> udaNames)
+    {
+        var obj = GetObjectByGuid(guid);
+        if (obj is null)
+            return new ObjectUdaResult
+            {
+                Guid = guid,
+                Backend = BackendName,
+                Message = "Object not found.",
+            };
+
+        _udasByGuid.TryGetValue(obj.Guid, out var objectUdas);
+        objectUdas ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var result = new ObjectUdaResult
+        {
+            Guid = obj.Guid,
+            Id = obj.Id,
+            Type = obj.Type,
+            Backend = BackendName,
+        };
+
+        foreach (var name in udaNames)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (objectUdas.TryGetValue(name, out var value))
+                result.Udas[name] = value;
+        }
+
+        return result;
+    }
+
+    public UdaOperationResult SetObjectUdas(string guid, IReadOnlyDictionary<string, string> updates, bool apply)
+    {
+        var obj = GetObjectByGuid(guid);
+        if (obj is null)
+            return new UdaOperationResult
+            {
+                Applied = apply,
+                Backend = BackendName,
+                Message = "Object not found.",
+            };
+
+        var result = new UdaOperationResult
+        {
+            Applied = apply,
+            MatchedObjects = 1,
+            Backend = BackendName,
+            Preview = new List<ModelObjectInfo> { obj },
+        };
+
+        if (!apply)
+            return result;
+
+        if (!_udasByGuid.TryGetValue(obj.Guid, out var objectUdas))
+        {
+            objectUdas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _udasByGuid[obj.Guid] = objectUdas;
+        }
+
+        foreach (var kv in updates)
+        {
+            if (string.IsNullOrWhiteSpace(kv.Key)) continue;
+            objectUdas[kv.Key] = kv.Value ?? "";
+            result.UpdatedFields++;
+        }
+
+        result.UpdatedObjects = result.UpdatedFields > 0 ? 1 : 0;
+        return result;
+    }
+
+    public UdaOperationResult SetUdas(
+        ObjectQuery query,
+        IReadOnlyDictionary<string, string> updates,
+        bool apply,
+        int? limit = null)
+    {
+        var matched = FindObjects(query, limit).ToList();
+        var result = new UdaOperationResult
+        {
+            Applied = apply,
+            MatchedObjects = matched.Count,
+            Backend = BackendName,
+            Preview = matched.Take(20).ToList(),
+        };
+
+        if (!apply) return result;
+
+        foreach (var obj in matched)
+        {
+            if (!_udasByGuid.TryGetValue(obj.Guid, out var objectUdas))
+            {
+                objectUdas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                _udasByGuid[obj.Guid] = objectUdas;
+            }
+
+            var changed = 0;
+            foreach (var kv in updates)
+            {
+                if (string.IsNullOrWhiteSpace(kv.Key)) continue;
+                objectUdas[kv.Key] = kv.Value ?? "";
+                changed++;
+            }
+
+            if (changed <= 0) continue;
+            result.UpdatedObjects++;
+            result.UpdatedFields += changed;
+        }
+
+        return result;
+    }
 
     // ---------------------------------------------------------------- helpers ----
 
@@ -83,6 +215,18 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     private static IReadOnlyList<ModelObjectInfo> Limit(List<ModelObjectInfo> src, int? limit) =>
         limit is int n && n > 0 && n < src.Count ? src.GetRange(0, n) : src;
+
+    private void SeedUdas()
+    {
+        foreach (var obj in _objects)
+        {
+            _udasByGuid[obj.Guid] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["MCP_TAG"] = "mock",
+                ["MCP_TYPE"] = obj.Type,
+            };
+        }
+    }
 
     /// <summary>Build a small, deterministic synthetic steel frame (~42 objects).</summary>
     private static List<ModelObjectInfo> BuildSampleModel()

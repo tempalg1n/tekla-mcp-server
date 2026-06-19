@@ -9,7 +9,7 @@
                   (the net48 TFM is dropped on non-Windows OSes below) so that macOS
                   builds never try to pull in the Windows-only Tekla project.
 
-    On macOS just run:   dotnet run --project src/TeklaMcp.Server
+    On macOS just run:   dotnet run [project path]
     On Windows build:    dotnet build TeklaMcp.sln -c Release   (or open in Visual Studio)
   -->
   <PropertyGroup>

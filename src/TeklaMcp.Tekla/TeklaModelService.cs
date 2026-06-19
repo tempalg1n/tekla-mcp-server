@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Globalization;
 using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 using TSM = Tekla.Structures.Model;
@@ -143,6 +145,161 @@ public sealed class TeklaModelService : ITeklaModelService
         return result;
     }
 
+    public SelectionResult SelectObjects(ObjectQuery query, int? limit = null)
+    {
+        try
+        {
+            var model = GetConnectedModel();
+            var selector = model.GetModelObjectSelector();
+            var toSelect = new ArrayList();
+            var preview = new List<ModelObjectInfo>();
+
+            var en = selector.GetAllObjects();
+            while (en.MoveNext())
+            {
+                var mo = en.Current;
+                var info = Map(mo);
+                if (info is null || !Matches(info, query)) continue;
+
+                toSelect.Add(mo);
+                if (preview.Count < 20) preview.Add(info);
+                if (limit is int n && n > 0 && toSelect.Count >= n) break;
+            }
+
+            var uiSelector = new TSMUI.ModelObjectSelector();
+            uiSelector.Select(toSelect);
+
+            return new SelectionResult
+            {
+                SelectedCount = toSelect.Count,
+                Preview = preview,
+                Backend = BackendName,
+            };
+        }
+        catch
+        {
+            return new SelectionResult { SelectedCount = 0, Backend = BackendName };
+        }
+    }
+
+    public ObjectUdaResult GetObjectUdas(string guid, IReadOnlyList<string> udaNames)
+    {
+        guid = guid ?? "";
+        var result = new ObjectUdaResult
+        {
+            Guid = guid,
+            Backend = BackendName,
+        };
+
+        try
+        {
+            var model = GetConnectedModel();
+            var mo = TrySelectObjectByGuid(model, guid);
+            if (mo is null)
+            {
+                result.Message = "Object not found.";
+                return result;
+            }
+
+            result.Guid = mo.Identifier.GUID.ToString();
+            result.Id = mo.Identifier.ID;
+            result.Type = mo.GetType().Name;
+
+            foreach (var udaName in udaNames)
+            {
+                if (string.IsNullOrWhiteSpace(udaName)) continue;
+                if (TryGetUserPropertyAsString(mo, udaName, out var value))
+                    result.Udas[udaName] = value;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = ex.Message;
+        }
+
+        return result;
+    }
+
+    public UdaOperationResult SetObjectUdas(string guid, IReadOnlyDictionary<string, string> updates, bool apply)
+    {
+        var result = new UdaOperationResult
+        {
+            Applied = apply,
+            Backend = BackendName,
+        };
+
+        try
+        {
+            var model = GetConnectedModel();
+            var mo = TrySelectObjectByGuid(model, guid);
+            if (mo is null)
+            {
+                result.Message = "Object not found.";
+                return result;
+            }
+
+            var preview = Map(mo);
+            if (preview != null) result.Preview.Add(preview);
+            result.MatchedObjects = 1;
+
+            if (!apply) return result;
+
+            if (ApplyUdaUpdates(mo, updates, out var changedFields))
+            {
+                result.UpdatedObjects = 1;
+                result.UpdatedFields = changedFields;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = ex.Message;
+        }
+
+        return result;
+    }
+
+    public UdaOperationResult SetUdas(
+        ObjectQuery query,
+        IReadOnlyDictionary<string, string> updates,
+        bool apply,
+        int? limit = null)
+    {
+        var result = new UdaOperationResult
+        {
+            Applied = apply,
+            Backend = BackendName,
+        };
+
+        try
+        {
+            var model = GetConnectedModel();
+            var en = model.GetModelObjectSelector().GetAllObjects();
+            while (en.MoveNext())
+            {
+                var mo = en.Current;
+                var info = Map(mo);
+                if (info is null || !Matches(info, query)) continue;
+
+                if (limit is int n && n > 0 && result.MatchedObjects >= n) break;
+                result.MatchedObjects++;
+                if (result.Preview.Count < 20) result.Preview.Add(info);
+
+                if (!apply) continue;
+                if (ApplyUdaUpdates(mo, updates, out var changedFields))
+                {
+                    result.UpdatedObjects++;
+                    result.UpdatedFields += changedFields;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = ex.Message;
+        }
+
+        return result;
+    }
+
     // ---------------------------------------------------------------- internals ----
 
     private static TSM.Model GetConnectedModel()
@@ -214,4 +371,81 @@ public sealed class TeklaModelService : ITeklaModelService
     }
 
     private static string Key(string s) => string.IsNullOrEmpty(s) ? "(none)" : s;
+
+    private static TSM.ModelObject? TrySelectObjectByGuid(TSM.Model model, string guid)
+    {
+        if (!Guid.TryParse(guid, out var parsed)) return null;
+        try
+        {
+            var identifier = new global::Tekla.Structures.Identifier(parsed);
+            return model.SelectModelObject(identifier);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryGetUserPropertyAsString(TSM.ModelObject mo, string udaName, out string value)
+    {
+        value = "";
+        var strVal = "";
+        if (mo.GetUserProperty(udaName, ref strVal))
+        {
+            value = strVal ?? "";
+            return true;
+        }
+
+        var intVal = 0;
+        if (mo.GetUserProperty(udaName, ref intVal))
+        {
+            value = intVal.ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        var doubleVal = 0.0;
+        if (mo.GetUserProperty(udaName, ref doubleVal))
+        {
+            value = doubleVal.ToString("G", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ApplyUdaUpdates(
+        TSM.ModelObject mo,
+        IReadOnlyDictionary<string, string> updates,
+        out int changedFields)
+    {
+        changedFields = 0;
+        foreach (var kv in updates)
+        {
+            var key = (kv.Key ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(key)) continue;
+
+            var raw = kv.Value ?? "";
+            bool ok;
+            if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intVal))
+                ok = mo.SetUserProperty(key, intVal);
+            else if (double.TryParse(raw, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleVal))
+                ok = mo.SetUserProperty(key, doubleVal);
+            else
+                ok = mo.SetUserProperty(key, raw);
+
+            if (ok) changedFields++;
+        }
+
+        if (changedFields <= 0) return false;
+        try
+        {
+            mo.Modify();
+        }
+        catch
+        {
+            // TODO(windows): verify whether Modify() is required for all object types.
+        }
+
+        return true;
+    }
 }

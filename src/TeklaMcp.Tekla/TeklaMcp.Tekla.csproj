@@ -3,12 +3,12 @@
   <!--
     REAL Tekla Open API implementation. Windows-only.
 
-    Tekla Structures 2026 Open API assemblies target .NET Framework 4.8 / x64,
+    Tekla Structures Open API assemblies are Windows-only and target .NET Framework.
     so this project does too. It is referenced by the server ONLY in its net48 build
     (see TeklaMcp.Server.csproj). It will NOT build on macOS — that is expected.
 
     The Tekla.Structures.* packages are restored from NuGet on the Windows machine.
-    The package VERSION must match the installed Tekla Structures (2026.0.x here).
+    The package VERSION must match the installed Tekla Structures.
     Update the versions below if your installed Tekla differs, or switch to local
     <Reference> elements with <HintPath> pointing at the Tekla install \bin folder.
   -->
@@ -16,7 +16,6 @@
     <TargetFramework>net48</TargetFramework>
     <RootNamespace>TeklaMcp.Tekla</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
-    <!-- Tekla 2026 supports x64 extensions only. -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,9 +23,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- TODO(windows): verify these versions against the installed Tekla 2026.0.x. -->
-    <PackageReference Include="Tekla.Structures" Version="2026.0.3" />
-    <PackageReference Include="Tekla.Structures.Model" Version="2026.0.3" />
+    <!-- Tekla 2023 compatibility baseline. -->
+    <PackageReference Include="Tekla.Structures" Version="2023.0.0" />
+    <PackageReference Include="Tekla.Structures.Model" Version="2023.0.0" />
   </ItemGroup>
 
 </Project>

@@ -46,4 +46,31 @@ public interface ITeklaModelService
 
     /// <summary>Objects currently selected by the user in the Tekla Structures UI.</summary>
     IReadOnlyList<ModelObjectInfo> GetSelectedObjects();
+
+    /// <summary>
+    /// Select objects in the Tekla UI by query and return a lightweight result snapshot.
+    /// Implementations should be best-effort and return an empty selection on failure.
+    /// </summary>
+    SelectionResult SelectObjects(ObjectQuery query, int? limit = null);
+
+    /// <summary>
+    /// Read specified UDA fields from one object by GUID.
+    /// </summary>
+    ObjectUdaResult GetObjectUdas(string guid, IReadOnlyList<string> udaNames);
+
+    /// <summary>
+    /// Set UDA fields on one object by GUID. By default, implementations should support
+    /// preview mode when <paramref name="apply"/> is false.
+    /// </summary>
+    UdaOperationResult SetObjectUdas(string guid, IReadOnlyDictionary<string, string> updates, bool apply);
+
+    /// <summary>
+    /// Set UDA fields on objects matching a query. By default, implementations should
+    /// support preview mode when <paramref name="apply"/> is false.
+    /// </summary>
+    UdaOperationResult SetUdas(
+        ObjectQuery query,
+        IReadOnlyDictionary<string, string> updates,
+        bool apply,
+        int? limit = null);
 }
