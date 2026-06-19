@@ -54,6 +54,26 @@ public interface ITeklaModelService
     SelectionResult SelectObjects(ObjectQuery query, int? limit = null);
 
     /// <summary>
+    /// Search candidate attributes by known value (for "which field stores X?" discovery).
+    /// Implementations should inspect common report properties and UDAs.
+    /// </summary>
+    IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+        string value,
+        IReadOnlyList<string>? candidateAttributeNames = null,
+        bool exactMatch = false,
+        int? objectLimit = 2000,
+        int? resultLimit = 50);
+
+    /// <summary>
+    /// Analyze how members of a profile connect to neighboring elements near beam ends.
+    /// Returns unique connection signatures and their frequencies.
+    /// </summary>
+    ProfileConnectionSummary AnalyzeConnectionsForProfile(
+        string profile,
+        double toleranceMm = 50,
+        int? limit = 1000);
+
+    /// <summary>
     /// Read specified UDA fields from one object by GUID.
     /// </summary>
     ObjectUdaResult GetObjectUdas(string guid, IReadOnlyList<string> udaNames);

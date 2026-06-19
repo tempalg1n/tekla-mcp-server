@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-19
+
+Major MCP capability expansion focused on attribute discoverability, spatial context, and profile connection analytics.
+
+### Added
+
+- New tool `tekla_find_attributes_by_value` to discover likely attribute names from a known value (for cases like `BK1`)
+- New tool `tekla_analyze_profile_connections` to estimate unique connection/node types for a profile using beam-end proximity
+- Generic attribute filters in query/workflow tools (`attributeName`, `attributeEquals`, `attributeContains`)
+- Generic UDA + report property lookup support in `ITeklaModelService` backends
+- New core DTOs for attribute match results and profile connection summaries
+
+### Changed
+
+- `ModelObjectInfo` now includes spatial data (`Center*`, `Start*`/`End*`, `Min*`/`Max*`) so agents can reason about coordinates
+- `tekla_find_objects`, `tekla_count_objects`, `tekla_sum_weight`, `tekla_group_weight_by`, `tekla_list_distinct_values`, and `tekla_select_objects` now support UDA + generic attribute filtering
+- Mock model now provides deterministic geometric coordinates and sample UDA values (including `RU_FN1_MRK=BK1` on columns)
+- Tekla backend mapping now reads beam endpoints and solid bounding boxes (best effort, with graceful fallback)
+
 ## [0.1.1] - 2026-06-19
 
 Recommended public release. Adds open-source documentation and project polish that were not included in v0.1.0.
@@ -67,6 +86,7 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/tempalg1n/tekla-mcp-server/releases/tag/v0.1.0

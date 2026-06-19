@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 using TSM = Tekla.Structures.Model;
@@ -26,6 +27,18 @@ namespace TeklaMcp.Tekla;
 public sealed class TeklaModelService : ITeklaModelService
 {
     private const string BackendName = "Tekla";
+    private static readonly string[] DefaultAttributeCandidates =
+    {
+        "ASSEMBLY_POS",
+        "PART_POS",
+        "PROFILE",
+        "MATERIAL",
+        "NAME",
+        "CLASS",
+        "PHASE",
+        "USER_PHASE",
+        "RU_FN1_MRK",
+    };
 
     public ConnectionInfo GetConnectionInfo()
     {
@@ -107,8 +120,9 @@ public sealed class TeklaModelService : ITeklaModelService
         var en = model.GetModelObjectSelector().GetAllObjects();
         while (en.MoveNext())
         {
-            var info = Map(en.Current);
-            if (info is null || !Matches(info, query)) continue;
+            var mo = en.Current;
+            var info = Map(mo);
+            if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
             result.Add(info);
             if (limit is int n && result.Count >= n) break;
         }
@@ -159,7 +173,7 @@ public sealed class TeklaModelService : ITeklaModelService
             {
                 var mo = en.Current;
                 var info = Map(mo);
-                if (info is null || !Matches(info, query)) continue;
+                if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
                 toSelect.Add(mo);
                 if (preview.Count < 20) preview.Add(info);
@@ -180,6 +194,114 @@ public sealed class TeklaModelService : ITeklaModelService
         {
             return new SelectionResult { SelectedCount = 0, Backend = BackendName };
         }
+    }
+
+    public IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+        string value,
+        IReadOnlyList<string>? candidateAttributeNames = null,
+        bool exactMatch = false,
+        int? objectLimit = 2000,
+        int? resultLimit = 50)
+    {
+        var result = new Dictionary<string, AttributeValueMatch>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(value)) return new List<AttributeValueMatch>();
+
+        try
+        {
+            var model = GetConnectedModel();
+            var candidates = BuildAttributeCandidateList(candidateAttributeNames);
+            var en = model.GetModelObjectSelector().GetAllObjects();
+            var scanned = 0;
+
+            while (en.MoveNext())
+            {
+                if (objectLimit is int maxObjects && maxObjects > 0 && scanned >= maxObjects) break;
+                scanned++;
+
+                var mo = en.Current;
+                if (mo is null) continue;
+
+                foreach (var attrName in candidates)
+                {
+                    if (!TryGetAttributeValue(mo, attrName, out var attrValue)) continue;
+                    if (!ValueMatches(attrValue, value, exactMatch)) continue;
+
+                    if (!result.TryGetValue(attrName, out var row))
+                    {
+                        row = new AttributeValueMatch { AttributeName = attrName };
+                        result[attrName] = row;
+                    }
+
+                    row.MatchCount++;
+                    if (!row.MatchedValues.Exists(v => string.Equals(v, attrValue, StringComparison.OrdinalIgnoreCase)) &&
+                        row.MatchedValues.Count < 5)
+                        row.MatchedValues.Add(attrValue);
+                    if (row.SampleGuids.Count < 5)
+                        row.SampleGuids.Add(mo.Identifier.GUID.ToString());
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort tool: return accumulated results or empty on failure.
+        }
+
+        var ordered = new List<AttributeValueMatch>(result.Values);
+        ordered.Sort((a, b) =>
+        {
+            var cmp = b.MatchCount.CompareTo(a.MatchCount);
+            return cmp != 0 ? cmp : string.Compare(a.AttributeName, b.AttributeName, StringComparison.OrdinalIgnoreCase);
+        });
+
+        if (resultLimit is int maxRows && maxRows > 0 && ordered.Count > maxRows)
+            ordered = ordered.GetRange(0, maxRows);
+
+        return ordered;
+    }
+
+    public ProfileConnectionSummary AnalyzeConnectionsForProfile(string profile, double toleranceMm = 50, int? limit = 1000)
+    {
+        var summary = new ProfileConnectionSummary
+        {
+            SourceProfile = profile ?? "",
+            ToleranceMm = toleranceMm,
+        };
+
+        try
+        {
+            var source = FindObjects(
+                new ObjectQuery { Type = "Beam", Profile = profile },
+                limit);
+            var all = GetAllObjects(null);
+            var signatures = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var beam in source)
+            {
+                if (!HasLineData(beam)) continue;
+                AddConnectionSignature(beam, all, toleranceMm, true, signatures);
+                AddConnectionSignature(beam, all, toleranceMm, false, signatures);
+            }
+
+            var rows = signatures
+                .Select(kv => new ProfileConnectionType
+                {
+                    Signature = kv.Key,
+                    Occurrences = kv.Value,
+                })
+                .OrderByDescending(r => r.Occurrences)
+                .ThenBy(r => r.Signature, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            summary.SourceObjects = source.Count;
+            summary.UniqueConnectionTypes = rows.Count;
+            summary.ConnectionTypes = rows;
+        }
+        catch
+        {
+            // Best-effort analysis; return partial/empty data on runtime failures.
+        }
+
+        return summary;
     }
 
     public ObjectUdaResult GetObjectUdas(string guid, IReadOnlyList<string> udaNames)
@@ -278,7 +400,7 @@ public sealed class TeklaModelService : ITeklaModelService
             {
                 var mo = en.Current;
                 var info = Map(mo);
-                if (info is null || !Matches(info, query)) continue;
+                if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
                 if (limit is int n && n > 0 && result.MatchedObjects >= n) break;
                 result.MatchedObjects++;
@@ -344,6 +466,44 @@ public sealed class TeklaModelService : ITeklaModelService
             double length = 0;
             if (part.GetReportProperty("LENGTH", ref length))
                 info.LengthMm = Math.Round(length, 1);
+
+            if (mo is TSM.Beam beam)
+            {
+                info.StartX = Math.Round(beam.StartPoint.X, 2);
+                info.StartY = Math.Round(beam.StartPoint.Y, 2);
+                info.StartZ = Math.Round(beam.StartPoint.Z, 2);
+                info.EndX = Math.Round(beam.EndPoint.X, 2);
+                info.EndY = Math.Round(beam.EndPoint.Y, 2);
+                info.EndZ = Math.Round(beam.EndPoint.Z, 2);
+                info.CenterX = Math.Round((beam.StartPoint.X + beam.EndPoint.X) / 2.0, 2);
+                info.CenterY = Math.Round((beam.StartPoint.Y + beam.EndPoint.Y) / 2.0, 2);
+                info.CenterZ = Math.Round((beam.StartPoint.Z + beam.EndPoint.Z) / 2.0, 2);
+            }
+
+            try
+            {
+                var solid = part.GetSolid();
+                if (solid != null)
+                {
+                    info.MinX = Math.Round(solid.MinimumPoint.X, 2);
+                    info.MinY = Math.Round(solid.MinimumPoint.Y, 2);
+                    info.MinZ = Math.Round(solid.MinimumPoint.Z, 2);
+                    info.MaxX = Math.Round(solid.MaximumPoint.X, 2);
+                    info.MaxY = Math.Round(solid.MaximumPoint.Y, 2);
+                    info.MaxZ = Math.Round(solid.MaximumPoint.Z, 2);
+
+                    if (!info.CenterX.HasValue)
+                    {
+                        info.CenterX = Math.Round((solid.MinimumPoint.X + solid.MaximumPoint.X) / 2.0, 2);
+                        info.CenterY = Math.Round((solid.MinimumPoint.Y + solid.MaximumPoint.Y) / 2.0, 2);
+                        info.CenterZ = Math.Round((solid.MinimumPoint.Z + solid.MaximumPoint.Z) / 2.0, 2);
+                    }
+                }
+            }
+            catch
+            {
+                // TODO(windows): verify solid extraction reliability for all model object types.
+            }
         }
 
         return info;
@@ -361,6 +521,33 @@ public sealed class TeklaModelService : ITeklaModelService
             o.Material.IndexOf(q.Material, StringComparison.OrdinalIgnoreCase) < 0) return false;
         if (!string.IsNullOrWhiteSpace(q.NameContains) &&
             o.Name.IndexOf(q.NameContains, StringComparison.OrdinalIgnoreCase) < 0) return false;
+        return true;
+    }
+
+    private static bool MatchesUda(TSM.ModelObject mo, ObjectQuery q)
+    {
+        if (!string.IsNullOrWhiteSpace(q.UdaName) && !string.IsNullOrWhiteSpace(q.UdaEquals))
+        {
+            var udaName = q.UdaName!;
+            if (!TryGetUserPropertyAsString(mo, udaName, out var udaValue))
+                return false;
+            if (!string.Equals(udaValue, q.UdaEquals, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(q.AttributeName))
+        {
+            var attributeName = q.AttributeName!;
+            if (!TryGetAttributeValue(mo, attributeName, out var attrValue))
+                return false;
+            if (!string.IsNullOrWhiteSpace(q.AttributeEquals) &&
+                !string.Equals(attrValue, q.AttributeEquals, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (!string.IsNullOrWhiteSpace(q.AttributeContains) &&
+                attrValue.IndexOf(q.AttributeContains, StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+        }
+
         return true;
     }
 
@@ -411,6 +598,132 @@ public sealed class TeklaModelService : ITeklaModelService
         }
 
         return false;
+    }
+
+    private static bool TryGetAttributeValue(TSM.ModelObject mo, string attributeName, out string value)
+    {
+        value = "";
+        if (string.IsNullOrWhiteSpace(attributeName)) return false;
+
+        var key = attributeName.Trim().ToUpperInvariant();
+        switch (key)
+        {
+            case "GUID":
+                value = mo.Identifier.GUID.ToString();
+                return true;
+            case "ID":
+                value = mo.Identifier.ID.ToString(CultureInfo.InvariantCulture);
+                return true;
+        }
+
+        if (TryGetUserPropertyAsString(mo, attributeName, out value))
+            return true;
+
+        var reportString = "";
+        if (mo.GetReportProperty(attributeName, ref reportString) && !string.IsNullOrWhiteSpace(reportString))
+        {
+            value = reportString;
+            return true;
+        }
+
+        var reportInt = 0;
+        if (mo.GetReportProperty(attributeName, ref reportInt))
+        {
+            value = reportInt.ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        var reportDouble = 0.0;
+        if (mo.GetReportProperty(attributeName, ref reportDouble))
+        {
+            value = reportDouble.ToString("G", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        if (mo is TSM.Part part)
+        {
+            switch (key)
+            {
+                case "NAME": value = part.Name ?? ""; return !string.IsNullOrWhiteSpace(value);
+                case "CLASS": value = part.Class ?? ""; return !string.IsNullOrWhiteSpace(value);
+                case "PROFILE": value = part.Profile?.ProfileString ?? ""; return !string.IsNullOrWhiteSpace(value);
+                case "MATERIAL": value = part.Material?.MaterialString ?? ""; return !string.IsNullOrWhiteSpace(value);
+                case "FINISH": value = part.Finish ?? ""; return !string.IsNullOrWhiteSpace(value);
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<string> BuildAttributeCandidateList(IReadOnlyList<string>? provided)
+    {
+        var set = new HashSet<string>(DefaultAttributeCandidates, StringComparer.OrdinalIgnoreCase);
+        if (provided != null)
+        {
+            foreach (var candidate in provided)
+                if (!string.IsNullOrWhiteSpace(candidate))
+                    set.Add(candidate.Trim());
+        }
+        return set.ToList();
+    }
+
+    private static bool ValueMatches(string candidate, string expected, bool exactMatch)
+    {
+        if (string.IsNullOrWhiteSpace(expected)) return false;
+        if (exactMatch) return string.Equals(candidate, expected, StringComparison.OrdinalIgnoreCase);
+        return candidate.IndexOf(expected, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static bool HasLineData(ModelObjectInfo beam) =>
+        beam.StartX.HasValue && beam.StartY.HasValue && beam.StartZ.HasValue &&
+        beam.EndX.HasValue && beam.EndY.HasValue && beam.EndZ.HasValue;
+
+    private static void AddConnectionSignature(
+        ModelObjectInfo beam,
+        IReadOnlyList<ModelObjectInfo> all,
+        double toleranceMm,
+        bool useStartPoint,
+        IDictionary<string, int> signatures)
+    {
+        var x = useStartPoint ? beam.StartX : beam.EndX;
+        var y = useStartPoint ? beam.StartY : beam.EndY;
+        var z = useStartPoint ? beam.StartZ : beam.EndZ;
+        if (!x.HasValue || !y.HasValue || !z.HasValue) return;
+
+        var neighbors = new List<string>();
+        foreach (var obj in all)
+        {
+            if (string.Equals(obj.Guid, beam.Guid, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!IsNearPoint(obj, x.Value, y.Value, z.Value, toleranceMm)) continue;
+            neighbors.Add(BuildNeighborLabel(obj));
+        }
+
+        if (neighbors.Count == 0) return;
+        var signature = string.Join(" + ", neighbors
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
+
+        signatures[signature] = signatures.TryGetValue(signature, out var cur) ? cur + 1 : 1;
+    }
+
+    private static bool IsNearPoint(ModelObjectInfo obj, double x, double y, double z, double toleranceMm)
+    {
+        var minX = (obj.MinX ?? obj.CenterX ?? x) - toleranceMm;
+        var minY = (obj.MinY ?? obj.CenterY ?? y) - toleranceMm;
+        var minZ = (obj.MinZ ?? obj.CenterZ ?? z) - toleranceMm;
+        var maxX = (obj.MaxX ?? obj.CenterX ?? x) + toleranceMm;
+        var maxY = (obj.MaxY ?? obj.CenterY ?? y) + toleranceMm;
+        var maxZ = (obj.MaxZ ?? obj.CenterZ ?? z) + toleranceMm;
+
+        return x >= minX && x <= maxX &&
+               y >= minY && y <= maxY &&
+               z >= minZ && z <= maxZ;
+    }
+
+    private static string BuildNeighborLabel(ModelObjectInfo obj)
+    {
+        var profile = string.IsNullOrWhiteSpace(obj.Profile) ? "(none)" : obj.Profile;
+        return (obj.Type ?? "") + ":" + profile;
     }
 
     private static bool ApplyUdaUpdates(

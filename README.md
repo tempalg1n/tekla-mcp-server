@@ -23,9 +23,11 @@ This server provides that bridge through the **Model Context Protocol**: a stand
 
 - Inspect connection status, model name, and object counts
 - Filter and search parts by type, class, profile, material, and name
+- Filter objects by UDA or arbitrary attribute value (including attribute discovery by value)
 - Compute weights and counts with the same filters used across tools
 - Group metrics by field (type, class, profile, material, name)
 - Analyze material breakdowns (bill-of-materials style)
+- Analyze unique connection types for a given profile (beam-end proximity heuristic)
 - Read the current UI selection in Tekla
 - Select objects in the Tekla UI by filter
 - Read and write user-defined attributes (UDAs) with safe preview-by-default writes
@@ -94,11 +96,13 @@ All tools use the `tekla_` prefix.
 | `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
+| `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
 | `tekla_count_objects` | Count objects matching filters. |
 | `tekla_sum_weight` | Sum weight for objects matching filters. |
 | `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`). |
 | `tekla_list_distinct_values` | Distinct values for a field with count + weight. |
+| `tekla_analyze_profile_connections` | Estimate unique connection/node types for members of a profile. |
 | `tekla_select_objects` | Select matching objects in the Tekla UI; returns `selectedCount` + preview. |
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
@@ -113,6 +117,8 @@ Most query and analytics tools accept:
 - `profile` — profile substring
 - `material` — material substring
 - `nameContains` — name substring
+- `udaName` + `udaEquals` — exact UDA match
+- `attributeName` + `attributeEquals` / `attributeContains` — exact/substring match for any known attribute
 
 ### Example prompts
 
@@ -121,6 +127,9 @@ Most query and analytics tools accept:
 - “Group beams by profile and show weight per group.”
 - “How many objects have class 20?”
 - “Select all class-20 objects in Tekla.”
+- “Find where value `BK1` is stored (`tekla_find_attributes_by_value`).”
+- “Select columns where `RU_FN1_MRK = BK1`.”
+- “How many unique connection types do beams with profile `20P` have?”
 - “Read UDA `USER_FIELD_1` and `USER_PHASE` for this GUID.”
 - “Preview setting `USER_FIELD_1=KMD; USER_PHASE=2` on all `I30K1` columns without applying.”
 

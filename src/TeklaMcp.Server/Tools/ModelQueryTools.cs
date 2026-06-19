@@ -12,8 +12,8 @@ public static class ModelQueryTools
 {
     [McpServerTool(Name = "tekla_list_objects")]
     [Description("List model objects with their core properties (guid, id, type, name, class, " +
-                 "profile, material, length, weight). Use 'limit' to cap the result — models can " +
-                 "hold tens of thousands of objects.")]
+                 "profile, material, length, weight, coordinates). Use 'limit' to cap the result — " +
+                 "models can hold tens of thousands of objects.")]
     public static IReadOnlyList<ModelObjectInfo> ListObjects(
         ITeklaModelService model,
         [Description("Maximum number of objects to return. Default 100.")] int limit = 100)
@@ -22,7 +22,8 @@ public static class ModelQueryTools
     [McpServerTool(Name = "tekla_find_objects")]
     [Description("Find objects matching optional filters. Any argument left empty is ignored. " +
                  "'type' and 'class' match exactly (case-insensitive); 'profile', 'material' and " +
-                 "'nameContains' match as case-insensitive substrings.")]
+                 "'nameContains' match as case-insensitive substrings. Supports UDA and generic " +
+                 "attribute filters to avoid guessing where a value is stored.")]
     public static IReadOnlyList<ModelObjectInfo> FindObjects(
         ITeklaModelService model,
         [Description("Object type, exact match, e.g. 'Beam', 'ContourPlate', 'Bolt'.")] string? type = null,
@@ -30,6 +31,11 @@ public static class ModelQueryTools
         [Description("Profile substring, e.g. 'IPE' or 'HEA300'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355'.")] string? material = null,
         [Description("Substring of the object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS' or 'RU_FN1_MRK'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Maximum number of objects to return. Default 100.")] int limit = 100)
         => model.FindObjects(
             new ObjectQuery
@@ -39,6 +45,11 @@ public static class ModelQueryTools
                 Profile = profile,
                 Material = material,
                 NameContains = nameContains,
+                UdaName = udaName,
+                UdaEquals = udaEquals,
+                AttributeName = attributeName,
+                AttributeEquals = attributeEquals,
+                AttributeContains = attributeContains,
             },
             limit);
 

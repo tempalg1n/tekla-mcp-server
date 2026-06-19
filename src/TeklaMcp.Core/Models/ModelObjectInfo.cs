@@ -3,8 +3,7 @@ namespace TeklaMcp.Core.Models;
 /// <summary>
 /// Lightweight, JSON-serializable snapshot of a single Tekla model object.
 /// This is intentionally flat and string-heavy so it maps cleanly to MCP tool output
-/// and is easy for an LLM to reason about. Geometry/relations are deliberately omitted
-/// for the read-only prototype.
+/// and is easy for an LLM to reason about.
 /// </summary>
 public sealed class ModelObjectInfo
 {
@@ -40,4 +39,49 @@ public sealed class ModelObjectInfo
 
     /// <summary>Assembly position number, when set.</summary>
     public string? AssemblyPos { get; set; }
+
+    /// <summary>Center X coordinate (mm) in model coordinate system, when available.</summary>
+    public double? CenterX { get; set; }
+
+    /// <summary>Center Y coordinate (mm) in model coordinate system, when available.</summary>
+    public double? CenterY { get; set; }
+
+    /// <summary>Center Z coordinate (mm) in model coordinate system, when available.</summary>
+    public double? CenterZ { get; set; }
+
+    /// <summary>Start X coordinate for linear objects (typically beams), when available.</summary>
+    public double? StartX { get; set; }
+
+    /// <summary>Start Y coordinate for linear objects (typically beams), when available.</summary>
+    public double? StartY { get; set; }
+
+    /// <summary>Start Z coordinate for linear objects (typically beams), when available.</summary>
+    public double? StartZ { get; set; }
+
+    /// <summary>End X coordinate for linear objects (typically beams), when available.</summary>
+    public double? EndX { get; set; }
+
+    /// <summary>End Y coordinate for linear objects (typically beams), when available.</summary>
+    public double? EndY { get; set; }
+
+    /// <summary>End Z coordinate for linear objects (typically beams), when available.</summary>
+    public double? EndZ { get; set; }
+
+    /// <summary>Solid bounding box minimum X coordinate (mm), when available.</summary>
+    public double? MinX { get; set; }
+
+    /// <summary>Solid bounding box minimum Y coordinate (mm), when available.</summary>
+    public double? MinY { get; set; }
+
+    /// <summary>Solid bounding box minimum Z coordinate (mm), when available.</summary>
+    public double? MinZ { get; set; }
+
+    /// <summary>Solid bounding box maximum X coordinate (mm), when available.</summary>
+    public double? MaxX { get; set; }
+
+    /// <summary>Solid bounding box maximum Y coordinate (mm), when available.</summary>
+    public double? MaxY { get; set; }
+
+    /// <summary>Solid bounding box maximum Z coordinate (mm), when available.</summary>
+    public double? MaxZ { get; set; }
 }

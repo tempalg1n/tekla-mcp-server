@@ -22,8 +22,13 @@ public static class ModelWorkflowTools
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
-        [Description("Substring of object name.")] string? nameContains = null)
-        => model.FindObjects(BuildQuery(type, @class, profile, material, nameContains)).Count;
+        [Description("Substring of object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null)
+        => model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains)).Count;
 
     [McpServerTool(Name = "tekla_sum_weight")]
     [Description("Sum weight (kg) for objects matching optional filters.")]
@@ -33,9 +38,14 @@ public static class ModelWorkflowTools
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
-        [Description("Substring of object name.")] string? nameContains = null)
+        [Description("Substring of object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains));
+        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains));
         var totalWeight = 0.0;
         var withWeight = 0;
         foreach (var obj in objects)
@@ -63,9 +73,14 @@ public static class ModelWorkflowTools
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Maximum number of groups to return. Default 50.")] int limit = 50)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains));
+        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains));
         var rows = objects
             .GroupBy(o => Normalize(GetGroupKey(o, groupBy)))
             .Select(g => new GroupedMetricRow
@@ -92,8 +107,13 @@ public static class ModelWorkflowTools
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Maximum number of values to return. Default 100.")] int limit = 100)
-        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, limit);
+        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, limit);
 
     [McpServerTool(Name = "tekla_select_objects")]
     [Description("Select objects in Tekla UI by filters and return selected count + preview.")]
@@ -104,15 +124,25 @@ public static class ModelWorkflowTools
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
+        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
+        [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
+        [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Safety limit for selected objects. Default 2000.")] int limit = 2000)
-        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains), limit);
+        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains), limit);
 
     private static ObjectQuery BuildQuery(
         string? type,
         string? @class,
         string? profile,
         string? material,
-        string? nameContains) =>
+        string? nameContains,
+        string? udaName = null,
+        string? udaEquals = null,
+        string? attributeName = null,
+        string? attributeEquals = null,
+        string? attributeContains = null) =>
         new ObjectQuery
         {
             Type = type,
@@ -120,6 +150,11 @@ public static class ModelWorkflowTools
             Profile = profile,
             Material = material,
             NameContains = nameContains,
+            UdaName = udaName,
+            UdaEquals = udaEquals,
+            AttributeName = attributeName,
+            AttributeEquals = attributeEquals,
+            AttributeContains = attributeContains,
         };
 
     private static string GetGroupKey(ModelObjectInfo obj, string groupBy)

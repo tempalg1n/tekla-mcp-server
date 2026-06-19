@@ -21,4 +21,21 @@ public sealed class ObjectQuery
 
     /// <summary>Substring of the object name.</summary>
     public string? NameContains { get; set; }
+
+    /// <summary>UDA field name for exact match, e.g. 'RU_FN1_MRK'.</summary>
+    public string? UdaName { get; set; }
+
+    /// <summary>Exact UDA value to match (case-insensitive).</summary>
+    public string? UdaEquals { get; set; }
+
+    /// <summary>
+    /// Generic attribute/report/UDA name to match, e.g. "ASSEMBLY_POS" or "RU_FN1_MRK".
+    /// </summary>
+    public string? AttributeName { get; set; }
+
+    /// <summary>Exact attribute value to match (case-insensitive).</summary>
+    public string? AttributeEquals { get; set; }
+
+    /// <summary>Substring attribute value match (case-insensitive).</summary>
+    public string? AttributeContains { get; set; }
 }
