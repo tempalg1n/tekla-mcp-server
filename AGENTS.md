@@ -71,6 +71,23 @@ Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
 Tool naming: `tekla_<verb>_<noun>`, snake_case. **Do not add write/mutating tools**
 without an explicit request and a safety gate (see existing UDA tools for the preview pattern).
 
+### Conventions added for the analytics tools
+
+- **`useSelection` scope switch.** Filter/analytics tools accept `useSelection` (bool). It maps
+  to `ObjectQuery.UseSelection`; both backends route the scan through the current UI selection
+  instead of the whole model (`EnumerateSource` in `TeklaModelService`). When you add a new
+  filter-based tool, plumb `useSelection` through `BuildQuery` for consistency.
+- **Assemblies via `ASSEMBLY_POS`.** Assembly grouping/counting uses the assembly mark
+  (`ASSEMBLY_POS` report property, already on `ModelObjectInfo.AssemblyPos`) — no per-object
+  `GetAssembly()` calls in the hot scan path. Identical marks = identical assembly types.
+  Only populated after numbering. Physical main-part detection is a future enhancement.
+- **Generic property reader.** Prefer extending `tekla_get_properties` (any report/UDA/built-in
+  name) over adding a new tool for each property you want to expose.
+- **QA checks** in `tekla_find_modeling_issues` are pure tool-layer heuristics over the DTO —
+  tune predicates there; no Tekla API needed.
+
+New tool files: `ModelAssemblyTools.cs`, `ModelQaTools.cs`, `ModelPropertyTools.cs`.
+
 ---
 
 ## 5. Building & testing

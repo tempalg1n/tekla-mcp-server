@@ -95,13 +95,19 @@ All tools use the `tekla_` prefix.
 | `tekla_list_objects` | List objects with core properties (with limit). |
 | `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
+| `tekla_get_properties` | Read any named properties (report props, UDAs, built-ins) for an object by GUID. |
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
 | `tekla_count_objects` | Count objects matching filters. |
 | `tekla_sum_weight` | Sum weight for objects matching filters. |
-| `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`). |
+| `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`, `assembly`). |
 | `tekla_list_distinct_values` | Distinct values for a field with count + weight. |
+| `tekla_list_assemblies` | List assembly marks (ASSEMBLY_POS) with part count + total weight. |
+| `tekla_count_assemblies` | Count distinct assembly marks (unique assembly types). |
+| `tekla_get_assembly_parts` | List all parts sharing a given assembly mark. |
+| `tekla_find_modeling_issues` | QA battery: missing material/profile/class, zero weight, not-numbered; grouped with sample GUIDs. |
+| `tekla_export_objects` | Export filtered objects as a CSV/Markdown table (bill-of-materials). |
 | `tekla_analyze_profile_connections` | Estimate unique connection/node types for members of a profile. |
 | `tekla_select_objects` | Select matching objects in the Tekla UI; supports UDA/attribute filters and `guidIn`; returns `selectedCount` + preview. |
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
@@ -120,6 +126,7 @@ Most query and analytics tools accept:
 - `udaName` + `udaEquals` — exact UDA match
 - `attributeName` + `attributeEquals` / `attributeContains` — exact/substring match for any known attribute
 - `guidIn` — explicit GUID allow-list (for `tekla_select_objects`)
+- `useSelection` — scope the tool to the **current Tekla UI selection** instead of the whole model (faster; enables "analyze what I selected" workflows)
 
 ### Example prompts
 
@@ -133,6 +140,12 @@ Most query and analytics tools accept:
 - “How many unique connection types do beams with profile `20P` have?”
 - “Read UDA `USER_FIELD_1` and `USER_PHASE` for this GUID.”
 - “Preview setting `USER_FIELD_1=KMD; USER_PHASE=2` on all `I30K1` columns without applying.”
+- “I’ve selected some parts — sum their weight and group by profile (`useSelection=true`).”
+- “How many unique assembly marks are there, and which are the heaviest?”
+- “List the parts of assembly `B1`.”
+- “Run modeling-issue checks and show what’s missing material or not numbered.”
+- “Read `VOLUME`, `AREA` and `PHASE` for this GUID (`tekla_get_properties`).”
+- “Export all class-20 beams as a CSV bill-of-materials.”
 
 ### UDA write safety
 

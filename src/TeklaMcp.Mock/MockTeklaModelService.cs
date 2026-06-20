@@ -74,7 +74,8 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     public IReadOnlyList<ModelObjectInfo> FindObjects(ObjectQuery query, int? limit = null)
     {
-        IEnumerable<ModelObjectInfo> q = _objects;
+        // Honor "scope = current UI selection" just like the real backend.
+        IEnumerable<ModelObjectInfo> q = query.UseSelection ? _selectedObjects : _objects;
         if (query.GuidIn != null && query.GuidIn.Count > 0)
         {
             var guidSet = new HashSet<string>(query.GuidIn.Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
@@ -111,6 +112,29 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     public ModelObjectInfo? GetObjectByGuid(string guid) =>
         _objects.FirstOrDefault(o => string.Equals(o.Guid, guid, StringComparison.OrdinalIgnoreCase));
+
+    public ObjectUdaResult GetProperties(string guid, IReadOnlyList<string> names)
+    {
+        var obj = GetObjectByGuid(guid);
+        if (obj is null)
+            return new ObjectUdaResult { Guid = guid ?? "", Backend = BackendName, Message = "Object not found." };
+
+        var result = new ObjectUdaResult
+        {
+            Guid = obj.Guid,
+            Id = obj.Id,
+            Type = obj.Type,
+            Backend = BackendName,
+        };
+
+        foreach (var name in names)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            if (TryGetAttributeValue(obj, name, out var value)) result.Udas[name] = value;
+        }
+
+        return result;
+    }
 
     /// <summary>Pretend the user has selected objects in the UI.</summary>
     public IReadOnlyList<ModelObjectInfo> GetSelectedObjects() => _selectedObjects;
@@ -341,6 +365,8 @@ public sealed class MockTeklaModelService : ITeklaModelService
             case "MATERIAL": value = obj.Material; return true;
             case "ASSEMBLY_POS": value = obj.AssemblyPos ?? ""; return !string.IsNullOrEmpty(value);
             case "FINISH": value = obj.Finish ?? ""; return !string.IsNullOrEmpty(value);
+            case "WEIGHT": value = obj.WeightKg?.ToString() ?? ""; return obj.WeightKg.HasValue;
+            case "LENGTH": value = obj.LengthMm?.ToString() ?? ""; return obj.LengthMm.HasValue;
             default:
                 if (!_udasByGuid.TryGetValue(obj.Guid, out var udas)) return false;
                 if (!udas.TryGetValue(attributeName, out value)) return false;

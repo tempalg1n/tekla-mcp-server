@@ -16,8 +16,11 @@ public static class ModelQueryTools
                  "models can hold tens of thousands of objects.")]
     public static IReadOnlyList<ModelObjectInfo> ListObjects(
         ITeklaModelService model,
+        [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of objects to return. Default 100.")] int limit = 100)
-        => model.GetAllObjects(limit);
+        => useSelection
+            ? model.FindObjects(new ObjectQuery { UseSelection = true }, limit)
+            : model.GetAllObjects(limit);
 
     [McpServerTool(Name = "tekla_find_objects")]
     [Description("Find objects matching optional filters. Any argument left empty is ignored. " +
@@ -36,6 +39,7 @@ public static class ModelQueryTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS' or 'RU_FN1_MRK'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of objects to return. Default 100.")] int limit = 100)
         => model.FindObjects(
             new ObjectQuery
@@ -50,6 +54,7 @@ public static class ModelQueryTools
                 AttributeName = attributeName,
                 AttributeEquals = attributeEquals,
                 AttributeContains = attributeContains,
+                UseSelection = useSelection,
             },
             limit);
 

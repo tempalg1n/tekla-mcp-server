@@ -117,15 +117,45 @@ public sealed class TeklaModelService : ITeklaModelService
         var model = GetConnectedModel();
         var result = new List<ModelObjectInfo>();
 
-        var en = model.GetModelObjectSelector().GetAllObjects();
-        while (en.MoveNext())
+        foreach (var mo in EnumerateSource(model, query))
         {
-            var mo = en.Current;
             var info = Map(mo);
             if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
             result.Add(info);
             if (limit is int n && result.Count >= n) break;
         }
+        return result;
+    }
+
+    public ObjectUdaResult GetProperties(string guid, IReadOnlyList<string> names)
+    {
+        var result = new ObjectUdaResult { Guid = guid ?? "", Backend = BackendName };
+
+        try
+        {
+            var model = GetConnectedModel();
+            var mo = TrySelectObjectByGuid(model, guid ?? "");
+            if (mo is null)
+            {
+                result.Message = "Object not found.";
+                return result;
+            }
+
+            result.Guid = mo.Identifier.GUID.ToString();
+            result.Id = mo.Identifier.ID;
+            result.Type = mo.GetType().Name;
+
+            foreach (var name in names)
+            {
+                if (string.IsNullOrWhiteSpace(name)) continue;
+                if (TryGetAttributeValue(mo, name, out var value)) result.Udas[name] = value;
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = ex.Message;
+        }
+
         return result;
     }
 
@@ -164,14 +194,11 @@ public sealed class TeklaModelService : ITeklaModelService
         try
         {
             var model = GetConnectedModel();
-            var selector = model.GetModelObjectSelector();
             var toSelect = new ArrayList();
             var preview = new List<ModelObjectInfo>();
 
-            var en = selector.GetAllObjects();
-            while (en.MoveNext())
+            foreach (var mo in EnumerateSource(model, query))
             {
-                var mo = en.Current;
                 var info = Map(mo);
                 if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
@@ -395,10 +422,8 @@ public sealed class TeklaModelService : ITeklaModelService
         try
         {
             var model = GetConnectedModel();
-            var en = model.GetModelObjectSelector().GetAllObjects();
-            while (en.MoveNext())
+            foreach (var mo in EnumerateSource(model, query))
             {
-                var mo = en.Current;
                 var info = Map(mo);
                 if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
@@ -431,6 +456,30 @@ public sealed class TeklaModelService : ITeklaModelService
             throw new InvalidOperationException(
                 "No connection to Tekla Structures. Start Tekla and open a model first.");
         return model;
+    }
+
+    /// <summary>
+    /// Yield the objects a query should operate on: either the current UI selection
+    /// (<see cref="ObjectQuery.UseSelection"/>) or every object in the model. Centralizing
+    /// this lets every filter-based method honor the "scope = selection" switch.
+    /// </summary>
+    private static IEnumerable<TSM.ModelObject> EnumerateSource(TSM.Model model, ObjectQuery query)
+    {
+        if (query != null && query.UseSelection)
+        {
+            var selected = new TSMUI.ModelObjectSelector().GetSelectedObjects();
+            while (selected.MoveNext())
+            {
+                if (selected.Current != null) yield return selected.Current;
+            }
+            yield break;
+        }
+
+        var all = model.GetModelObjectSelector().GetAllObjects();
+        while (all.MoveNext())
+        {
+            if (all.Current != null) yield return all.Current;
+        }
     }
 
     /// <summary>Convert a Tekla <c>ModelObject</c> into our flat DTO. Returns null to skip.</summary>
