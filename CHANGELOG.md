@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New tool `tekla_get_properties` — read any named properties (report properties, UDAs, or built-ins like `VOLUME`/`AREA`/`WEIGHT`) for an object by GUID, without a dedicated tool per field
+- New tool `tekla_export_objects` — export filtered objects as a CSV or Markdown table (bill-of-materials handoff)
+- New tool `tekla_list_assemblies` — assembly marks (`ASSEMBLY_POS`) with part count and total weight per mark
+- New tool `tekla_count_assemblies` — count distinct assembly marks (unique assembly types)
+- New tool `tekla_get_assembly_parts` — list all parts sharing a given assembly mark
+- New tool `tekla_find_modeling_issues` — QA battery (missing material/profile/class, zero weight, not-numbered) grouped with sample GUIDs
+- `useSelection` scope switch on query/analytics tools to operate on the current Tekla UI selection instead of the whole model
+- `assembly` group key for `tekla_group_weight_by` and `tekla_list_distinct_values`
+- Core: `ITeklaModelService.GetProperties`, `ObjectQuery.UseSelection`, and a new `QaReport` DTO
+
+### Changed
+
+- Tekla and Mock backends route filter-based scans (`FindObjects`, `SelectObjects`, `SetUdas`) through a shared source selector so every filter tool honors `useSelection`
+
 ## [0.2.1] - 2026-06-19
 
 Patch release focused on improving `tekla_select_objects` usability for agent workflows.

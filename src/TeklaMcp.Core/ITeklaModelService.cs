@@ -44,6 +44,14 @@ public interface ITeklaModelService
     /// <summary>Look up a single object by its Tekla GUID. Returns <c>null</c> if not found.</summary>
     ModelObjectInfo? GetObjectByGuid(string guid);
 
+    /// <summary>
+    /// Read arbitrary named properties for one object by GUID: report properties
+    /// (e.g. VOLUME, AREA, HEIGHT), UDAs, or built-ins (GUID, ID, NAME, CLASS, PROFILE,
+    /// MATERIAL, WEIGHT, LENGTH, ASSEMBLY_POS). Unknown/blank names are skipped. Uses the
+    /// same name resolution as the attribute filters, so any name usable in a filter works.
+    /// </summary>
+    ObjectUdaResult GetProperties(string guid, IReadOnlyList<string> names);
+
     /// <summary>Objects currently selected by the user in the Tekla Structures UI.</summary>
     IReadOnlyList<ModelObjectInfo> GetSelectedObjects();
 

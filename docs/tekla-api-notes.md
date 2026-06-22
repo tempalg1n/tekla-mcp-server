@@ -36,6 +36,9 @@ would use `Tekla.Structures.Plugins`).
 | UI selection write | `ModelObjectSelector.Select(ArrayList)` | Verified |
 | UDA read | `GetUserProperty(name, ref …)` | Implemented; verify on your template |
 | UDA write | `SetUserProperty` + `Modify()` | Implemented; verify on your template |
+| Scope = selection | `EnumerateSource` switches scan to `Model.UI.ModelObjectSelector().GetSelectedObjects()` when `ObjectQuery.UseSelection` | Implemented; verify selection scan |
+| Generic property read | `tekla_get_properties` → `TryGetAttributeValue` (report props + UDA + built-ins) | Implemented; verify report-property names |
+| Assembly grouping | `ASSEMBLY_POS` report property as assembly mark (no `GetAssembly()` in hot path) | Verify `ASSEMBLY_POS` is populated after numbering |
 
 ### Useful report properties
 

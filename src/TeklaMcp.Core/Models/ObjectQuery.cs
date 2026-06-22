@@ -45,4 +45,12 @@ public sealed class ObjectQuery
     /// Optional explicit GUID allow-list. When provided, only objects from this list are matched.
     /// </summary>
     public List<string> GuidIn { get; set; } = new List<string>();
+
+    /// <summary>
+    /// When true, the query operates ONLY on the objects currently selected by the user in
+    /// the Tekla UI, instead of scanning the whole model. Enables "analyze what I selected"
+    /// workflows and is much faster on large models. Ignored by the mock unless a selection
+    /// has been made.
+    /// </summary>
+    public bool UseSelection { get; set; }
 }
