@@ -38,3 +38,7 @@ Thumbs.db
 *.db2
 *.model/
 TeklaStructuresModels/
+
+# ---- Generated Tekla API reference (Trimble docs — local only, do NOT publish) ----
+# Produced by tools/TeklaApiDoc from the Tekla assemblies; regenerate locally.
+reference/

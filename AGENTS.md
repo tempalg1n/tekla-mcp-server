@@ -133,6 +133,11 @@ project under `tests/` is welcome (keep it `net8.0`, mock-only).
 
 ## 6. Reference docs
 
+- **Verify Tekla API calls against the local reference before writing them.** Generate a
+  grep-friendly Markdown reference with `tools/TeklaApiDoc` (reflects over the Tekla assemblies,
+  any OS) into `reference/tekla-api/` (git-ignored — Trimble content), then
+  `grep -rl "<Member>" reference/tekla-api`. Faster and more reliable than the web docs for
+  confirming signatures/overloads/enums. See [tools/TeklaApiDoc/README.md](tools/TeklaApiDoc/README.md).
 - Tekla Open API 2026: https://developer.tekla.com/doc/tekla-structures/2026
 - MCP C# SDK: https://github.com/modelcontextprotocol/csharp-sdk
 - Local: [docs/architecture.md](docs/architecture.md), [docs/tekla-api-notes.md](docs/tekla-api-notes.md)
