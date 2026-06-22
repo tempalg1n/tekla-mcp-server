@@ -12,7 +12,8 @@ Official documentation: https://developer.tekla.com/doc/tekla-structures/2026/te
 - Gradual migration from .NET Framework to modern .NET started in 2024; this project
   currently targets **`net48`** for live Tekla integration.
 - NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`, `Tekla.Structures.Plugins`,
-  etc., with versions like `2026.0.x` (project currently pins `2023.0.0` for tested environments).
+  etc., versions `2021.0.0` .. `2026.0.x`. The build's Tekla version is **configurable**
+  (default `2023.0.0`) — see "Tekla version compatibility" below.
 
 ## Connection model
 
@@ -20,6 +21,33 @@ The server is a **standalone process** that connects to an **already running** T
 with an open model. Connection is established via `new Tekla.Structures.Model.Model()` and
 checked with `model.GetConnectionStatus()`. This is not an in-process Tekla plugin (that
 would use `Tekla.Structures.Plugins`).
+
+## Tekla version compatibility
+
+The Open API DLLs talk to the running Tekla Structures over a **version-locked protocol**, so the
+running DLLs must match the running Tekla version. There is no single set of DLLs that works
+across all versions — you either build per version, or load the matching DLLs at runtime.
+
+**Build for a specific version** (`src/TeklaMcp.Tekla/TeklaMcp.Tekla.csproj`, default `2023.0.0`):
+
+- From NuGet (versions `2021.0.0` .. `2026.0.x`):
+  ```powershell
+  dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2021.0.0
+  ```
+  Exact version strings: https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json
+- From a local Tekla install `bin` (any version, incl. ones not on NuGet, or an exact patch):
+  ```powershell
+  dotnet build TeklaMcp.sln -c Release -p:TeklaBinDir="C:\Program Files\Tekla Structures\2021.0\bin"
+  ```
+
+Each build ships the matching Tekla DLLs, so run the build whose version matches your installed
+Tekla. (`net8.0` mock builds are unaffected — they never reference Tekla.)
+
+**One build for all versions** (not implemented yet): compile against a baseline version with
+`<Private>false</Private>` and add an `AppDomain.AssemblyResolve` handler that loads
+`Tekla.Structures*.dll` from the installed Tekla's `bin` at runtime. Locating that folder needs
+the Windows registry (`SOFTWARE\Tekla\Structures`) or a `TEKLA_BIN_DIR` env var, because the MCP
+server is launched separately from Tekla and does not inherit its process environment.
 
 ## APIs used in `TeklaModelService.cs`
 

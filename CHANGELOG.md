@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Build the live server for a specific **Tekla version**: `dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2021.0.0` (NuGet, `2021.0.0`–`2026.0.x`) or `-p:TeklaBinDir="…\Tekla Structures\<ver>\bin"` for a local install. Default stays `2023.0.0`. The Open API DLLs are version-locked to the running Tekla, so build the one matching your install.
+
 ## [0.3.0] - 2026-06-22
 
 First release with **write** capability: agents can now create, edit and delete model objects — preview-by-default with `apply=true` to commit, and `MCP_ORIGIN` tagging for traceability. Adds geometry/grid resolution, parametric generators, and "find & fix" tools for columns.
