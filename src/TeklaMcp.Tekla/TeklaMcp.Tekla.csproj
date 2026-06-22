@@ -3,47 +3,44 @@
   <!--
     REAL Tekla Open API implementation. Windows-only (net48).
 
-    BUILD FOR A SPECIFIC TEKLA VERSION. The Open API DLLs talk to the running Tekla over a
-    version-locked protocol, so the build must match the installed/running Tekla version.
-    Pick the version one of two ways (default = tested baseline 2023.0.0):
+    UNIVERSAL BUILD — one build works with ANY installed Tekla version (2021+):
+      - Compiles against a BASELINE Tekla API (default 2021.0.0, the lowest supported version),
+        so the code never uses members missing from older versions.
+      - Does NOT ship the Tekla DLLs (ExcludeAssets="runtime"). At runtime,
+        TeklaAssemblyResolver loads the Tekla.* assemblies from the installed/running Tekla,
+        so the version-locked Open API protocol always matches the running Tekla.
 
-      1) From NuGet (versions 2021.0.0 .. 2026.0.x are published):
-           dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2021.0.0
-         Exact version strings:
-           https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json
-
-      2) From a local Tekla install 'bin' folder (any version, incl. ones not on NuGet, or to
-         match an exact install). DLLs are copied to output so the server is self-contained:
-           dotnet build TeklaMcp.sln -c Release -p:TeklaBinDir="C:\Program Files\Tekla Structures\2021.0\bin"
-
-    See docs/tekla-api-notes.md -> "Tekla version compatibility".
+    Overrides (rarely needed):
+      -p:TeklaVersion=2024.0.0      compile against a different baseline (from NuGet)
+      -p:TeklaBinDir="...\bin"      compile against a local install's DLLs (no NuGet)
   -->
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
     <RootNamespace>TeklaMcp.Tekla</RootNamespace>
     <PlatformTarget>x64</PlatformTarget>
-    <TeklaVersion Condition="'$(TeklaVersion)' == ''">2023.0.0</TeklaVersion>
+    <TeklaVersion Condition="'$(TeklaVersion)' == ''">2021.0.0</TeklaVersion>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\TeklaMcp.Core\TeklaMcp.Core.csproj" />
   </ItemGroup>
 
-  <!-- Default: Tekla Open API from NuGet, pinned to $(TeklaVersion). -->
+  <!-- Compile against the baseline from NuGet, but do NOT copy the Tekla DLLs to output
+       (the runtime resolver supplies the installed version instead). -->
   <ItemGroup Condition="'$(TeklaBinDir)' == ''">
-    <PackageReference Include="Tekla.Structures" Version="$(TeklaVersion)" />
-    <PackageReference Include="Tekla.Structures.Model" Version="$(TeklaVersion)" />
+    <PackageReference Include="Tekla.Structures" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="Tekla.Structures.Model" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- Alternative: reference the DLLs directly from an installed Tekla 'bin' folder. -->
+  <!-- Alternative compile source: a local Tekla install's DLLs (also NOT copied to output). -->
   <ItemGroup Condition="'$(TeklaBinDir)' != ''">
     <Reference Include="Tekla.Structures">
       <HintPath>$(TeklaBinDir)\Tekla.Structures.dll</HintPath>
-      <Private>true</Private>
+      <Private>false</Private>
     </Reference>
     <Reference Include="Tekla.Structures.Model">
       <HintPath>$(TeklaBinDir)\Tekla.Structures.Model.dll</HintPath>
-      <Private>true</Private>
+      <Private>false</Private>
     </Reference>
   </ItemGroup>
 

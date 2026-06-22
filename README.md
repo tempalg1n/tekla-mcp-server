@@ -198,7 +198,7 @@ dotnet build TeklaMcp.sln -c Release
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release
 ```
 
-> **Match your Tekla version.** The default build targets Tekla **2023**. For a different version, add `-p:TeklaVersion=2021.0.0` (NuGet, `2021.0.0`–`2026.0.x`) or `-p:TeklaBinDir="C:\Program Files\Tekla Structures\2021.0\bin"` to the build command. The Open API DLLs are version-locked to the running Tekla. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
+> **Works with any Tekla version (2021+).** The live build is **universal** — it does not bundle Tekla DLLs and loads them from your installed/running Tekla at runtime, so one build matches whatever version you run. No per-version download. If auto-detection fails, set the `TEKLA_BIN_DIR` environment variable to your Tekla `bin` folder. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
 
 Force the mock backend even on Windows (e.g. when Tekla is not open):
 
