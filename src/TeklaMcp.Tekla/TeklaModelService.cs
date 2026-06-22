@@ -502,16 +502,47 @@ public sealed class TeklaModelService : ITeklaModelService
     private static void AddGridLines(string axis, string coordString, List<GridLineInfo> sink)
     {
         if (string.IsNullOrWhiteSpace(coordString)) return;
-        var tokens = coordString.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-        var index = 0;
-        foreach (var token in tokens)
+        var coords = ParseGridCoordinates(coordString);
+        for (var index = 0; index < coords.Count; index++)
         {
-            if (!double.TryParse(token.Replace(",", "."), NumberStyles.Float, CultureInfo.InvariantCulture, out var coord))
-                continue;
-            sink.Add(new GridLineInfo { Axis = axis, Label = LabelFor(axis, index), Coordinate = coord });
-            index++;
+            sink.Add(new GridLineInfo { Axis = axis, Label = LabelFor(axis, index), Coordinate = coords[index] });
         }
     }
+
+    private static List<double> ParseGridCoordinates(string coordString)
+    {
+        var coords = new List<double>();
+        var tokens = coordString.Split(new[] { ' ', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var rawToken in tokens)
+        {
+            var token = rawToken.Trim();
+            var starIndex = token.IndexOf('*');
+
+            // Tekla grids often use repeat syntax such as "4*6000".
+            if (starIndex > 0 &&
+                starIndex < token.Length - 1 &&
+                int.TryParse(token.Substring(0, starIndex), NumberStyles.Integer, CultureInfo.InvariantCulture, out var repeat) &&
+                repeat > 0 &&
+                TryParseInvariantDouble(token.Substring(starIndex + 1), out var step))
+            {
+                if (coords.Count == 0) coords.Add(0d);
+                var current = coords[coords.Count - 1];
+                for (var i = 0; i < repeat; i++)
+                {
+                    current += step;
+                    coords.Add(current);
+                }
+                continue;
+            }
+
+            if (TryParseInvariantDouble(token, out var absoluteCoord))
+                coords.Add(absoluteCoord);
+        }
+        return coords;
+    }
+
+    private static bool TryParseInvariantDouble(string token, out double value)
+        => double.TryParse(token.Replace(",", "."), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
 
     private static string LabelFor(string axis, int index)
     {
