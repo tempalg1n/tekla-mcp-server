@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cross-platform Tekla Open API reference generator.
+
+    Reflects (metadata-only, via System.Reflection.MetadataLoadContext) over the
+    Tekla.Structures.* assemblies — works on any OS, even reading net48 DLLs from a
+    net8 process — and emits Markdown signature docs + an INDEX for grep-based navigation.
+
+    NOT part of the server build / solution. Run it manually; the OUTPUT is gitignored
+    (Tekla docs are Trimble's — do not publish them). See tools/TeklaApiDoc/README.md.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- Dev utility: allow running on a newer installed runtime (e.g. .NET 10) -->
+    <RollForward>Major</RollForward>
+    <RootNamespace>TeklaApiDoc</RootNamespace>
+    <AssemblyName>TeklaApiDoc</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
