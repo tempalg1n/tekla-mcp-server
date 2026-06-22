@@ -198,6 +198,8 @@ dotnet build TeklaMcp.sln -c Release
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release
 ```
 
+> **Works with any Tekla version (2021+).** The live build is **universal** — it does not bundle Tekla DLLs and loads them from your installed/running Tekla at runtime, so one build matches whatever version you run. No per-version download. If auto-detection fails, set the `TEKLA_BIN_DIR` environment variable to your Tekla `bin` folder. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
+
 Force the mock backend even on Windows (e.g. when Tekla is not open):
 
 ```powershell

@@ -19,6 +19,19 @@ Without Tekla, use the mock backend:
 dotnet run --project src/TeklaMcp.Server
 ```
 
+### Tekla version
+
+The live build is **universal** — it works with any installed Tekla (2021+) by loading the Tekla
+DLLs from your running Tekla at runtime, so you don't choose a version at build time:
+
+```powershell
+dotnet build TeklaMcp.sln -c Release
+```
+
+If the server can't locate Tekla automatically, set `TEKLA_BIN_DIR` to the Tekla `bin` folder.
+Advanced: `-p:TeklaVersion=2024.0.0` changes the compile baseline. See
+[docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility) for details.
+
 ## Adding a new capability
 
 Follow the pattern documented in [AGENTS.md](AGENTS.md):

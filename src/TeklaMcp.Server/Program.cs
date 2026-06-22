@@ -25,9 +25,16 @@ var forceMock = Environment.GetEnvironmentVariable("TEKLA_MCP_USE_MOCK") == "1";
 
 #if NET48
 if (forceMock)
+{
     builder.Services.AddSingleton<ITeklaModelService, MockTeklaModelService>();
+}
 else
+{
+    // One build, any Tekla version: resolve the Tekla Open API assemblies from the
+    // installed/running Tekla at runtime. Must run before the first Tekla type is touched.
+    TeklaMcp.Tekla.TeklaAssemblyResolver.Register();
     builder.Services.AddSingleton<ITeklaModelService, TeklaMcp.Tekla.TeklaModelService>();
+}
 #else
 _ = forceMock; // mock is the only option on this TFM
 builder.Services.AddSingleton<ITeklaModelService, MockTeklaModelService>();

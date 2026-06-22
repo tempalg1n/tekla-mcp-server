@@ -31,7 +31,8 @@ needs a live model.
 - Gradual migration from .NET Framework to modern .NET started in 2024; this project
   currently targets **`net48`** for live Tekla integration.
 - NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`, `Tekla.Structures.Plugins`,
-  etc., with versions like `2026.0.x` (project currently pins `2023.0.0` for tested environments).
+  etc., versions `2021.0.0` .. `2026.0.x`. The build compiles against a baseline (default
+  `2021.0.0`) but works with any installed version at runtime — see "Tekla version compatibility".
 
 ## Connection model
 
@@ -39,6 +40,31 @@ The server is a **standalone process** that connects to an **already running** T
 with an open model. Connection is established via `new Tekla.Structures.Model.Model()` and
 checked with `model.GetConnectionStatus()`. This is not an in-process Tekla plugin (that
 would use `Tekla.Structures.Plugins`).
+
+## Tekla version compatibility
+
+The Open API DLLs talk to the running Tekla over a **version-locked protocol**, so the running
+DLLs must match the running Tekla version. The live build solves this with **one universal build**
+(no per-version artifacts):
+
+- `TeklaMcp.Tekla` compiles against a **baseline** API (`TeklaVersion`, default `2021.0.0` — the
+  lowest supported version) so the code never uses members absent from older versions.
+- It does **not** ship the Tekla DLLs (`ExcludeAssets="runtime"`). At runtime,
+  `TeklaAssemblyResolver` (registered in `Program.cs` for the net48 build) handles
+  `AppDomain.AssemblyResolve` and loads `Tekla.*` (and their dependency closure) from the
+  installed Tekla's `bin`.
+
+So `dotnet build TeklaMcp.sln -c Release` produces one EXE that works with any installed Tekla
+(2021+); it auto-binds to whatever version is running. (`net8.0` mock builds never reference Tekla.)
+
+**Locating the Tekla `bin`** (in order): the `TEKLA_BIN_DIR` env var → the running
+`TeklaStructures.exe` process's folder (best — matches the open instance) → the Windows registry
+(`SOFTWARE\Tekla\Structures\<version>`). If none is found, connection fails with a clear message.
+
+**Build overrides** (rarely needed): `-p:TeklaVersion=2024.0.0` (a different baseline from NuGet;
+exact strings at https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json) or
+`-p:TeklaBinDir="...\bin"` (compile against a local install, e.g. a version not on NuGet). Neither
+bundles the DLLs — the runtime resolver still supplies them.
 
 ## APIs used in `TeklaModelService.cs`
 
