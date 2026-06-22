@@ -114,6 +114,26 @@ All tools use the `tekla_` prefix.
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
 | `tekla_set_udas_by_filter` | Bulk UDA update by filter (`apply=false` by default). |
 
+### Write tools — create / edit / delete
+
+> ⚠️ **Mutating tools.** Every write tool runs in **preview mode by default** (`apply=false`): it returns a plan (counts + preview) and changes nothing. Pass `apply=true` to commit. Created/modified objects are tagged with the `MCP_ORIGIN` UDA so they can be found and reverted; Tekla's native **Ctrl+Z** also undoes committed changes. Coordinates are **global** model coordinates (mm).
+
+| Tool | Description |
+|---|---|
+| `tekla_list_grids` | List grid lines (axis, label, coordinate). |
+| `tekla_resolve_point` | Resolve a point from axis labels + elevation (e.g. `1` × `Д` × `6000`). |
+| `tekla_create_beam` | Create a beam between two points. |
+| `tekla_create_column` | Create a vertical column at (x,y) from bottomZ to topZ. |
+| `tekla_create_plate` | Create a contour plate from 3+ points. |
+| `tekla_modify_part` | Edit one part: profile/material/class/name and/or endpoints. |
+| `tekla_swap_handles` | Swap start/end handles of matching parts. |
+| `tekla_delete_objects` | Delete objects by filter or GUID list. |
+| `tekla_create_beam_between_grids` | Create a beam between two grid intersections at an elevation. |
+| `tekla_create_column_grid` | Create columns at every X×Y coordinate intersection. |
+| `tekla_generate_frame` | Generate a full bayed frame (columns + per-story beams). |
+| `tekla_straighten_columns` | Re-plumb crooked columns (align top over bottom). |
+| `tekla_fix_column_handles` | Re-orient flipped columns (swap inverted handles). |
+
 ### Shared filter parameters
 
 Most query and analytics tools accept:

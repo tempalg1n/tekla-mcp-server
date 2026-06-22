@@ -88,6 +88,27 @@ without an explicit request and a safety gate (see existing UDA tools for the pr
 
 New tool files: `ModelAssemblyTools.cs`, `ModelQaTools.cs`, `ModelPropertyTools.cs`.
 
+### Conventions for WRITE tools (create / edit / delete)
+
+Write tools are now in scope (explicitly requested, with safety gates). Rules:
+
+- **Preview-by-default.** Every mutating tool takes `apply` (default false). With `apply=false`
+  NOTHING is written — return a `WriteResult` plan (counts + preview). Only `apply=true` commits.
+- **Tag origin.** Backends stamp created/modified objects with the `MCP_ORIGIN` UDA so agent
+  output is findable and reversible. Keep this behavior.
+- **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
+- **Small service surface.** The interface has only five write methods: `GetGrids`,
+  `ResolvePoint`, `CreateParts`, `ModifyParts`, `DeleteObjects`. **Generators and fixers
+  (`tekla_generate_frame`, `tekla_straighten_columns`, `tekla_fix_column_handles`, …) live in
+  the TOOL layer** and compose those five — do NOT add per-generator interface methods.
+- **Global coordinates.** Tool inputs are global model coordinates (mm). The Tekla backend forces
+  the global `TransformationPlane` around mutations (`WorkPlaneHandler`); preserve that.
+- Shared parsing/query helpers for write tools live in `ToolHelpers.cs`.
+
+New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTools.cs`.
+The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`, grid parsing) is the
+most under-verified code in the repo — see `docs/tekla-api-notes.md`.
+
 ---
 
 ## 5. Building & testing
