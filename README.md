@@ -91,6 +91,7 @@ All tools use the `tekla_` prefix.
 | Tool | Description |
 |---|---|
 | `tekla_get_connection_info` | Check whether a model is open; return name, path, and active backend. |
+| `tekla_report_gap` | Report a missing capability / insufficient data; returns a ready-to-file issue draft. Use instead of scripting around gaps. |
 | `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. |
 | `tekla_list_objects` | List objects with core properties (with limit). |
 | `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
@@ -133,6 +134,10 @@ All tools use the `tekla_` prefix.
 | `tekla_generate_frame` | Generate a full bayed frame (columns + per-story beams). |
 | `tekla_straighten_columns` | Re-plumb crooked columns (align top over bottom). |
 | `tekla_fix_column_handles` | Re-orient flipped columns (swap inverted handles). |
+
+### Reporting gaps instead of scripting
+
+The server ships MCP **instructions** telling connecting agents: do the work with these tools, and **don't work around missing functionality with ad-hoc scripts** or fabricate data. If a tool or data field is missing, the agent calls `tekla_report_gap`, which returns a ready-to-file GitHub issue draft (and logs the request locally) for you to file. The server never creates issues itself (it holds no GitHub credentials).
 
 ### Shared filter parameters
 
