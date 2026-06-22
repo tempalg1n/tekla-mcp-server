@@ -199,6 +199,25 @@ npx @modelcontextprotocol/inspector dotnet run --project src/TeklaMcp.Server
 
 A Python smoke-test script is available at [scripts/mcp_smoke_test.py](scripts/mcp_smoke_test.py).
 
+### Safe rebuild helper (Windows)
+
+For local development, you can use [scripts/build-safe.ps1](scripts/build-safe.ps1).  
+It stops running `TeklaMcp.Server` processes (to avoid locked `net48` DLLs), then runs `clean` + `build`.
+
+```powershell
+# default: kill running server processes, clean, build (Release)
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1
+
+# build server project only
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1 -ServerOnly
+
+# faster loop: skip clean
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1 -SkipClean
+
+# include Python MCP smoke test after build
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1 -RunSmokeTest
+```
+
 ### Install from a GitHub Release (recommended for Windows)
 
 1. Open **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** and download `TeklaMcp.Server-{version}-net48-win-x64.zip`.
