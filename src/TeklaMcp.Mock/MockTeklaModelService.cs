@@ -35,6 +35,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
     private readonly Dictionary<string, Dictionary<string, string>> _udasByGuid =
         new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
     private List<ModelObjectInfo> _selectedObjects;
+    private int _nextId = 100000;
 
     public MockTeklaModelService()
     {
@@ -334,6 +335,174 @@ public sealed class MockTeklaModelService : ITeklaModelService
         }
 
         return result;
+    }
+
+    // -- Geometry / grids ---------------------------------------------------------------
+
+    private static readonly List<GridLineInfo> Grids = new List<GridLineInfo>
+    {
+        new GridLineInfo { Axis = "X", Label = "1", Coordinate = 0 },
+        new GridLineInfo { Axis = "X", Label = "2", Coordinate = 6000 },
+        new GridLineInfo { Axis = "X", Label = "3", Coordinate = 12000 },
+        new GridLineInfo { Axis = "Y", Label = "А", Coordinate = 0 },
+        new GridLineInfo { Axis = "Y", Label = "Б", Coordinate = 6000 },
+        new GridLineInfo { Axis = "Y", Label = "Д", Coordinate = 12000 },
+    };
+
+    public IReadOnlyList<GridLineInfo> GetGrids() => Grids;
+
+    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z)
+    {
+        var result = new PointResult { AxisX = axisXLabel, AxisY = axisYLabel, Z = z };
+        var gx = Grids.FirstOrDefault(g => g.Axis == "X" && Eq(g.Label, axisXLabel));
+        var gy = Grids.FirstOrDefault(g => g.Axis == "Y" && Eq(g.Label, axisYLabel));
+        if (gx is null || gy is null)
+        {
+            result.Message = $"Grid label not found (X='{axisXLabel}': {(gx != null)}, Y='{axisYLabel}': {(gy != null)}).";
+            return result;
+        }
+        result.Resolved = true;
+        result.X = gx.Coordinate;
+        result.Y = gy.Coordinate;
+        return result;
+    }
+
+    // -- Mutations ----------------------------------------------------------------------
+
+    public WriteResult CreateParts(IReadOnlyList<PartSpec> specs, bool apply)
+    {
+        var result = new WriteResult { Operation = "create", Applied = apply, Backend = BackendName };
+        if (specs == null || specs.Count == 0) { result.Message = "No specs provided."; return result; }
+
+        foreach (var spec in specs)
+        {
+            var guid = Guid.NewGuid().ToString();
+            var info = MakeInfoFromSpec(spec, guid, _nextId++);
+            result.PlannedCount++;
+            if (result.Preview.Count < 20) result.Preview.Add(info);
+
+            if (!apply) continue;
+            _objects.Add(info);
+            _udasByGuid[guid] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["MCP_ORIGIN"] = "mcp:create",
+            };
+            result.CreatedCount++;
+            result.CreatedGuids.Add(guid);
+        }
+        return result;
+    }
+
+    public WriteResult ModifyParts(IReadOnlyList<PartModification> modifications, bool apply)
+    {
+        var result = new WriteResult { Operation = "modify", Applied = apply, Backend = BackendName };
+        if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return result; }
+
+        foreach (var mod in modifications)
+        {
+            var obj = GetObjectByGuid(mod.Guid);
+            if (obj is null) { result.Errors.Add($"Not found: {mod.Guid}"); continue; }
+
+            result.PlannedCount++;
+            if (result.Preview.Count < 20) result.Preview.Add(obj);
+            if (!apply) continue;
+
+            if (mod.Profile != null) obj.Profile = mod.Profile;
+            if (mod.Material != null) obj.Material = mod.Material;
+            if (mod.Class != null) obj.Class = mod.Class;
+            if (mod.Name != null) obj.Name = mod.Name;
+            if (mod.SwapHandles) SwapEnds(obj);
+            if (mod.NewStart != null) { obj.StartX = mod.NewStart.X; obj.StartY = mod.NewStart.Y; obj.StartZ = mod.NewStart.Z; }
+            if (mod.NewEnd != null) { obj.EndX = mod.NewEnd.X; obj.EndY = mod.NewEnd.Y; obj.EndZ = mod.NewEnd.Z; }
+            Recenter(obj);
+            StampOrigin(obj.Guid, "mcp:modify");
+            result.ModifiedCount++;
+        }
+        return result;
+    }
+
+    public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
+    {
+        var matched = FindObjects(query, limit).ToList();
+        var result = new WriteResult
+        {
+            Operation = "delete",
+            Applied = apply,
+            Backend = BackendName,
+            PlannedCount = matched.Count,
+            Preview = matched.Take(20).ToList(),
+        };
+        if (!apply) return result;
+
+        foreach (var obj in matched)
+        {
+            _objects.RemoveAll(o => string.Equals(o.Guid, obj.Guid, StringComparison.OrdinalIgnoreCase));
+            _udasByGuid.Remove(obj.Guid);
+            result.DeletedCount++;
+        }
+        return result;
+    }
+
+    private void StampOrigin(string guid, string value)
+    {
+        if (!_udasByGuid.TryGetValue(guid, out var udas))
+        {
+            udas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            _udasByGuid[guid] = udas;
+        }
+        udas["MCP_ORIGIN"] = value;
+    }
+
+    private static void SwapEnds(ModelObjectInfo o)
+    {
+        (o.StartX, o.EndX) = (o.EndX, o.StartX);
+        (o.StartY, o.EndY) = (o.EndY, o.StartY);
+        (o.StartZ, o.EndZ) = (o.EndZ, o.StartZ);
+    }
+
+    private static void Recenter(ModelObjectInfo o)
+    {
+        if (o.StartX.HasValue && o.EndX.HasValue) o.CenterX = (o.StartX + o.EndX) / 2.0;
+        if (o.StartY.HasValue && o.EndY.HasValue) o.CenterY = (o.StartY + o.EndY) / 2.0;
+        if (o.StartZ.HasValue && o.EndZ.HasValue) o.CenterZ = (o.StartZ + o.EndZ) / 2.0;
+    }
+
+    private static ModelObjectInfo MakeInfoFromSpec(PartSpec spec, string guid, int id)
+    {
+        var kind = (spec.Kind ?? "beam").Trim().ToLowerInvariant();
+        var info = new ModelObjectInfo
+        {
+            Guid = guid,
+            Id = id,
+            Type = kind == "plate" ? "ContourPlate" : (kind == "column" ? "Column" : "Beam"),
+            Name = spec.Name ?? "",
+            Class = spec.Class ?? "",
+            Profile = spec.Profile ?? "",
+            Material = spec.Material ?? "",
+            Finish = "PAINT",
+        };
+
+        if (spec.Start != null && spec.End != null)
+        {
+            info.StartX = spec.Start.X; info.StartY = spec.Start.Y; info.StartZ = spec.Start.Z;
+            info.EndX = spec.End.X; info.EndY = spec.End.Y; info.EndZ = spec.End.Z;
+            var dx = spec.End.X - spec.Start.X;
+            var dy = spec.End.Y - spec.Start.Y;
+            var dz = spec.End.Z - spec.Start.Z;
+            var len = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            info.LengthMm = Math.Round(len, 1);
+            info.WeightKg = Math.Round(len / 1000.0 * 50.0, 1); // nominal synthetic density
+            Recenter(info);
+        }
+        else if (spec.Contour != null && spec.Contour.Count > 0)
+        {
+            info.CenterX = spec.Contour.Average(p => p.X);
+            info.CenterY = spec.Contour.Average(p => p.Y);
+            info.CenterZ = spec.Contour.Average(p => p.Z);
+            info.WeightKg = 25.0;
+        }
+
+        return info;
     }
 
     // ---------------------------------------------------------------- helpers ----

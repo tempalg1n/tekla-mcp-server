@@ -101,4 +101,34 @@ public interface ITeklaModelService
         IReadOnlyDictionary<string, string> updates,
         bool apply,
         int? limit = null);
+
+    // -- Geometry / grids -----------------------------------------------------------------
+
+    /// <summary>
+    /// Read the model's grid lines (labels + coordinates), so callers can translate human
+    /// axis references into coordinates. Best-effort; returns an empty list if no grids.
+    /// </summary>
+    IReadOnlyList<GridLineInfo> GetGrids();
+
+    /// <summary>
+    /// Resolve a model point from an X-axis label, a Y-axis label and an elevation (mm),
+    /// using <see cref="GetGrids"/>. <see cref="PointResult.Resolved"/> is false if a label
+    /// is not found.
+    /// </summary>
+    PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z);
+
+    // -- Mutations (create / modify / delete) ---------------------------------------------
+    //
+    // ALL mutations honor preview-by-default: when apply == false NOTHING is written, but the
+    // plan + counts are returned. Implementations stamp created/modified objects with a
+    // "MCP_ORIGIN" UDA for traceability, and should cap batch sizes for safety.
+
+    /// <summary>Create one or more parts (beams/columns/plates) from specs. Preview unless apply.</summary>
+    WriteResult CreateParts(IReadOnlyList<PartSpec> specs, bool apply);
+
+    /// <summary>Modify existing parts (properties, endpoints, handle swap) by GUID. Preview unless apply.</summary>
+    WriteResult ModifyParts(IReadOnlyList<PartModification> modifications, bool apply);
+
+    /// <summary>Delete objects matching a query. Preview unless apply. Capped by <paramref name="limit"/>.</summary>
+    WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null);
 }
