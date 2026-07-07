@@ -92,7 +92,7 @@ All tools use the `tekla_` prefix.
 |---|---|
 | `tekla_get_connection_info` | Check whether a model is open; return name, path, and active backend. |
 | `tekla_report_gap` | Report a missing capability / insufficient data; returns a ready-to-file issue draft. Use instead of scripting around gaps. |
-| `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. |
+| `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. On huge models use `includeWeights=false` / `maxObjects` to keep it fast. |
 | `tekla_list_objects` | List objects with core properties (with limit). |
 | `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
@@ -100,7 +100,7 @@ All tools use the `tekla_` prefix.
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
-| `tekla_count_objects` | Count objects matching filters. |
+| `tekla_count_objects` | Count objects matching filters (fast: no per-object data is materialized; an unfiltered count is instant). |
 | `tekla_sum_weight` | Sum weight for objects matching filters. |
 | `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`, `assembly`). |
 | `tekla_list_distinct_values` | Distinct values for a field with count + weight. |

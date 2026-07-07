@@ -53,23 +53,37 @@ public sealed class MockTeklaModelService : ITeklaModelService
         Message = "Synthetic data — no Tekla involved.",
     };
 
-    public ModelSummary GetModelSummary()
+    public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
-        var s = new ModelSummary { Backend = BackendName, TotalObjects = _objects.Count };
+        var s = new ModelSummary { Backend = BackendName };
         foreach (var o in _objects)
         {
-            s.TotalWeightKg += o.WeightKg ?? 0;
+            if (maxObjects is int cap && cap > 0 && s.TotalObjects >= cap)
+            {
+                s.Truncated = true;
+                s.Message = $"Scan stopped after {cap} of {_objects.Count} objects (maxObjects); all counts are partial.";
+                break;
+            }
+
+            s.TotalObjects++;
             Bump(s.CountByType, o.Type);
             Bump(s.CountByClass, o.Class);
             Bump(s.CountByProfile, o.Profile);
             Bump(s.CountByMaterial, o.Material);
-            if (o.WeightKg is double w)
+            if (includeWeights && o.WeightKg is double w)
+            {
+                s.TotalWeightKg += w;
                 s.WeightByMaterialKg[o.Material] =
                     s.WeightByMaterialKg.TryGetValue(o.Material, out var cur) ? cur + w : w;
+            }
         }
+        if (!includeWeights)
+            s.Message = (s.Message + " Weights skipped (includeWeights=false).").TrimStart();
         s.TotalWeightKg = Math.Round(s.TotalWeightKg, 1);
         return s;
     }
+
+    public int CountObjects(ObjectQuery query) => FindObjects(query).Count;
 
     public IReadOnlyList<ModelObjectInfo> GetAllObjects(int? limit = null) => Limit(_objects, limit);
 
