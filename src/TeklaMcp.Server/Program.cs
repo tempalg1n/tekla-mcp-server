@@ -41,20 +41,25 @@ builder.Services.AddSingleton<ITeklaModelService, MockTeklaModelService>();
 #endif
 
 // --- Register the MCP server + tools ---------------------------------------
-// Server instructions tell the connecting agent HOW to use this server: do the work with the
-// provided tools, and when something is missing, REPORT it (tekla_report_gap) instead of
-// scripting around it. Sent to the client in the MCP `initialize` response.
+// Server instructions tell the connecting agent HOW to use this server: dedicated tools first,
+// then the sanctioned script escape hatch (tekla_run_csharp), and always report gaps
+// (tekla_report_gap). Sent to the client in the MCP `initialize` response.
 const string serverInstructions =
     "Tekla MCP server. Use these tools to read, analyze, and (with preview-by-default safety) " +
     "create/edit/delete objects in the live Tekla Structures model.\n\n" +
-    "Work WITH the tools. Do NOT write ad-hoc scripts, macros, or external automation to work " +
-    "around a limitation, and never fabricate or guess model data.\n\n" +
-    "If a needed operation or data field is not available, or an existing tool returns " +
-    "insufficient data: stop and (1) tell the user exactly what is missing and what you were " +
-    "trying to do; (2) call `tekla_report_gap` to produce a structured capability request " +
-    "(a ready-to-file issue draft); (3) offer to file it as a GitHub issue, or ask the user to.\n\n" +
+    "Escalation ladder when you need something:\n" +
+    "1. PREFER a dedicated tekla_* tool — fastest and safest.\n" +
+    "2. If no tool covers the need, use the sanctioned escape hatch: verify API signatures with " +
+    "`tekla_search_api` / `tekla_get_api_doc`, then run a short C# script with `tekla_run_csharp` " +
+    "(read-only by default, policy-checked, hard timeout). Never guess Tekla API members.\n" +
+    "3. Whether or not a script worked, call `tekla_report_gap` for anything recurring so it can " +
+    "become a first-class tool; offer the user the ready-to-file issue draft it returns.\n\n" +
+    "Never use EXTERNAL automation (files, macros outside this server) and never fabricate or " +
+    "guess model data. On the Mock backend scripts are validated but not executed — say so " +
+    "instead of inventing results.\n\n" +
     "Write tools (create/edit/delete) default to apply=false (preview). Show the plan and only " +
-    "set apply=true after the user confirms.";
+    "set apply=true after the user confirms. Scripted mutations additionally require the server " +
+    "to run with TEKLA_MCP_ALLOW_SCRIPT_WRITES=1.";
 
 builder.Services
     .AddMcpServer(options => options.ServerInstructions = serverInstructions)

@@ -17,10 +17,10 @@ public static class ModelMetaTools
 {
     [McpServerTool(Name = "tekla_report_gap")]
     [Description("Report that this MCP tool set is missing a capability, or that an existing tool " +
-                 "returns insufficient data. Use this INSTEAD of writing ad-hoc scripts/macros to " +
-                 "work around a limitation. Returns a ready-to-file GitHub issue draft (title + body) " +
-                 "and logs the request locally. After calling it, show the draft to the user and offer " +
-                 "to file the issue.")]
+                 "returns insufficient data. Call it whenever you hit a gap — INCLUDING when you " +
+                 "bridged the gap with tekla_run_csharp (recurring scripts deserve a first-class tool). " +
+                 "Returns a ready-to-file GitHub issue draft (title + body) and logs the request " +
+                 "locally. After calling it, show the draft to the user and offer to file the issue.")]
     public static CapabilityRequest ReportGap(
         ITeklaModelService model,
         [Description("What you were trying to achieve (the user's goal).")] string goal,

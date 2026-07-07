@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **C# scripting escape hatch** — agents can now cover Tekla Open API capabilities that have no dedicated tool yet:
+  - `tekla_run_csharp` — run a short C# script against the live model (Roslyn scripting; Tekla namespaces pre-imported; `Print(...)` for output; the script's last expression is returned as JSON). Pipeline: syntax-level safety policy → compile → execute, with every failure reported back so the agent can self-correct.
+  - `tekla_search_api` / `tekla_get_api_doc` — offline keyword search and full type pages over the locally generated Tekla Open API reference (`tools/TeklaApiDoc` output; `TEKLA_MCP_API_REF_DIR` to relocate), so agents verify signatures instead of guessing them.
+  - Safety: scripts are **read-only by default** — mutating members are rejected unless the call passes `allowMutations=true` AND the server runs with `TEKLA_MCP_ALLOW_SCRIPT_WRITES=1`; no file/network/process/reflection/thread/`Console` access, no `#r`/`#load`, hard timeout (60 s default), capped output.
+  - The mock backend validates + compiles scripts (point `TEKLA_MCP_SCRIPT_REF_DIR` at extracted Tekla DLLs) but never executes them; execution happens only on the real net48 backend.
+  - New `src/TeklaMcp.Scripting/` project (netstandard2.0, Tekla-free) and a `tests/TeklaMcp.Tests` xUnit suite (policy, JSON rendering, reference search, mock pipeline).
+- Server instructions now describe the escalation ladder: dedicated tools → script escape hatch (with signature verification) → `tekla_report_gap` for anything recurring.
+
 ## [0.5.0] - 2026-07-07
 
 Reliability and scale: the live server now connects to Tekla setups that publish a non-default Open API channel (and ignores stale GAC assemblies), and whole-model tools are fast enough for 400k+-object models. Plus a formal gap-reporting affordance for agents.

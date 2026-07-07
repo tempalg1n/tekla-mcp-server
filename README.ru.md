@@ -62,8 +62,11 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 | `tekla_analyze_profile_connections` | Анализ уникальных типов узлов для профиля |
 | `tekla_get_selected_objects` / `tekla_select_objects` | Чтение и установка выделения в UI |
 | `tekla_get_object_udas` / `tekla_set_object_udas` / `tekla_set_udas_by_filter` | Работа с UDA |
+| `tekla_search_api` / `tekla_get_api_doc` | Поиск по локальному справочнику Tekla Open API (типы и сигнатуры) |
+| `tekla_run_csharp` | Escape hatch: выполнить короткий C#-скрипт с полным Tekla Open API (read-only по умолчанию, проверка политикой, таймаут) |
 
 Запись UDA по умолчанию в режиме **preview** (`apply=false`); для применения передайте `apply=true`.
+Мутации из скриптов требуют `allowMutations=true` **и** запуска сервера с `TEKLA_MCP_ALLOW_SCRIPT_WRITES=1`.
 
 ---
 

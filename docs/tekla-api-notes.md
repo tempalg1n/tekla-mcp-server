@@ -130,3 +130,21 @@ binding redirects (`AutoGenerateBindingRedirects` is enabled in the server proje
 
 If the single-process `net48` build fails to start, consider the two-process fallback
 described in [architecture.md](architecture.md).
+
+## Roslyn scripting on .NET Framework 4.8 (tekla_run_csharp)
+
+The script escape hatch uses `Microsoft.CodeAnalysis.CSharp.Scripting` 4.9.2 (the last line
+targeting `netstandard2.0`, so one package serves both server builds).
+
+**TODO(windows): the net48 execution path is UNVERIFIED.** Things to check on the real machine:
+
+- Binding redirects for Roslyn's transitive deps (`System.Collections.Immutable`,
+  `System.Memory`, `System.Reflection.Metadata`) — auto-generated for the server exe, but
+  watch for `FileLoadException` on first script compile.
+- Metadata references come from the loaded Tekla assemblies (`typeof(TSM.Model).Assembly`
+  etc., resolved by `TeklaAssemblyResolver`) — verify `Assembly.Location` is non-empty there.
+- Timeout abort uses `Thread.Abort` (supported on net48, no-op catch on net8) — verify an
+  aborted script doesn't wedge the Tekla remoting channel.
+- Verified on macOS against the 2023 NuGet DLLs: policy → compile pipeline, default imports
+  (`Tekla.Structures`, `.Model`, `.Model.UI`, `.Geometry3d`, `.Filtering`) all resolve, and
+  compile errors come back agent-readable (mock backend, `TEKLA_MCP_SCRIPT_REF_DIR`).

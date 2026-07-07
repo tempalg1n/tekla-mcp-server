@@ -141,4 +141,17 @@ public interface ITeklaModelService
 
     /// <summary>Delete objects matching a query. Preview unless apply. Capped by <paramref name="limit"/>.</summary>
     WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null);
+
+    // -- Script escape hatch ----------------------------------------------------------------
+
+    /// <summary>
+    /// Validate, compile and (real backend only) execute an agent-authored C# script against
+    /// the model, for capabilities no dedicated tool covers yet. Never throws — every failure
+    /// (policy violation, compile error, runtime exception, timeout) is reported inside
+    /// <see cref="ScriptResult"/>. The safety policy (read-only unless
+    /// <paramref name="allowMutations"/>, no file/network/process/reflection access, hard
+    /// timeout) is enforced by the implementation; the mock backend validates and compiles
+    /// but never executes (<see cref="ScriptResult.Executed"/> stays false).
+    /// </summary>
+    ScriptResult ExecuteScript(string code, bool allowMutations = false, int timeoutSeconds = 60);
 }
