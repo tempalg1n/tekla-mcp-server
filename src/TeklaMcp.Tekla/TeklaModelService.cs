@@ -41,6 +41,10 @@ public sealed class TeklaModelService : ITeklaModelService
         "RU_FN1_MRK",
     };
 
+    // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
+    // the first Model() in this process (see TeklaRemotingChannel / issue #7).
+    static TeklaModelService() => TeklaRemotingChannel.Align();
+
     public ConnectionInfo GetConnectionInfo()
     {
         try
@@ -52,7 +56,8 @@ public sealed class TeklaModelService : ITeklaModelService
                 {
                     Connected = false,
                     Backend = BackendName,
-                    Message = "Not connected. Is Tekla Structures running with a model open?",
+                    Message = "Not connected. Is Tekla Structures running with a model open? " +
+                              "(" + TeklaRemotingChannel.Describe() + ")",
                 };
             }
 
@@ -846,7 +851,8 @@ public sealed class TeklaModelService : ITeklaModelService
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
             throw new InvalidOperationException(
-                "No connection to Tekla Structures. Start Tekla and open a model first.");
+                "No connection to Tekla Structures. Start Tekla and open a model first. " +
+                "(" + TeklaRemotingChannel.Describe() + ")");
         return model;
     }
 
