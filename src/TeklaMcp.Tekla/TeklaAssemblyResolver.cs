@@ -58,8 +58,13 @@ public static class TeklaAssemblyResolver
             // Supply any assembly (Tekla.* and its dependency closure) that exists in the Tekla
             // bin. The handler only fires when the normal load failed, so loading a same-named
             // DLL from the install is the intended behaviour.
+            //
+            // LoadFile, not LoadFrom: LoadFrom re-applies binding policy to the file's identity,
+            // and App.config deliberately redirects Tekla.* to an unreachable version (to keep
+            // the GAC out of the picture) — LoadFrom would chase that redirect and re-enter this
+            // handler. LoadFile loads exactly the file, no policy, no probing.
             var path = Path.Combine(BinDir!, name + ".dll");
-            return File.Exists(path) ? Assembly.LoadFrom(path) : null;
+            return File.Exists(path) ? Assembly.LoadFile(path) : null;
         }
         catch
         {
