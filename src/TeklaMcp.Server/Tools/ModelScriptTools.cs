@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TeklaMcp.Core;
@@ -11,8 +10,8 @@ namespace TeklaMcp.Server.Tools;
 /// The scripting escape hatch: lets an agent run a short, policy-checked C# script against the
 /// full Tekla Open API when no dedicated tool covers the need, plus offline API-reference
 /// search so scripts are written against verified signatures instead of guessed ones.
-/// Safety: scripts are read-only unless BOTH the tool call sets allowMutations=true AND the
-/// server was started with TEKLA_MCP_ALLOW_SCRIPT_WRITES=1 (see ScriptPolicy).
+/// Safety: scripts are read-only by default; allowMutations=true unlocks writes, and the tool
+/// description obliges the agent to get the user's explicit go-ahead before setting it.
 /// </summary>
 [McpServerToolType]
 public static class ModelScriptTools
@@ -46,37 +45,26 @@ public static class ModelScriptTools
         "Distance.PointToPoint(b.StartPoint, b.EndPoint) > 12000) n++; }\n" +
         "new { LongBeams = n }\n" +
         "\n" +
-        "LIMITS (enforced): read-only by default — mutating members (Insert/Modify/Delete/CommitChanges/SetUserProperty/" +
-        "Operation.*) are rejected unless allowMutations=true and the server runs with TEKLA_MCP_ALLOW_SCRIPT_WRITES=1. " +
-        "No file/network/process/reflection/thread/Console access, no #r/#load, no await. Hard timeout (default 60 s). " +
-        "On the Mock backend the script is validated/compiled but NEVER executed — do not fabricate results from it.")]
+        "MUTATIONS: read-only by default — mutating members (Insert/Modify/Delete/CommitChanges/SetUserProperty/" +
+        "Operation.*) are rejected unless allowMutations=true. Before setting it you MUST (1) prefer a dedicated " +
+        "tekla_create_*/tekla_modify_*/tekla_delete_* tool if one fits (preview-by-default, safer); (2) show the user " +
+        "the script and what it will change, and get their explicit go-ahead IN THIS CONVERSATION; (3) make the change " +
+        "traceable/reversible: where practical set the MCP_ORIGIN UDA on created/modified objects " +
+        "(obj.SetUserProperty(\"MCP_ORIGIN\", \"mcp-script\")) and tell the user committed changes are undoable with " +
+        "Tekla's Ctrl+Z.\n" +
+        "\n" +
+        "LIMITS (enforced): no file/network/process/reflection/thread/Console access, no #r/#load, no await. " +
+        "Hard timeout (default 60 s). On the Mock backend the script is validated/compiled but NEVER executed — " +
+        "do not fabricate results from it.")]
     public static ScriptResult RunCsharp(
         ITeklaModelService model,
         [Description("The C# script (top-level statements; last expression = return value).")] string code,
-        [Description("Allow mutating Tekla API calls. Requires the user's explicit intent AND the server env " +
-                     "TEKLA_MCP_ALLOW_SCRIPT_WRITES=1. Prefer the dedicated write tools (preview-by-default).")]
+        [Description("Allow mutating Tekla API calls. Set true ONLY after the user explicitly approved this " +
+                     "specific change in this conversation (show them the script first). Prefer the dedicated " +
+                     "write tools (preview-by-default).")]
         bool allowMutations = false,
         [Description("Hard timeout in seconds (default 60, max 600).")] int timeoutSeconds = 60)
-    {
-        if (allowMutations &&
-            Environment.GetEnvironmentVariable(ScriptPolicy.AllowWritesEnvVar) != "1")
-        {
-            return new ScriptResult
-            {
-                Stage = "policy",
-                PolicyViolations =
-                {
-                    "allowMutations=true is disabled: the server was started without " +
-                    ScriptPolicy.AllowWritesEnvVar + "=1. Scripts run READ-ONLY here.",
-                },
-                Guidance = "Either do the change with the dedicated write tools (tekla_create_*/tekla_modify_*/" +
-                           "tekla_delete_*, preview-by-default), or ask the user to restart the server with " +
-                           ScriptPolicy.AllowWritesEnvVar + "=1 if a scripted mutation is really required.",
-            };
-        }
-
-        return model.ExecuteScript(code ?? "", allowMutations, timeoutSeconds);
-    }
+        => model.ExecuteScript(code ?? "", allowMutations, timeoutSeconds);
 
     [McpServerTool(Name = "tekla_search_api")]
     [Description(

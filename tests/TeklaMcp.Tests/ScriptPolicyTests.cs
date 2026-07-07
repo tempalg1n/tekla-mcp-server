@@ -71,7 +71,8 @@ public class ScriptPolicyTests
         var v = Assert.Single(violations);
         Assert.Contains("Insert", v);
         Assert.Contains("allowMutations", v);
-        Assert.Contains(ScriptPolicy.AllowWritesEnvVar, v);
+        // The message must route the agent through user confirmation, not around it.
+        Assert.Contains("go-ahead", v);
     }
 
     [Fact]

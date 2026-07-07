@@ -20,9 +20,6 @@ public static class ScriptPolicy
 {
     public const int MaxCodeLength = 32_000;
 
-    /// <summary>Env var that must be "1" for tools to accept allowMutations=true.</summary>
-    public const string AllowWritesEnvVar = "TEKLA_MCP_ALLOW_SCRIPT_WRITES";
-
     // Using-directives are allowed only for these exact namespaces / this prefix.
     private static readonly HashSet<string> AllowedUsings = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -63,8 +60,9 @@ public static class ScriptPolicy
         "InteropServices", "Win32", "Threading", "Timers",
     };
 
-    // Member names that mutate the Tekla model (or run arbitrary macros). Rejected unless
-    // the caller passed allowMutations=true (and the server allows it — see AllowWritesEnvVar).
+    // Member names that mutate the Tekla model (or run arbitrary macros). Rejected unless the
+    // caller passed allowMutations=true — which the agent may only do after the user explicitly
+    // confirmed the change (the confirmation contract lives in the tool description).
     private static readonly HashSet<string> MutatingMembers = new HashSet<string>(StringComparer.Ordinal)
     {
         "Insert", "Delete", "Modify", "CommitChanges",
@@ -148,9 +146,9 @@ public static class ScriptPolicy
 
         if (mutations.Count > 0)
             Add($"Script uses mutating members ({string.Join(", ", mutations)}) but allowMutations=false. " +
-                "Scripts are READ-ONLY by default. If the user explicitly asked to modify the model, retry with " +
-                $"allowMutations=true — the server must also run with {AllowWritesEnvVar}=1. Prefer the dedicated " +
-                "tekla_create_* / tekla_modify_* / tekla_delete_* tools, which have preview-by-default safety.");
+                "Scripts are READ-ONLY by default. First check whether a dedicated tekla_create_* / tekla_modify_* / " +
+                "tekla_delete_* tool covers this (preview-by-default, reversible). If a scripted mutation is really " +
+                "needed: show the script to the user, get their explicit go-ahead, then retry with allowMutations=true.");
 
         return violations;
     }

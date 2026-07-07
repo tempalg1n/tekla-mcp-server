@@ -58,8 +58,10 @@ const string serverInstructions =
     "guess model data. On the Mock backend scripts are validated but not executed — say so " +
     "instead of inventing results.\n\n" +
     "Write tools (create/edit/delete) default to apply=false (preview). Show the plan and only " +
-    "set apply=true after the user confirms. Scripted mutations additionally require the server " +
-    "to run with TEKLA_MCP_ALLOW_SCRIPT_WRITES=1.";
+    "set apply=true after the user confirms. The same contract applies to scripted mutations: " +
+    "show the user the script and what it will change, get their explicit go-ahead, only then " +
+    "rerun with allowMutations=true — and keep changes traceable (MCP_ORIGIN UDA) and " +
+    "reversible (Tekla Ctrl+Z).";
 
 builder.Services
     .AddMcpServer(options => options.ServerInstructions = serverInstructions)

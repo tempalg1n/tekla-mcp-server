@@ -66,7 +66,8 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 | `tekla_run_csharp` | Escape hatch: выполнить короткий C#-скрипт с полным Tekla Open API (read-only по умолчанию, проверка политикой, таймаут) |
 
 Запись UDA по умолчанию в режиме **preview** (`apply=false`); для применения передайте `apply=true`.
-Мутации из скриптов требуют `allowMutations=true` **и** запуска сервера с `TEKLA_MCP_ALLOW_SCRIPT_WRITES=1`.
+Мутации из скриптов требуют `allowMutations=true` — по контракту агент сначала показывает скрипт
+и спрашивает явное согласие оператора; изменения помечаются UDA `MCP_ORIGIN` и откатываются Ctrl+Z.
 
 ---
 

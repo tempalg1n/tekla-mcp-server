@@ -140,8 +140,10 @@ dedicated tool exists. Rules for maintaining it:
   (`Executed=false`); only the net48 backend runs scripts. Never throw — report failures in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
   If you extend the script surface (new imports, new globals), extend the policy AND the tests in
-  `tests/TeklaMcp.Tests/ScriptPolicyTests.cs` in the same change. Mutations require BOTH
-  `allowMutations=true` and the `TEKLA_MCP_ALLOW_SCRIPT_WRITES=1` env gate (checked in the tool layer).
+  `tests/TeklaMcp.Tests/ScriptPolicyTests.cs` in the same change. Mutations require
+  `allowMutations=true`; the tool description obliges the agent to show the user the script and
+  get explicit approval first, and to keep changes traceable (`MCP_ORIGIN` UDA) — keep that
+  contract wording intact.
 - **Never let scripts touch stdout** — `Console` is banned by policy; script output goes through
   `ScriptGlobals.Print` (capped) and `SafeJson` (capped, defensive).
 - **`tekla_search_api`/`tekla_get_api_doc`** read the `tools/TeklaApiDoc` output (git-ignored) found
