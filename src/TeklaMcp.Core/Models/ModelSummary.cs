@@ -26,6 +26,12 @@ public sealed class ModelSummary
     /// <summary>Total weight (kg) grouped by material grade.</summary>
     public Dictionary<string, double> WeightByMaterialKg { get; set; } = new();
 
+    /// <summary>True when the scan stopped early (maxObjects cap) — all counts are partial.</summary>
+    public bool Truncated { get; set; }
+
+    /// <summary>Notes about how the summary was computed (partial scan, skipped weights).</summary>
+    public string Message { get; set; } = "";
+
     /// <summary>Which backend produced this answer: "Mock" or "Tekla".</summary>
     public string Backend { get; set; } = "";
 }

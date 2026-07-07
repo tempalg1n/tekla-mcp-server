@@ -33,7 +33,7 @@ public static class ModelWorkflowTools
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
-        => model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection)).Count;
+        => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
 
     [McpServerTool(Name = "tekla_sum_weight")]
     [Description("Sum weight (kg) for objects matching optional filters. Set useSelection=true to sum only the current UI selection.")]

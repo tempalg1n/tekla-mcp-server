@@ -28,9 +28,19 @@ public interface ITeklaModelService
 
     /// <summary>
     /// Aggregate statistics over every object in the model (counts by type/class/
-    /// profile/material and total weight).
+    /// profile/material and total weight). Implementations must stream — never build an
+    /// in-memory list of all objects. <paramref name="includeWeights"/> false skips the
+    /// per-object weight lookup (much faster on huge models); <paramref name="maxObjects"/>
+    /// caps the scan and marks the result <see cref="ModelSummary.Truncated"/>.
     /// </summary>
-    ModelSummary GetModelSummary();
+    ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null);
+
+    /// <summary>
+    /// Count objects matching <paramref name="query"/> WITHOUT materializing them.
+    /// Implementations should use the cheapest possible path (e.g. an enumerator size for
+    /// an unfiltered count) and must not read properties the query does not filter on.
+    /// </summary>
+    int CountObjects(ObjectQuery query);
 
     /// <summary>
     /// Return up to <paramref name="limit"/> objects (<c>null</c> = all). Large models

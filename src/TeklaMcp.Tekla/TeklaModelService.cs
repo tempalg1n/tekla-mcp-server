@@ -41,9 +41,17 @@ public sealed class TeklaModelService : ITeklaModelService
         "RU_FN1_MRK",
     };
 
-    // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
-    // the first Model() in this process (see TeklaRemotingChannel / issue #7).
-    static TeklaModelService() => TeklaRemotingChannel.Align();
+    static TeklaModelService()
+    {
+        // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
+        // the first Model() in this process (see TeklaRemotingChannel / issue #7).
+        TeklaRemotingChannel.Align();
+
+        // Process-wide switch (static): fetch object data in batches during enumeration instead
+        // of one remoting round-trip per property read — the biggest speedup on large models
+        // (issue #5).
+        TSM.ModelObjectEnumerator.AutoFetch = true;
+    }
 
     public ConnectionInfo GetConnectionInfo()
     {
@@ -76,31 +84,92 @@ public sealed class TeklaModelService : ITeklaModelService
         }
     }
 
-    public ModelSummary GetModelSummary()
+    public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var model = GetConnectedModel();
         var summary = new ModelSummary { Backend = BackendName };
 
+        // Streaming aggregation over cheap reads only: type + direct Part properties and
+        // (optionally) the WEIGHT report property. No Map(), no solids, no LENGTH/ASSEMBLY_POS —
+        // on large models those made this tool run past the MCP client's timeout (issue #5).
         var en = model.GetModelObjectSelector().GetAllObjects();
         while (en.MoveNext())
         {
-            var info = Map(en.Current);
-            if (info is null) continue;
+            var mo = en.Current;
+            if (mo is null) continue;
+
+            if (maxObjects is int cap && cap > 0 && summary.TotalObjects >= cap)
+            {
+                summary.Truncated = true;
+                summary.Message = $"Scan stopped after {cap} objects (maxObjects); all counts are partial.";
+                break;
+            }
 
             summary.TotalObjects++;
-            summary.TotalWeightKg += info.WeightKg ?? 0;
-            Bump(summary.CountByType, info.Type);
-            Bump(summary.CountByClass, info.Class);
-            Bump(summary.CountByProfile, info.Profile);
-            Bump(summary.CountByMaterial, info.Material);
-            if (info.WeightKg is double w)
-                summary.WeightByMaterialKg[Key(info.Material)] =
-                    summary.WeightByMaterialKg.TryGetValue(Key(info.Material), out var cur) ? cur + w : w;
+            Bump(summary.CountByType, mo.GetType().Name);
+
+            if (mo is TSM.Part part)
+            {
+                var material = part.Material?.MaterialString ?? "";
+                Bump(summary.CountByClass, part.Class ?? "");
+                Bump(summary.CountByProfile, part.Profile?.ProfileString ?? "");
+                Bump(summary.CountByMaterial, material);
+
+                if (includeWeights)
+                {
+                    double weight = 0;
+                    if (part.GetReportProperty("WEIGHT", ref weight))
+                    {
+                        summary.TotalWeightKg += weight;
+                        summary.WeightByMaterialKg[Key(material)] =
+                            summary.WeightByMaterialKg.TryGetValue(Key(material), out var cur) ? cur + weight : weight;
+                    }
+                }
+            }
+            else
+            {
+                Bump(summary.CountByClass, "");
+                Bump(summary.CountByProfile, "");
+                Bump(summary.CountByMaterial, "");
+            }
         }
 
+        if (!includeWeights)
+            summary.Message = (summary.Message + " Weights skipped (includeWeights=false).").TrimStart();
         summary.TotalWeightKg = Math.Round(summary.TotalWeightKg, 1);
         return summary;
     }
+
+    public int CountObjects(ObjectQuery query)
+    {
+        var model = GetConnectedModel();
+        query = query ?? new ObjectQuery();
+
+        // Completely unfiltered whole-model count: the enumerator knows its size — no walk.
+        if (!query.UseSelection && IsUnfiltered(query))
+            return model.GetModelObjectSelector().GetAllObjects().GetSize();
+
+        // Filtered count: match on cheap direct properties only — never Map() (no report
+        // properties, no solids). UDA/attribute reads happen only when the query uses them.
+        var count = 0;
+        foreach (var mo in EnumerateSource(model, query))
+        {
+            var info = MapBasic(mo);
+            if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+            count++;
+        }
+        return count;
+    }
+
+    private static bool IsUnfiltered(ObjectQuery q) =>
+        (q.GuidIn is null || q.GuidIn.Count == 0) &&
+        string.IsNullOrWhiteSpace(q.Type) &&
+        string.IsNullOrWhiteSpace(q.Class) &&
+        string.IsNullOrWhiteSpace(q.Profile) &&
+        string.IsNullOrWhiteSpace(q.Material) &&
+        string.IsNullOrWhiteSpace(q.NameContains) &&
+        string.IsNullOrWhiteSpace(q.UdaName) &&
+        string.IsNullOrWhiteSpace(q.AttributeName);
 
     public IReadOnlyList<ModelObjectInfo> GetAllObjects(int? limit = null)
     {
@@ -125,8 +194,11 @@ public sealed class TeklaModelService : ITeklaModelService
 
         foreach (var mo in EnumerateSource(model, query))
         {
-            var info = Map(mo);
+            // Cheap-first: match on directly readable properties, then pay for report
+            // properties + solid only on the objects that matched (bounded by limit).
+            var info = MapBasic(mo);
             if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+            Enrich(mo, info, includeSolid: true);
             result.Add(info);
             if (limit is int n && result.Count >= n) break;
         }
@@ -205,11 +277,15 @@ public sealed class TeklaModelService : ITeklaModelService
 
             foreach (var mo in EnumerateSource(model, query))
             {
-                var info = Map(mo);
+                var info = MapBasic(mo);
                 if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
                 toSelect.Add(mo);
-                if (preview.Count < 20) preview.Add(info);
+                if (preview.Count < 20)
+                {
+                    Enrich(mo, info, includeSolid: true);
+                    preview.Add(info);
+                }
                 if (limit is int n && n > 0 && toSelect.Count >= n) break;
             }
 
@@ -430,12 +506,16 @@ public sealed class TeklaModelService : ITeklaModelService
             var model = GetConnectedModel();
             foreach (var mo in EnumerateSource(model, query))
             {
-                var info = Map(mo);
+                var info = MapBasic(mo);
                 if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
 
                 if (limit is int n && n > 0 && result.MatchedObjects >= n) break;
                 result.MatchedObjects++;
-                if (result.Preview.Count < 20) result.Preview.Add(info);
+                if (result.Preview.Count < 20)
+                {
+                    Enrich(mo, info, includeSolid: true);
+                    result.Preview.Add(info);
+                }
 
                 if (!apply) continue;
                 if (ApplyUdaUpdates(mo, updates, out var changedFields))
@@ -689,10 +769,14 @@ public sealed class TeklaModelService : ITeklaModelService
             var matched = new List<TSM.ModelObject>();
             foreach (var mo in EnumerateSource(model, query))
             {
-                var info = Map(mo);
+                var info = MapBasic(mo);
                 if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
                 matched.Add(mo);
-                if (result.Preview.Count < 20) result.Preview.Add(info);
+                if (result.Preview.Count < 20)
+                {
+                    Enrich(mo, info, includeSolid: true);
+                    result.Preview.Add(info);
+                }
                 if (limit is int n && n > 0 && matched.Count >= n) break;
             }
 
@@ -777,31 +861,63 @@ public sealed class TeklaModelService : ITeklaModelService
     }
 
     /// <summary>
-    /// Yield the objects a query should operate on: either the current UI selection
-    /// (<see cref="ObjectQuery.UseSelection"/>) or every object in the model. Centralizing
-    /// this lets every filter-based method honor the "scope = selection" switch.
+    /// Known object-type names → Tekla enumeration values, for API-level pre-filtering.
+    /// Conservative: only types whose class name maps 1:1 to an enum value. Anything else
+    /// falls back to a full scan (Matches() verifies the exact type name either way).
+    /// </summary>
+    private static readonly Dictionary<string, TSM.ModelObject.ModelObjectEnum> TypeEnumMap =
+        new Dictionary<string, TSM.ModelObject.ModelObjectEnum>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Beam"] = TSM.ModelObject.ModelObjectEnum.BEAM,
+            ["PolyBeam"] = TSM.ModelObject.ModelObjectEnum.POLYBEAM,
+            ["ContourPlate"] = TSM.ModelObject.ModelObjectEnum.CONTOURPLATE,
+            ["Grid"] = TSM.ModelObject.ModelObjectEnum.GRID,
+        };
+
+    /// <summary>
+    /// Yield the objects a query should operate on: the current UI selection
+    /// (<see cref="ObjectQuery.UseSelection"/>), the type-filtered subset when the queried
+    /// type maps to a Tekla enum (lets Tekla skip non-candidates), or every object.
+    /// AutoFetch (enabled process-wide in the static constructor) batches object data during
+    /// enumeration instead of one remoting round-trip per property read.
     /// </summary>
     private static IEnumerable<TSM.ModelObject> EnumerateSource(TSM.Model model, ObjectQuery query)
     {
+        TSM.ModelObjectEnumerator en;
         if (query != null && query.UseSelection)
-        {
-            var selected = new TSMUI.ModelObjectSelector().GetSelectedObjects();
-            while (selected.MoveNext())
-            {
-                if (selected.Current != null) yield return selected.Current;
-            }
-            yield break;
-        }
+            en = new TSMUI.ModelObjectSelector().GetSelectedObjects();
+        else if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
+                 TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
+            en = model.GetModelObjectSelector().GetAllObjectsWithType(objectType);
+        else
+            en = model.GetModelObjectSelector().GetAllObjects();
 
-        var all = model.GetModelObjectSelector().GetAllObjects();
-        while (all.MoveNext())
+        while (en.MoveNext())
         {
-            if (all.Current != null) yield return all.Current;
+            if (en.Current != null) yield return en.Current;
         }
     }
 
-    /// <summary>Convert a Tekla <c>ModelObject</c> into our flat DTO. Returns null to skip.</summary>
+    /// <summary>
+    /// Convert a Tekla <c>ModelObject</c> into our flat DTO — full fidelity (report
+    /// properties + solid bounding box). For scans over many objects, use
+    /// <see cref="MapBasic"/> to filter first and <see cref="Enrich"/> only the matches:
+    /// report properties and especially <c>GetSolid()</c> are per-object remoting calls
+    /// that dominated whole-model scans (issue #5).
+    /// </summary>
     private static ModelObjectInfo? Map(TSM.ModelObject mo)
+    {
+        var info = MapBasic(mo);
+        if (info != null) Enrich(mo, info, includeSolid: true);
+        return info;
+    }
+
+    /// <summary>
+    /// Cheap part of the mapping: identity, type and the Part properties that are readable
+    /// without extra remoting round-trips (with AutoFetch on). Fills everything the query
+    /// filters (<see cref="Matches"/>) look at. Returns null to skip.
+    /// </summary>
+    private static ModelObjectInfo? MapBasic(TSM.ModelObject mo)
     {
         if (mo is null) return null;
 
@@ -821,19 +937,6 @@ public sealed class TeklaModelService : ITeklaModelService
             info.Material = part.Material?.MaterialString ?? "";
             info.Finish = part.Finish;
 
-            // Report properties are the reliable cross-object way to read derived values.
-            var pos = "";
-            if (part.GetReportProperty("ASSEMBLY_POS", ref pos) && !string.IsNullOrEmpty(pos))
-                info.AssemblyPos = pos;
-
-            double weight = 0;
-            if (part.GetReportProperty("WEIGHT", ref weight))
-                info.WeightKg = Math.Round(weight, 2);
-
-            double length = 0;
-            if (part.GetReportProperty("LENGTH", ref length))
-                info.LengthMm = Math.Round(length, 1);
-
             if (mo is TSM.Beam beam)
             {
                 info.StartX = Math.Round(beam.StartPoint.X, 2);
@@ -846,34 +949,58 @@ public sealed class TeklaModelService : ITeklaModelService
                 info.CenterY = Math.Round((beam.StartPoint.Y + beam.EndPoint.Y) / 2.0, 2);
                 info.CenterZ = Math.Round((beam.StartPoint.Z + beam.EndPoint.Z) / 2.0, 2);
             }
-
-            try
-            {
-                var solid = part.GetSolid();
-                if (solid != null)
-                {
-                    info.MinX = Math.Round(solid.MinimumPoint.X, 2);
-                    info.MinY = Math.Round(solid.MinimumPoint.Y, 2);
-                    info.MinZ = Math.Round(solid.MinimumPoint.Z, 2);
-                    info.MaxX = Math.Round(solid.MaximumPoint.X, 2);
-                    info.MaxY = Math.Round(solid.MaximumPoint.Y, 2);
-                    info.MaxZ = Math.Round(solid.MaximumPoint.Z, 2);
-
-                    if (!info.CenterX.HasValue)
-                    {
-                        info.CenterX = Math.Round((solid.MinimumPoint.X + solid.MaximumPoint.X) / 2.0, 2);
-                        info.CenterY = Math.Round((solid.MinimumPoint.Y + solid.MaximumPoint.Y) / 2.0, 2);
-                        info.CenterZ = Math.Round((solid.MinimumPoint.Z + solid.MaximumPoint.Z) / 2.0, 2);
-                    }
-                }
-            }
-            catch
-            {
-                // TODO(windows): verify solid extraction reliability for all model object types.
-            }
         }
 
         return info;
+    }
+
+    /// <summary>
+    /// Expensive part of the mapping: report properties (ASSEMBLY_POS, WEIGHT, LENGTH) and,
+    /// when <paramref name="includeSolid"/>, the solid bounding box. Each is a per-object
+    /// remoting call — only enrich objects that are actually returned to the caller.
+    /// </summary>
+    private static void Enrich(TSM.ModelObject mo, ModelObjectInfo info, bool includeSolid)
+    {
+        if (!(mo is TSM.Part part)) return;
+
+        // Report properties are the reliable cross-object way to read derived values.
+        var pos = "";
+        if (part.GetReportProperty("ASSEMBLY_POS", ref pos) && !string.IsNullOrEmpty(pos))
+            info.AssemblyPos = pos;
+
+        double weight = 0;
+        if (part.GetReportProperty("WEIGHT", ref weight))
+            info.WeightKg = Math.Round(weight, 2);
+
+        double length = 0;
+        if (part.GetReportProperty("LENGTH", ref length))
+            info.LengthMm = Math.Round(length, 1);
+
+        if (!includeSolid) return;
+        try
+        {
+            var solid = part.GetSolid();
+            if (solid != null)
+            {
+                info.MinX = Math.Round(solid.MinimumPoint.X, 2);
+                info.MinY = Math.Round(solid.MinimumPoint.Y, 2);
+                info.MinZ = Math.Round(solid.MinimumPoint.Z, 2);
+                info.MaxX = Math.Round(solid.MaximumPoint.X, 2);
+                info.MaxY = Math.Round(solid.MaximumPoint.Y, 2);
+                info.MaxZ = Math.Round(solid.MaximumPoint.Z, 2);
+
+                if (!info.CenterX.HasValue)
+                {
+                    info.CenterX = Math.Round((solid.MinimumPoint.X + solid.MaximumPoint.X) / 2.0, 2);
+                    info.CenterY = Math.Round((solid.MinimumPoint.Y + solid.MaximumPoint.Y) / 2.0, 2);
+                    info.CenterZ = Math.Round((solid.MinimumPoint.Z + solid.MaximumPoint.Z) / 2.0, 2);
+                }
+            }
+        }
+        catch
+        {
+            // TODO(windows): verify solid extraction reliability for all model object types.
+        }
     }
 
     private static bool Matches(ModelObjectInfo o, ObjectQuery q)

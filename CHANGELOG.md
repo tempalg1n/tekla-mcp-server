@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - MCP **server instructions** that tell connecting agents to do the work with the provided tools and to report missing functionality instead of scripting around it or fabricating data.
 - New tool `tekla_report_gap` — lets an agent formally report a missing capability / insufficient data; returns a ready-to-file GitHub issue draft (title + body), logs the request locally, and points to the issues URL (configurable via `TEKLA_MCP_ISSUES_URL`). The server never files issues itself.
+- `tekla_get_model_summary` options for huge models: `includeWeights=false` skips the per-part weight lookup; `maxObjects` caps the scan (the result is then marked `truncated`) ([#5](https://github.com/tempalg1n/tekla-mcp-server/issues/5)).
+
+### Changed
+
+- **Large-model traversal is dramatically faster** ([#5](https://github.com/tempalg1n/tekla-mcp-server/issues/5); ~420k-object models previously took ~10 min to count and dropped the MCP connection on summary):
+  - `AutoFetch` is enabled on every Tekla object enumeration — object data is fetched in batches instead of one remoting round-trip per property read.
+  - Scans filter on cheap direct properties first (`MapBasic`) and read report properties / solids (`Enrich`) only for objects actually returned; `GetSolid()` — the most expensive call — is no longer executed for every object in the model.
+  - New `ITeklaModelService.CountObjects`: `tekla_count_objects` no longer materializes DTOs; a completely unfiltered count uses the enumerator size and returns instantly.
+  - `tekla_get_model_summary` streams cheap reads (type, class, profile, material + optional `WEIGHT`) instead of fully mapping every object.
+  - Queries filtering on a known type (`Beam`, `PolyBeam`, `ContourPlate`, `Grid`) pre-filter at the Tekla API level via `GetAllObjectsWithType`.
 
 ### Fixed
 

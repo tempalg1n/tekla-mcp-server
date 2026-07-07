@@ -88,6 +88,23 @@ without an explicit request and a safety gate (see existing UDA tools for the pr
 
 New tool files: `ModelAssemblyTools.cs`, `ModelQaTools.cs`, `ModelPropertyTools.cs`.
 
+### Performance rules for whole-model scans (issue #5)
+
+Real models reach 400k+ objects; a scan with per-object remoting calls takes minutes and can
+blow the MCP client timeout. In `TeklaModelService`:
+
+- **Set `AutoFetch = true` on every `ModelObjectEnumerator`** (done centrally in
+  `EnumerateSource`) — batches object data instead of one round-trip per property read.
+- **Filter cheap, enrich late.** Match objects with `MapBasic` (identity + direct Part
+  properties, no remoting extras), and call `Enrich` (report properties + solid bbox) only on
+  objects actually returned to the caller. Never call full `Map()` inside a scan loop.
+- **`GetSolid()` is the most expensive call in the API** — only `Enrich(..., includeSolid: true)`
+  results that need coordinates, never count/summary paths.
+- **Counting**: use `ITeklaModelService.CountObjects` (enumerator `GetSize()` when unfiltered);
+  don't count via `FindObjects(...).Count`.
+- When a query filters by a known type, `EnumerateSource` pre-filters with
+  `GetAllObjectsWithType` (see `TypeEnumMap`) — extend the map when you add type-heavy tools.
+
 ### Conventions for WRITE tools (create / edit / delete)
 
 Write tools are now in scope (explicitly requested, with safety gates). Rules:
