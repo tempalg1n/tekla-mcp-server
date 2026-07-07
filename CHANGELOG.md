@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP **server instructions** that tell connecting agents to do the work with the provided tools and to report missing functionality instead of scripting around it or fabricating data.
 - New tool `tekla_report_gap` — lets an agent formally report a missing capability / insufficient data; returns a ready-to-file GitHub issue draft (title + body), logs the request locally, and points to the issues URL (configurable via `TEKLA_MCP_ISSUES_URL`). The server never files issues itself.
 
+### Fixed
+
+- **Live connection to Tekla whose Open API channel is published under a non-default name** (e.g. `Tekla.Structures.Model-Console:2023.0.0.0`, seen with Tekla 2023 SP7 — [#7](https://github.com/tempalg1n/tekla-mcp-server/issues/7)). Before the first `Model()` the server now probes the machine's named pipes and aligns the client channel with the one Tekla actually publishes (`TeklaRemotingChannel`); override with the `TEKLA_MCP_CHANNEL` env var.
+- **Stale Tekla assemblies in the GAC no longer break the universal build** ([#7](https://github.com/tempalg1n/tekla-mcp-server/issues/7)). If the compile-baseline Tekla version (2021) was installed in the GAC, .NET bound to it silently and the server spoke the wrong protocol to a newer running Tekla. `App.config` now redirects `Tekla.Structures`/`Tekla.Structures.Model` to an unreachable version so every bind goes through `TeklaAssemblyResolver`, which always supplies the running Tekla's DLLs.
+- "Not connected" errors now include diagnostics: the client channel name, the loaded Tekla API version and its path, and the `Tekla.Structures.Model-*` pipes published on the machine.
+
 ## [0.4.0] - 2026-06-22
 
 Multi-version support: one **universal** live build works with any installed Tekla (2021+), so users and contributors no longer pick a version at build time. Plus a cross-platform generator for an offline Tekla Open API reference.

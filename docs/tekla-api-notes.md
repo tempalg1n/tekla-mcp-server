@@ -61,6 +61,21 @@ So `dotnet build TeklaMcp.sln -c Release` produces one EXE that works with any i
 `TeklaStructures.exe` process's folder (best — matches the open instance) → the Windows registry
 (`SOFTWARE\Tekla\Structures\<version>`). If none is found, connection fails with a clear message.
 
+**Keeping the GAC out of the picture.** `AppDomain.AssemblyResolve` only fires when the normal
+bind FAILS — and if the baseline Tekla version (e.g. 2021) happens to sit in the GAC, .NET
+Framework binds to it silently and the resolver never runs, so the server speaks the wrong
+protocol version to the running Tekla (issue #7). `src/TeklaMcp.Server/App.config` therefore
+redirects `Tekla.Structures` / `Tekla.Structures.Model` to an unreachable version, forcing every
+bind through the resolver (which uses `Assembly.LoadFile` — no binding policy re-applied).
+
+**Remoting channel name.** The Open API client connects to a named pipe
+`Tekla.Structures.Model-{app}:{apiVersion}`; the baked-in default has an empty `{app}` suffix,
+but some Tekla setups publish e.g. `Tekla.Structures.Model-Console:2023.0.0.0` (issue #7).
+`TeklaRemotingChannel.Align()` (called before the first `Model()`) probes the machine's named
+pipes and patches the internal `Remoter.ChannelName` to the published name when they disagree.
+Override with the `TEKLA_MCP_CHANNEL` env var. "Not connected" errors now include the client
+channel, loaded API version/path, and the published `Tekla.Structures.Model-*` pipes.
+
 **Build overrides** (rarely needed): `-p:TeklaVersion=2024.0.0` (a different baseline from NuGet;
 exact strings at https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json) or
 `-p:TeklaBinDir="...\bin"` (compile against a local install, e.g. a version not on NuGet). Neither
