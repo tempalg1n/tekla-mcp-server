@@ -41,9 +41,17 @@ public sealed class TeklaModelService : ITeklaModelService
         "RU_FN1_MRK",
     };
 
-    // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
-    // the first Model() in this process (see TeklaRemotingChannel / issue #7).
-    static TeklaModelService() => TeklaRemotingChannel.Align();
+    static TeklaModelService()
+    {
+        // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
+        // the first Model() in this process (see TeklaRemotingChannel / issue #7).
+        TeklaRemotingChannel.Align();
+
+        // Process-wide switch (static): fetch object data in batches during enumeration instead
+        // of one remoting round-trip per property read — the biggest speedup on large models
+        // (issue #5).
+        TSM.ModelObjectEnumerator.AutoFetch = true;
+    }
 
     public ConnectionInfo GetConnectionInfo()
     {
@@ -85,7 +93,6 @@ public sealed class TeklaModelService : ITeklaModelService
         // (optionally) the WEIGHT report property. No Map(), no solids, no LENGTH/ASSEMBLY_POS —
         // on large models those made this tool run past the MCP client's timeout (issue #5).
         var en = model.GetModelObjectSelector().GetAllObjects();
-        en.AutoFetch = true;
         while (en.MoveNext())
         {
             var mo = en.Current;
@@ -170,7 +177,6 @@ public sealed class TeklaModelService : ITeklaModelService
         var result = new List<ModelObjectInfo>();
 
         var en = model.GetModelObjectSelector().GetAllObjects();
-        en.AutoFetch = true;
         while (en.MoveNext())
         {
             var info = Map(en.Current);
@@ -253,7 +259,6 @@ public sealed class TeklaModelService : ITeklaModelService
         var result = new List<ModelObjectInfo>();
         var selector = new TSMUI.ModelObjectSelector();
         var en = selector.GetSelectedObjects();
-        en.AutoFetch = true;
         while (en.MoveNext())
         {
             var info = Map(en.Current);
@@ -315,7 +320,6 @@ public sealed class TeklaModelService : ITeklaModelService
             var model = GetConnectedModel();
             var candidates = BuildAttributeCandidateList(candidateAttributeNames);
             var en = model.GetModelObjectSelector().GetAllObjects();
-            en.AutoFetch = true;
             var scanned = 0;
 
             while (en.MoveNext())
@@ -874,8 +878,8 @@ public sealed class TeklaModelService : ITeklaModelService
     /// Yield the objects a query should operate on: the current UI selection
     /// (<see cref="ObjectQuery.UseSelection"/>), the type-filtered subset when the queried
     /// type maps to a Tekla enum (lets Tekla skip non-candidates), or every object.
-    /// AutoFetch batches object data during enumeration instead of one remoting round-trip
-    /// per property read — the single biggest speedup on large models (issue #5).
+    /// AutoFetch (enabled process-wide in the static constructor) batches object data during
+    /// enumeration instead of one remoting round-trip per property read.
     /// </summary>
     private static IEnumerable<TSM.ModelObject> EnumerateSource(TSM.Model model, ObjectQuery query)
     {
@@ -888,7 +892,6 @@ public sealed class TeklaModelService : ITeklaModelService
         else
             en = model.GetModelObjectSelector().GetAllObjects();
 
-        en.AutoFetch = true;
         while (en.MoveNext())
         {
             if (en.Current != null) yield return en.Current;
