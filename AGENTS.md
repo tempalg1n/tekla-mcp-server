@@ -109,6 +109,14 @@ New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTo
 The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`, grid parsing) is the
 most under-verified code in the repo — see `docs/tekla-api-notes.md`.
 
+### Gap-reporting policy (for agents USING the server)
+
+The server sets MCP `ServerInstructions` (in `Program.cs`) telling connecting agents NOT to script
+around missing functionality, but to call `tekla_report_gap` (`ModelMetaTools.cs`) — which returns a
+ready-to-file issue draft and logs the request locally. The server never files issues itself (no
+credentials). When you ADD tools that close such gaps, keep this affordance working; when you find
+yourself wanting a workaround script, that's the signal a tool is missing.
+
 ---
 
 ## 5. Building & testing
