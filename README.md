@@ -220,17 +220,30 @@ Most query and analytics tools accept:
 
 ## Quick start
 
-### Windows — live Tekla model
+### Windows — install from a GitHub Release (recommended)
+
+Releases ship **one zip per Tekla version** — pick the one matching *your* Tekla:
+
+1. Open **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** and download the zip for your Tekla version: `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` … `-tekla2026.zip` (e.g. running Tekla Structures 2023 → `…-tekla2023.zip`).
+2. Extract the zip to a folder (keep all `.dll` files next to the `.exe`).
+3. Open Tekla Structures with a model, and point your MCP client at `TeklaMcp.Server.exe` (see [MCP client configuration](#mcp-client-configuration)).
+
+> **Why per-version zips?** The Tekla Open API protocol is version-locked, so the server must be compiled for the Tekla it talks to. The zip does **not** bundle Tekla DLLs — it loads them from your installed Tekla at runtime, verifying the version matches. A mismatched zip fails with a clear message naming the right one. If auto-detection of the Tekla `bin` folder fails, set the `TEKLA_BIN_DIR` environment variable. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
+>
+> **If Tekla is open but the server says "Not connected":** the error message lists the client channel and the `Tekla.Structures.Model-*` named pipes Tekla actually publishes. The server auto-matches the published channel (some setups publish `…-Console:<version>` instead of the default `…-:<version>`). To force a specific channel, set the `TEKLA_MCP_CHANNEL` environment variable to the exact pipe name.
+
+See [docs/releasing.md](docs/releasing.md) for how maintainers publish releases.
+
+### Windows — build from source
 
 ```powershell
+# Pass the TeklaVersion matching your installed Tekla (NuGet package version, year first —
+# see docs/releasing.md for the exact per-year strings):
+dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2023.0.1
+
 # Open Tekla Structures and load a model, then:
-dotnet build TeklaMcp.sln -c Release
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release
 ```
-
-> **Works with any Tekla version (2021+).** The live build is **universal** — it does not bundle Tekla DLLs and loads them from your installed/running Tekla at runtime, so one build matches whatever version you run. No per-version download. If auto-detection fails, set the `TEKLA_BIN_DIR` environment variable to your Tekla `bin` folder. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
->
-> **If Tekla is open but the server says "Not connected":** the error message now lists the client channel and the `Tekla.Structures.Model-*` named pipes Tekla actually publishes. The server auto-matches the published channel (some setups publish `…-Console:<version>` instead of the default `…-:<version>`) and ignores stale Tekla assemblies in the GAC. To force a specific channel, set the `TEKLA_MCP_CHANNEL` environment variable to the exact pipe name.
 
 Force the mock backend even on Windows (e.g. when Tekla is not open):
 
@@ -271,14 +284,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1 -Skip
 # include Python MCP smoke test after build
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-safe.ps1 -RunSmokeTest
 ```
-
-### Install from a GitHub Release (recommended for Windows)
-
-1. Open **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** and download `TeklaMcp.Server-{version}-net48-win-x64.zip`.
-2. Extract the zip to a folder (keep all `.dll` files next to the `.exe`).
-3. Point your MCP client at `TeklaMcp.Server.exe` (see [MCP client configuration](#mcp-client-configuration)).
-
-See [docs/releasing.md](docs/releasing.md) for how maintainers publish releases.
 
 ---
 

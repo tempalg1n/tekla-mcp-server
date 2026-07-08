@@ -9,9 +9,23 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish release
+  build-tekla:
+    name: Build Tekla ${{ matrix.tekla.year }} (net48)
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tekla:
+          # One artifact per supported Tekla version (issue #11). `nuget` is the
+          # Tekla.Structures[.Model] package version the build compiles against —
+          # the latest published for that Tekla year
+          # (https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json).
+          - { year: 2021, nuget: 2021.0.0 }
+          - { year: 2022, nuget: 2022.0.10715 }
+          - { year: 2023, nuget: 2023.0.1 }
+          - { year: 2024, nuget: 2024.0.4 }
+          - { year: 2025, nuget: 2025.0.0 }
+          - { year: 2026, nuget: 2026.0.3 }
     steps:
       - uses: actions/checkout@v4
 
@@ -19,20 +33,35 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Build solution (net48 + net8.0)
-        run: dotnet build TeklaMcp.sln -c Release
+      - name: Build solution (TeklaVersion=${{ matrix.tekla.nuget }})
+        run: dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=${{ matrix.tekla.nuget }}
 
-      - name: Pack Windows (Tekla) artifact
+      - name: Pack Tekla ${{ matrix.tekla.year }} artifact
         shell: pwsh
         run: |
-          $version = "$env:GITHUB_REF_NAME".TrimStart('v')
           $source = "src/TeklaMcp.Server/bin/Release/net48"
           if (-not (Test-Path "$source/TeklaMcp.Server.exe")) {
             throw "Expected $source/TeklaMcp.Server.exe — build may have failed."
           }
-          $zip = "TeklaMcp.Server-$version-net48-win-x64.zip"
+          $zip = "TeklaMcp.Server-$env:GITHUB_REF_NAME-tekla${{ matrix.tekla.year }}.zip"
           Compress-Archive -Path "$source/*" -DestinationPath $zip -Force
           Write-Host "Created $zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tekla${{ matrix.tekla.year }}
+          path: TeklaMcp.Server-*-tekla${{ matrix.tekla.year }}.zip
+          if-no-files-found: error
+
+  build-mock:
+    name: Build mock backend (net8.0)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
       - name: Pack mock backend artifact
         shell: pwsh
@@ -44,12 +73,30 @@ jobs:
           Compress-Archive -Path "publish/net8.0/*" -DestinationPath $zip -Force
           Write-Host "Created $zip"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mock
+          path: TeklaMcp.Server-*-net8.0-mock.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-tekla, build-mock]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
           body_path: docs/releases/${{ github.ref_name }}.md
           files: |
-            TeklaMcp.Server-*-net48-win-x64.zip
-            TeklaMcp.Server-*-net8.0-mock.zip
+            dist/TeklaMcp.Server-*-tekla*.zip
+            dist/TeklaMcp.Server-*-net8.0-mock.zip
           fail_on_unmatched_files: true

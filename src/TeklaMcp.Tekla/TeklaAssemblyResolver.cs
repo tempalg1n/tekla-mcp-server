@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -8,12 +7,19 @@ using Microsoft.Win32;
 namespace TeklaMcp.Tekla;
 
 /// <summary>
-/// Makes a single net48 build work with ANY installed Tekla version (2021+).
+/// Supplies the Tekla Open API assemblies for a PER-VERSION build (issue #11).
 ///
-/// The project compiles against a BASELINE Tekla API (the lowest supported version) and does NOT
-/// ship the Tekla DLLs. At runtime this resolver supplies the Tekla.* assemblies (and their
-/// dependency closure) from the actually installed/running Tekla, so the version-locked Open API
-/// protocol always matches the running Tekla.
+/// Each release artifact is compiled against ONE Tekla version (<c>-p:TeklaVersion</c>, see
+/// TeklaMcp.Tekla.csproj) and does not ship the Tekla DLLs. At runtime this resolver locates
+/// the installed/running Tekla's <c>bin</c>, verifies its MAJOR version matches the version
+/// this build was compiled for, and <see cref="Assembly.LoadFrom(string)"/>s the DLLs from
+/// there. On a mismatch every Tekla operation fails fast with a "wrong build for this Tekla
+/// version" message instead of speaking the wrong remoting protocol.
+///
+/// No byte-loading and no bindingRedirect tricks — the GAC cannot hijack a per-version build
+/// because a strong-named bind is only satisfied by the exact compiled version (a same-version
+/// GAC copy is protocol-compatible by definition). See App.config for why the old anti-GAC
+/// redirects must never come back.
 ///
 /// <see cref="Register"/> must be called once at startup, BEFORE any Tekla type is touched.
 /// </summary>
@@ -21,16 +27,20 @@ public static class TeklaAssemblyResolver
 {
     private static readonly object Gate = new object();
     private static bool _registered;
-    private static readonly Dictionary<string, Assembly> Cache =
-        new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
-    private static readonly HashSet<string> Loading =
-        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private static bool _mismatchLogged;
+    private static Version? _installedVersion;
 
     /// <summary>The Tekla 'bin' directory assemblies are resolved from, or null if not found.</summary>
     public static string? BinDir { get; private set; }
 
     /// <summary>How <see cref="BinDir"/> was located: "env" | "process" | "registry" | "(not found)".</summary>
     public static string Source { get; private set; } = "(not found)";
+
+    /// <summary>
+    /// The Tekla.Structures.Model version this build was COMPILED against (the build-time
+    /// <c>TeklaVersion</c>), read from this assembly's references — its Major is the Tekla year.
+    /// </summary>
+    public static readonly Version? CompiledVersion = FindCompiledVersion();
 
     public static void Register()
     {
@@ -44,99 +54,113 @@ public static class TeklaAssemblyResolver
             AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
 
             // stderr only — stdout is reserved for the MCP protocol.
-            Console.Error.WriteLine(BinDir != null
-                ? $"[tekla] resolving Tekla assemblies from: {BinDir} (via {Source})"
-                : "[tekla] Tekla 'bin' not found. Start Tekla, or set TEKLA_BIN_DIR. " +
-                  "Connection will fail until then.");
+            Console.Error.WriteLine(
+                $"[tekla] this build is for Tekla {CompiledVersion?.Major.ToString() ?? "?"}; " +
+                (BinDir != null
+                    ? $"resolving Tekla assemblies from: {BinDir} (via {Source})"
+                    : "Tekla 'bin' not found. Start Tekla, or set TEKLA_BIN_DIR. " +
+                      "Connection will fail until then."));
 
-            if (BinDir != null)
-                PreloadCoreAssemblies();
+            // Surface a version mismatch at startup already (logged once); tool calls will
+            // keep failing fast with the same message via EnsureVersionMatch.
+            try { EnsureVersionMatch(); }
+            catch (InvalidOperationException) { /* logged inside */ }
         }
     }
 
-    private static void PreloadCoreAssemblies()
+    /// <summary>
+    /// Throws when the installed Tekla's major version differs from the one this build was
+    /// compiled for — the Open API remoting protocol is version-locked, so proceeding would
+    /// only produce cryptic remoting failures. No-op while Tekla has not been located yet.
+    /// Called both from the resolver and from <c>EnsureTeklaReady</c>, so the clear message
+    /// also covers binds satisfied without the resolver (e.g. a same-version GAC copy).
+    /// </summary>
+    public static void EnsureVersionMatch()
     {
-        // Warm the cache for the two assemblies every Open API call needs. The DLLs are not
-        // shipped with the server (ExcludeAssets="runtime"), so their binds fail probing and
-        // land in AssemblyResolve; preloading keeps the first Model() access to a single cache
-        // hit there. NOTE: Assembly.Load(byte[]) applies binding policy on .NET Framework —
-        // never combine this resolver with bindingRedirects on Tekla.* (see App.config).
-        foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
-            TryLoadFromBin(name);
+        lock (Gate)
+        {
+            var installed = InstalledVersion();
+            if (installed is null || CompiledVersion is null) return;
+            if (installed.Major == CompiledVersion.Major) return;
+
+            var msg =
+                $"Wrong build for this Tekla version: this TeklaMcp.Server build is for " +
+                $"Tekla {CompiledVersion.Major}, but the installed/running Tekla is " +
+                $"{installed.Major} ({BinDir}). Download the TeklaMcp.Server " +
+                $"…-tekla{installed.Major}.zip from the project's GitHub Releases page " +
+                $"(or rebuild with -p:TeklaVersion={installed.Major}.x).";
+            if (!_mismatchLogged)
+            {
+                _mismatchLogged = true;
+                Console.Error.WriteLine("[tekla] " + msg);
+            }
+            throw new InvalidOperationException(msg);
+        }
     }
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
     {
         var name = SafeName(args.Name);
-        if (name is null || name.Length == 0) return null;
+        if (name is null || !name.StartsWith("Tekla", StringComparison.OrdinalIgnoreCase))
+            return null;
 
-        // AssemblyResolve can fire on any thread (tool calls, the script-execution thread);
-        // Cache/Loading are plain collections, so serialize on the same gate Register uses.
-        // Monitor is reentrant, so a same-thread recursive resolve does not deadlock.
+        // Fires on any thread (tool calls, the script-execution thread) — serialize on the
+        // same gate Register uses. Monitor is reentrant, so a recursive resolve on the same
+        // thread cannot deadlock.
         lock (Gate)
         {
-            if (Cache.TryGetValue(name, out var cached))
-                return cached;
-
-            // A dependency bind can re-enter for the same simple name while the outer resolve
-            // is still on the stack — return null to break infinite recursion.
-            if (Loading.Contains(name))
-                return null;
-
             // Tekla may have started AFTER this server (BinDir not found at Register time) —
             // re-probe on Tekla binds so "start server first, open Tekla later" recovers
-            // without a restart. Gated on the name prefix to keep unrelated resolves (e.g.
-            // *.resources) from re-scanning processes.
-            if (BinDir is null && name.StartsWith("Tekla", StringComparison.OrdinalIgnoreCase))
+            // without a restart.
+            if (BinDir is null)
             {
                 BinDir = LocateBinDir(out var source);
                 Source = source;
                 if (BinDir != null)
-                {
                     Console.Error.WriteLine($"[tekla] Tekla located after startup: {BinDir} (via {Source})");
-                    PreloadCoreAssemblies();
-                }
             }
+            if (BinDir is null) return null;
 
-            return BinDir is null ? null : TryLoadFromBin(name);
+            var path = Path.Combine(BinDir, name + ".dll");
+            if (!File.Exists(path)) return null;
+
+            // Never hand the runtime a wrong-version protocol assembly — fail fast instead.
+            EnsureVersionMatch();
+
+            // LoadFrom (not LoadFile, not Load(bytes)): Assembly.Location stays real, LoadFrom
+            // caches by path, and the LoadFrom context resolves the DLL's own dependencies
+            // from the same directory without re-entering this handler.
+            return Assembly.LoadFrom(path);
         }
     }
 
-    /// <summary>Load one assembly from <see cref="BinDir"/>. Caller must hold <see cref="Gate"/>.</summary>
-    private static Assembly? TryLoadFromBin(string name)
+    /// <summary>Version of Tekla.Structures.Model.dll in <see cref="BinDir"/>, probed once. Caller must hold <see cref="Gate"/>.</summary>
+    private static Version? InstalledVersion()
     {
-        if (string.IsNullOrEmpty(BinDir)) return null;
-        if (Cache.TryGetValue(name, out var cached))
-            return cached;
-
-        var path = Path.Combine(BinDir!, name + ".dll");
-        if (!File.Exists(path))
-            return null;
-
-        Loading.Add(name);
+        if (_installedVersion != null) return _installedVersion;
+        if (BinDir is null) return null;
         try
         {
-            // Load(bytes), not LoadFile: LoadFile binds assemblies in a separate load context
-            // where dependency binds re-entered AssemblyResolve until stack overflow on live
-            // Tekla. Loading from bytes lands in the default context with the DLL's real
-            // identity (e.g. 2023.0.0.0).
-            //
-            // Trade-off: byte-loaded assemblies have an EMPTY Assembly.Location. Anything that
-            // needs the file on disk (e.g. Roslyn metadata references for tekla_run_csharp)
-            // must go through BinDir paths instead — see TeklaModelService.ExecuteScript.
-            var bytes = File.ReadAllBytes(path);
-            var asm = Assembly.Load(bytes);
-            Cache[name] = asm;
-            return asm;
+            _installedVersion = AssemblyName
+                .GetAssemblyName(Path.Combine(BinDir, "Tekla.Structures.Model.dll")).Version;
         }
         catch
         {
-            return null;
+            // unreadable/locked DLL — leave null and retry on the next call
         }
-        finally
+        return _installedVersion;
+    }
+
+    private static Version? FindCompiledVersion()
+    {
+        // TeklaMcp.Tekla always references Tekla.Structures.Model; the reference carries the
+        // exact version the build compiled against. No Tekla assembly is loaded by this.
+        foreach (var reference in typeof(TeklaAssemblyResolver).Assembly.GetReferencedAssemblies())
         {
-            Loading.Remove(name);
+            if (string.Equals(reference.Name, "Tekla.Structures.Model", StringComparison.OrdinalIgnoreCase))
+                return reference.Version;
         }
+        return null;
     }
 
     private static string? SafeName(string fullName)
@@ -151,7 +175,7 @@ public static class TeklaAssemblyResolver
         var env = Environment.GetEnvironmentVariable("TEKLA_BIN_DIR");
         if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env)) { source = "env"; return env; }
 
-        // 2) The RUNNING Tekla — guarantees a protocol match with the open instance.
+        // 2) The RUNNING Tekla — guarantees we check against the open instance.
         try
         {
             foreach (var p in Process.GetProcessesByName("TeklaStructures"))
@@ -167,7 +191,7 @@ public static class TeklaAssemblyResolver
         }
         catch { /* ignore */ }
 
-        // 3) Registry fallback: highest installed version.
+        // 3) Registry fallback.
         var reg = FromRegistry();
         if (reg != null) { source = "registry"; return reg; }
 
@@ -186,9 +210,13 @@ public static class TeklaAssemblyResolver
                 using var key = root.OpenSubKey(@"SOFTWARE\Tekla\Structures");
                 if (key == null) continue;
 
-                var versions = key.GetSubKeyNames();
-                Array.Sort(versions, StringComparer.OrdinalIgnoreCase);
-                Array.Reverse(versions); // highest first
+                // A machine can have several Teklas installed side by side — prefer the one
+                // this build was compiled for, then fall back to the highest.
+                var compiledYear = CompiledVersion?.Major.ToString() ?? "";
+                var versions = key.GetSubKeyNames()
+                    .OrderByDescending(v => v.StartsWith(compiledYear, StringComparison.Ordinal))
+                    .ThenByDescending(v => v, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 foreach (var version in versions)
                 {

@@ -63,9 +63,8 @@ public static class TeklaRemotingChannel
             var field = FindChannelNameField();
             var channel = field?.GetValue(null) as string ?? "(unknown)";
             var pipes = ListPublishedModelPipes();
-            // Byte-loaded assemblies (TeklaAssemblyResolver) have an empty Location.
             var origin = string.IsNullOrEmpty(asm.Location)
-                ? $"(byte-loaded from '{TeklaAssemblyResolver.BinDir ?? "?"}')"
+                ? $"(no file location; resolver bin: '{TeklaAssemblyResolver.BinDir ?? "?"}')"
                 : $"'{asm.Location}'";
             return $"client channel '{channel}', API {asm.GetName().Version} from {origin}, " +
                    $"published model pipes: [{string.Join(", ", pipes)}]";

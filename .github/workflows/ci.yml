@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-mock:
-    name: Build mock backend (net8.0)
+    name: Build mock backend (net8.0) + tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +20,18 @@ jobs:
       - name: Build
         run: dotnet build src/TeklaMcp.Server/TeklaMcp.Server.csproj -c Release
 
+      - name: Test
+        run: dotnet test tests/TeklaMcp.Tests -c Release
+
   build-windows:
-    name: Build Windows + Tekla (net48)
+    name: Build Windows + Tekla ${{ matrix.tekla }} (net48)
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The same versions the release matrix ships (.github/workflows/release.yml) —
+        # catches per-Tekla-version API drift before release day.
+        tekla: [2021.0.0, 2022.0.10715, 2023.0.1, 2024.0.4, 2025.0.0, 2026.0.3]
     steps:
       - uses: actions/checkout@v4
 
@@ -31,4 +40,4 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build solution
-        run: dotnet build TeklaMcp.sln -c Release
+        run: dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=${{ matrix.tekla }}

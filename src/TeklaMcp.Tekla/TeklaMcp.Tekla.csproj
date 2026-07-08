@@ -3,15 +3,19 @@
   <!--
     REAL Tekla Open API implementation. Windows-only (net48).
 
-    UNIVERSAL BUILD — one build works with ANY installed Tekla version (2021+):
-      - Compiles against a BASELINE Tekla API (default 2021.0.0, the lowest supported version),
-        so the code never uses members missing from older versions.
-      - Does NOT ship the Tekla DLLs (ExcludeAssets="runtime"). At runtime,
-        TeklaAssemblyResolver loads the Tekla.* assemblies from the installed/running Tekla,
-        so the version-locked Open API protocol always matches the running Tekla.
+    PER-VERSION BUILD (issue #11) — one artifact per supported Tekla version (2021–2026):
+      - Compiles against the Tekla API selected by -p:TeklaVersion (a Tekla.Structures[.Model]
+        NuGet package version; default 2021.0.0 — the oldest supported API surface, so an
+        unadorned build stays the strictest compile check). The release matrix builds every
+        supported version — see .github/workflows/release.yml and docs/releasing.md.
+      - Does NOT ship the Tekla DLLs (ExcludeAssets="runtime"; Trimble's binaries are not
+        redistributable). At runtime TeklaAssemblyResolver loads them from the installed
+        Tekla's bin — after verifying its major version matches this build's TeklaVersion,
+        failing fast with a "wrong build for this Tekla version" message otherwise.
 
-    Overrides (rarely needed):
-      -p:TeklaVersion=2024.0.0      compile against a different baseline (from NuGet)
+    Overrides:
+      -p:TeklaVersion=2024.0.4      compile for a different Tekla version (exact NuGet
+                                    version strings: see docs/releasing.md)
       -p:TeklaBinDir="...\bin"      compile against a local install's DLLs (no NuGet)
   -->
   <PropertyGroup>

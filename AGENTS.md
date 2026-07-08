@@ -39,6 +39,14 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 7. **Cross-TFM safety.** `Core` and `Mock` are `netstandard2.0`. Do not use APIs or
    language features that don't compile there (e.g. avoid `record`/`init` unless you add
    an `IsExternalInit` polyfill; prefer plain classes).
+8. **Per-Tekla-version builds — don't fight the GAC.** `TeklaMcp.Tekla` compiles against
+   ONE Tekla version (`-p:TeklaVersion`); releases ship one zip per supported version
+   (2021–2026, see `docs/releasing.md`), and `TeklaAssemblyResolver` fails fast on a
+   version mismatch. Never reintroduce the universal-build tricks: no anti-GAC
+   bindingRedirects for `Tekla.*`, no `Assembly.Load(byte[])`/`LoadFile` in the resolver —
+   both failed on live machines (issue #11; see "Assembly loading history" in
+   `docs/tekla-api-notes.md`). When a new Tekla version ships, extend the matrices in
+   `.github/workflows/release.yml` and `ci.yml`.
 
 ---
 
@@ -135,9 +143,10 @@ dedicated tool exists. Rules for maintaining it:
 
 - **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
   the caller: the net48 backend passes DLL *file paths* from `TeklaAssemblyResolver.BinDir`
-  (NOT `typeof(...).Assembly` — the resolver byte-loads, so `Assembly.Location` is empty); the
-  mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last
-  to target netstandard2.0).
+  (preferred over `typeof(...).Assembly` — the file set covers the whole closure, e.g.
+  Datatype/Plugins, regardless of how the assemblies were bound); the mock passes DLL paths
+  from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last to target
+  netstandard2.0).
 - **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). The mock NEVER executes
   (`Executed=false`); only the net48 backend runs scripts. Never throw — report failures in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
@@ -174,11 +183,16 @@ dotnet run   --project src/TeklaMcp.Server
 npx @modelcontextprotocol/inspector dotnet run --project src/TeklaMcp.Server
 ```
 
-**Windows + Tekla:**
+**Windows + Tekla** (pass the `TeklaVersion` matching the installed Tekla — NuGet package
+version, see the table in `docs/releasing.md`; the default `2021.0.0` build only talks to
+Tekla 2021):
 ```powershell
-dotnet build TeklaMcp.sln -c Release
+dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2023.0.1
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release   # Tekla must be open
 ```
+
+The net48 projects also COMPILE on macOS/Linux (`dotnet build TeklaMcp.sln`) — useful for
+checking all `-p:TeklaVersion` values build, they just can't run there.
 
 **Tests (mock-only, any OS):**
 ```bash

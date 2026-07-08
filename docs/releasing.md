@@ -4,14 +4,21 @@ This project uses [Semantic Versioning](https://semver.org/) and Git tags of the
 
 ## What gets published
 
-Each release includes two zip archives built by GitHub Actions:
+Each release includes **one zip per supported Tekla version** plus the mock build, all built by the GitHub Actions matrix ([release.yml](../.github/workflows/release.yml)):
 
-| Archive | Contents |
-|---|---|
-| `TeklaMcp.Server-{version}-net48-win-x64.zip` | Windows executable + DLLs for live Tekla integration |
-| `TeklaMcp.Server-{version}-net8.0-mock.zip` | Mock backend for development without Tekla |
+| Archive | Compiled against (NuGet `TeklaVersion`) | For |
+|---|---|---|
+| `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` | `2021.0.0` | Tekla Structures 2021 |
+| `TeklaMcp.Server-vX.Y.Z-tekla2022.zip` | `2022.0.10715` | Tekla Structures 2022 |
+| `TeklaMcp.Server-vX.Y.Z-tekla2023.zip` | `2023.0.1` | Tekla Structures 2023 |
+| `TeklaMcp.Server-vX.Y.Z-tekla2024.zip` | `2024.0.4` | Tekla Structures 2024 |
+| `TeklaMcp.Server-vX.Y.Z-tekla2025.zip` | `2025.0.0` | Tekla Structures 2025 |
+| `TeklaMcp.Server-vX.Y.Z-tekla2026.zip` | `2026.0.3` | Tekla Structures 2026 |
+| `TeklaMcp.Server-X.Y.Z-net8.0-mock.zip` | — | Mock backend, development without Tekla |
 
-The **net48 zip** is what most users need. It contains `TeklaMcp.Server.exe` and all dependent assemblies — they must stay in the same directory.
+Users download the **zip matching their Tekla version** (the year in the name). The Open API remoting protocol is version-locked, so a build compiled for one Tekla only talks to that Tekla — a mismatched zip fails fast at runtime with a message naming the right one ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)). Each Tekla zip contains `TeklaMcp.Server.exe` and all dependent assemblies — they must stay in the same directory. The Tekla DLLs themselves are **not** bundled (not redistributable); they load from the locally installed Tekla.
+
+When a new Tekla version ships, add a matrix entry (year + latest NuGet package version from https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json) to **both** [release.yml](../.github/workflows/release.yml) and [ci.yml](../.github/workflows/ci.yml), and update this table.
 
 ---
 
@@ -47,7 +54,7 @@ When you push a version tag, the [release workflow](../.github/workflows/release
 
 5. **Wait for Actions**
 
-   Open **Actions → Release** on GitHub. When it completes, the release appears under **Releases** with both zip files attached.
+   Open **Actions → Release** on GitHub. The matrix builds all Tekla versions in parallel; when every job completes, the release appears under **Releases** with all zip files attached (six Tekla zips + the mock zip).
 
 Tags matching `v0.*` are marked as **pre-release** automatically.
 
@@ -57,10 +64,12 @@ Tags matching `v0.*` are marked as **pre-release** automatically.
 
 Use this if you built locally or the CI workflow is not set up yet.
 
-### 1. Build locally
+### 1. Build locally — once per Tekla version
+
+Each artifact is compiled for ONE Tekla version, so repeat the build+zip cycle for every version you want to ship (use the NuGet versions from the table above):
 
 ```powershell
-dotnet build TeklaMcp.sln -c Release
+dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2023.0.1
 ```
 
 Output folder:
@@ -75,10 +84,10 @@ This folder contains `TeklaMcp.Server.exe` plus all required `.dll` files. **Upl
 
 ```powershell
 cd src\TeklaMcp.Server\bin\Release\net48
-Compress-Archive -Path * -DestinationPath ..\..\..\..\..\..\TeklaMcp.Server-0.1.0-net48-win-x64.zip
+Compress-Archive -Path * -DestinationPath ..\..\..\..\..\..\TeklaMcp.Server-v0.6.0-tekla2023.zip
 ```
 
-Or select all files in the `net48` folder and compress them in Explorer.
+Then `dotnet build … -p:TeklaVersion=2024.0.4` and zip again as `…-tekla2024.zip`, and so on. (Clean between builds or the previous version's `TeklaMcp.Tekla.dll` may be reused.)
 
 ### 3. Create the release on GitHub
 
@@ -109,7 +118,7 @@ The process should start and wait on stdin (no output on stdout — that is norm
 
 - `TeklaMcp.Core.dll`, `TeklaMcp.Mock.dll`, `TeklaMcp.Tekla.dll`
 - MCP SDK and hosting libraries
-- Tekla Open API assemblies (from NuGet)
+- Tekla Open API assemblies (loaded at runtime from the locally installed Tekla — these are deliberately **not** in the zip)
 
 If you upload **only** the `.exe`, users will get runtime errors about missing assemblies. Always ship the **entire `net48` output folder** (as a zip).
 
@@ -134,6 +143,7 @@ While the project is in `0.x`, treat every minor release as potentially breaking
 - [ ] README tool table still accurate
 - [ ] `dotnet build TeklaMcp.sln -c Release` succeeds locally
   *(close running TeklaMcp.Server processes first)*
+- [ ] New Tekla version released since last time? Add it to the release + CI matrices (see "What gets published")
 - [ ] Tag pushed (`vX.Y.Z`)
-- [ ] GitHub Release contains both zip artifacts
+- [ ] GitHub Release contains all Tekla zips + the mock zip
 - [ ] Replace `YOUR_ORG` in CHANGELOG compare links with your GitHub username/org

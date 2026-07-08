@@ -31,8 +31,8 @@ needs a live model.
 - Gradual migration from .NET Framework to modern .NET started in 2024; this project
   currently targets **`net48`** for live Tekla integration.
 - NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`, `Tekla.Structures.Plugins`,
-  etc., versions `2021.0.0` .. `2026.0.x`. The build compiles against a baseline (default
-  `2021.0.0`) but works with any installed version at runtime — see "Tekla version compatibility".
+  etc., versions `2021.0.0` .. `2026.0.x`. Each release build compiles against ONE version
+  (`-p:TeklaVersion`) and only works with that Tekla — see "Tekla version compatibility".
 
 ## Connection model
 
@@ -43,30 +43,40 @@ would use `Tekla.Structures.Plugins`).
 
 ## Tekla version compatibility
 
-The Open API DLLs talk to the running Tekla over a **version-locked protocol**, so the running
-DLLs must match the running Tekla version. The live build solves this with **one universal build**
-(no per-version artifacts):
+The Open API DLLs talk to the running Tekla over a **version-locked protocol**, so the loaded
+DLLs must match the running Tekla version. The live build solves this with **per-Tekla-version
+builds** ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)) — one release zip per
+supported version (2021–2026):
 
-- `TeklaMcp.Tekla` compiles against a **baseline** API (`TeklaVersion`, default `2021.0.0` — the
-  lowest supported version) so the code never uses members absent from older versions.
-- It does **not** ship the Tekla DLLs (`ExcludeAssets="runtime"`). At runtime,
-  `TeklaAssemblyResolver` (registered in `Program.cs` for the net48 build) handles
-  `AppDomain.AssemblyResolve` and loads `Tekla.*` (and their dependency closure) from the
-  installed Tekla's `bin`.
+- `TeklaMcp.Tekla` compiles against the Tekla API selected by `-p:TeklaVersion` (a
+  `Tekla.Structures[.Model]` NuGet package version, default `2021.0.0`; exact strings at
+  https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json). The release
+  matrix in `.github/workflows/release.yml` builds every supported version.
+- It does **not** ship the Tekla DLLs (`ExcludeAssets="runtime"` — Trimble's binaries are not
+  redistributable). At runtime `TeklaAssemblyResolver` (registered in `Program.cs` for the
+  net48 build) handles `AppDomain.AssemblyResolve` for `Tekla.*`, verifies the installed
+  Tekla's **major version matches the compiled one**, and `Assembly.LoadFrom`s the DLLs from
+  the installed Tekla's `bin`. On a mismatch every Tekla operation fails fast with a clear
+  "wrong build for this Tekla version — download …-tekla&lt;year&gt;.zip" message
+  (`TeklaAssemblyResolver.EnsureVersionMatch`, also called from `EnsureTeklaReady` so binds
+  the resolver never saw — e.g. a same-version GAC copy — are covered too).
 
-So `dotnet build TeklaMcp.sln -c Release` produces one EXE that works with any installed Tekla
-(2021+); it auto-binds to whatever version is running. (`net8.0` mock builds never reference Tekla.)
+**Why per-version instead of one universal build.** The universal scheme (compile against the
+2021 baseline, resolve the running Tekla's assemblies at runtime) was abandoned after the
+failure matrix collected in PR #10 (2026-07-08, live Tekla 2023 with stale 2021 assemblies in
+the GAC): redirect-based GAC avoidance is fundamentally incompatible with every load API usable
+from `AssemblyResolve` (see "Assembly loading history" below), and without redirects the GAC
+cannot be beaten — fusion consults it before the event is raised. With per-version builds the
+GAC stops being a lottery: a strong-named bind needs the exact compiled version, so a stale
+different-version copy never matches, and a same-version copy is protocol-compatible by
+definition. The universal build also silently relied on undocumented binary compatibility
+between the 2021 API surface and newer Tekla DLLs — Trimble's own model is per-version.
 
 **Locating the Tekla `bin`** (in order): the `TEKLA_BIN_DIR` env var → the running
 `TeklaStructures.exe` process's folder (best — matches the open instance) → the Windows registry
-(`SOFTWARE\Tekla\Structures\<version>`). If none is found, connection fails with a clear message.
-
-**Keeping the GAC out of the picture.** `AppDomain.AssemblyResolve` only fires when the normal
-bind FAILS — and if the baseline Tekla version (e.g. 2021) happens to sit in the GAC, .NET
-Framework binds to it silently and the resolver never runs, so the server speaks the wrong
-protocol version to the running Tekla (issue #7). `src/TeklaMcp.Server/App.config` therefore
-redirects `Tekla.Structures` / `Tekla.Structures.Model` to an unreachable version, forcing every
-bind through the resolver (which uses `Assembly.LoadFile` — no binding policy re-applied).
+(`SOFTWARE\Tekla\Structures\<version>`; installs matching the compiled version are preferred
+over newer ones). If none is found at startup, the resolver re-probes whenever a `Tekla.*` bind
+occurs, so "start the server first, open Tekla later" recovers without a restart.
 
 **Remoting channel name.** The Open API client connects to a named pipe
 `Tekla.Structures.Model-{app}:{apiVersion}`; the baked-in default has an empty `{app}` suffix,
@@ -76,10 +86,10 @@ pipes and patches the internal `Remoter.ChannelName` to the published name when 
 Override with the `TEKLA_MCP_CHANNEL` env var. "Not connected" errors now include the client
 channel, loaded API version/path, and the published `Tekla.Structures.Model-*` pipes.
 
-**Build overrides** (rarely needed): `-p:TeklaVersion=2024.0.0` (a different baseline from NuGet;
-exact strings at https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json) or
-`-p:TeklaBinDir="...\bin"` (compile against a local install, e.g. a version not on NuGet). Neither
-bundles the DLLs — the runtime resolver still supplies them.
+**Build overrides**: `-p:TeklaVersion=<nuget version>` picks the Tekla version to compile for
+(see [docs/releasing.md](releasing.md) for the version-per-year table);
+`-p:TeklaBinDir="...\bin"` compiles against a local install's DLLs (e.g. a version not on
+NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 
 ## APIs used in `TeklaModelService.cs`
 
@@ -143,29 +153,28 @@ tools (e.g. beam count 4367 == `tekla_count_objects`); policy blocks (`Console`,
 the 2023 NuGet DLLs: policy → compile pipeline, all default imports resolve (mock backend,
 `TEKLA_MCP_SCRIPT_REF_DIR`).
 
-### Assembly loading interplay (important)
+### Assembly loading history (constraints that must not be violated)
 
-`TeklaAssemblyResolver` **byte-loads** the Tekla assemblies (`Assembly.Load(byte[])`) — the
-`LoadFile`/binding-redirect scheme stack-overflowed on live Tekla (fixed in cbe716b). Two
-consequences to keep in mind:
+`TeklaAssemblyResolver` now simply `Assembly.LoadFrom`s the matching per-version install's
+DLLs — plain and policy-free. `Assembly.Location` is real again, and script metadata
+references use the DLL files in `TeklaAssemblyResolver.BinDir` (which also covers
+Datatype/Plugins) — see `TeklaModelService.BuildScriptReferences`. Two hard-won constraints
+from the universal-build era (the PR #10 failure matrix) still apply to ANY future change here:
 
-- **Byte-loaded assemblies have an empty `Assembly.Location`.** Roslyn metadata references for
-  scripts must come from the DLL **files** in `TeklaAssemblyResolver.BinDir`, not from
-  `typeof(...).Assembly` — see `TeklaModelService.BuildScriptReferences`.
-- **Anti-GAC bindingRedirects are fundamentally incompatible with this resolver — do not
-  bring them back.** On .NET Framework `Assembly.Load(byte[])` (unlike `LoadFile`) APPLIES
-  binding policy to the image's identity, so a `Tekla.* → 2999.9.9.9` redirect turns the
-  resolver's own preload into a bind for 2999.9.9.9 — a circular resolve ending in
-  FileNotFound (with the re-entrancy guard) or StackOverflow/hangs (without). Verified live
-  twice: cbe716b and the d167ff4 re-attempt (reverted).
-- **Known limitation (issue #7, reproduced live 2026-07-08):** a stale GAC copy at the
-  compile-baseline version (e.g. Tekla 2021 in the GAC, Tekla 2023 running) binds silently
-  past the resolver — scripts keep working (they compile/bind against the BinDir DLLs whose
-  version misses the GAC), but every dedicated tool fails on the remoting channel version.
-  `EnsureTeklaReady` logs a loud stderr warning. Interim workaround: remove the stale Tekla
-  assemblies from the GAC. Planned fix: **per-Tekla-version release builds** — the requested
-  assembly version then always matches the installed Tekla, and the GAC can only satisfy it
-  with a same-major (protocol-compatible) copy.
+- **Never combine an `AssemblyResolve`-based resolver with anti-GAC bindingRedirects.** On
+  .NET Framework `Assembly.Load(byte[])` (unlike `LoadFile`) APPLIES binding policy to the
+  image's identity, so a `Tekla.* → 2999.9.9.9` redirect turns the resolver's own load into a
+  bind for 2999.9.9.9 — a circular resolve ending in FileNotFound (with a re-entrancy guard)
+  or StackOverflow/hangs (without). Verified live twice: cbe716b and the d167ff4 re-attempt
+  (reverted).
+- **Do not switch to `Assembly.LoadFile` either.** It binds in a separate load context whose
+  dependency binds re-entered `AssemblyResolve` until StackOverflow on live Tekla (the
+  original issue #7 crash).
+
+The old issue #7 failure mode — a stale GAC copy at the compiled version binding silently
+while a different Tekla runs — is now caught by `TeklaAssemblyResolver.EnsureVersionMatch`
+(called per operation from `EnsureTeklaReady`): the tools fail fast with the "wrong build for
+this Tekla version" message instead of failing cryptically on the remoting channel.
 
 **Still TODO(windows):**
 
@@ -175,3 +184,7 @@ consequences to keep in mind:
 - "Server started before Tekla" flow: `Align()` retries until Tekla publishes its pipes, and
   the resolver re-probes for the Tekla bin on demand — verify a connection succeeds without
   restarting the server.
+- Per-version fail-fast (issue #11): on a machine whose GAC holds a DIFFERENT Tekla version
+  than the build (e.g. tekla2023 build, 2021 in the GAC), verify the dedicated tools work and
+  that a deliberately wrong zip (e.g. tekla2021 on running Tekla 2023) produces the
+  "wrong build for this Tekla version" message.
