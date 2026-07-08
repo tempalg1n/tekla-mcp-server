@@ -30,8 +30,9 @@ if (forceMock)
 }
 else
 {
-    // One build, any Tekla version: resolve the Tekla Open API assemblies from the
-    // installed/running Tekla at runtime. Must run before the first Tekla type is touched.
+    // Per-version build: this artifact is compiled for ONE Tekla version. The resolver
+    // loads the Tekla Open API assemblies from the installed/running Tekla and fails fast
+    // on a version mismatch. Must run before the first Tekla type is touched.
     TeklaMcp.Tekla.TeklaAssemblyResolver.Register();
     TeklaMcp.Tekla.TeklaRemotingChannel.Align();
     builder.Services.AddSingleton<ITeklaModelService, TeklaMcp.Tekla.TeklaModelService>();

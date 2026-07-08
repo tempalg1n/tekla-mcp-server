@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Per-Tekla-version release builds replace the universal build** ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)). Releases now ship one zip per supported Tekla version — `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` … `-tekla2026.zip` (plus the unchanged net8.0 mock zip); download the one matching your Tekla. The universal single-exe scheme proved unreliable: redirect-based GAC avoidance is incompatible with every load API usable from `AssemblyResolve`, and without redirects a stale GAC copy at the compile baseline silently hijacked the bind ([#7](https://github.com/tempalg1n/tekla-mcp-server/issues/7)). `TeklaAssemblyResolver` is now policy-free: it locates the installed Tekla's `bin`, verifies the DLL major version matches the version the build was compiled for, and `Assembly.LoadFrom`s the DLLs — on a mismatch every Tekla operation fails fast with a "wrong build for this Tekla version" message naming the right zip. A stale different-version GAC copy can no longer hijack a bind (strong-named binds need the exact version), and `Assembly.Location` is real again. Building from source now takes `-p:TeklaVersion=<NuGet version>` matching your Tekla; CI compiles the whole version matrix.
+
 ### Added
 
 - **C# scripting escape hatch** — agents can now cover Tekla Open API capabilities that have no dedicated tool yet:
@@ -21,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Live Tekla startup crash (StackOverflow) on assembly resolve**: `TeklaAssemblyResolver` now byte-loads the Tekla assemblies into the default context (with a cache and re-entrancy guard) instead of `LoadFile`, the broken 2999.9.9.9 binding redirects are gone from `App.config`, and Tekla-touching initialization moved out of the type initializer into lazy `EnsureTeklaReady()`. Verified against live Tekla 2023.
 - Follow-up hardening of that fix: the resolver cache is thread-safe (script execution binds on its own thread); remoting-channel alignment retries until Tekla publishes its pipes and the resolver re-probes for the Tekla bin on demand, so "start server first, open Tekla later" connects without a restart; a stale-GAC bind logs a loud stderr warning; and `tekla_run_csharp` compiles against the DLL files in the resolver's bin directory — byte-loaded assemblies have an empty `Assembly.Location`, which would have silently dropped the Tekla references from script compilation.
-- Anti-GAC binding redirects were briefly restored and then **removed for good**: on .NET Framework `Assembly.Load(byte[])` applies binding policy, so the `2999.9.9.9` redirect makes the resolver's own loads circular (FileNotFound/StackOverflow — verified live). Known limitation documented instead: a stale GAC copy at the compile-baseline version still bypasses the resolver (issue #7) — the server logs a loud stderr warning; the proper fix is per-Tekla-version release builds (tracked separately).
+- Anti-GAC binding redirects were briefly restored and then **removed for good**: on .NET Framework `Assembly.Load(byte[])` applies binding policy, so the `2999.9.9.9` redirect makes the resolver's own loads circular (FileNotFound/StackOverflow — verified live). That failure mode is closed for good by the per-Tekla-version builds above ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)).
 
 ## [0.5.0] - 2026-07-07
 

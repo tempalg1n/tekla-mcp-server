@@ -88,10 +88,21 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 
 ## Быстрый старт
 
-### Windows — живая модель Tekla
+### Windows — установка из GitHub Release (рекомендуется)
+
+Каждый релиз содержит **отдельный zip под каждую версию Tekla** — скачайте тот, что соответствует *вашей* Tekla:
+
+1. Откройте **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** и скачайте zip своей версии: `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` … `-tekla2026.zip` (например, для Tekla Structures 2023 — `…-tekla2023.zip`).
+2. Распакуйте архив в папку (все `.dll` должны остаться рядом с `.exe`).
+3. Откройте модель в Tekla Structures и укажите в MCP-клиенте путь к `TeklaMcp.Server.exe`.
+
+> **Почему zip под каждую версию?** Протокол Tekla Open API привязан к версии, поэтому сервер собирается под конкретную Tekla. DLL самой Tekla в архив не входят — они подгружаются из вашей установленной Tekla; при несовпадении версий сервер сразу сообщит, какой zip нужен. Если папка `bin` Tekla не находится автоматически, задайте переменную окружения `TEKLA_BIN_DIR`.
+
+### Windows — сборка из исходников
 
 ```powershell
-dotnet build TeklaMcp.sln -c Release
+# Укажите TeklaVersion своей Tekla (версия NuGet-пакета; точные строки — в docs/releasing.md):
+dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2023.0.1
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release
 ```
 

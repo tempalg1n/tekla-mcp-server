@@ -45,6 +45,12 @@ public sealed class TeklaModelService : ITeklaModelService
 
     private static void EnsureTeklaReady()
     {
+        // Per-version build (issue #11): refuse to talk to a Tekla whose major version differs
+        // from the one this build was compiled for — BEFORE any remoting call can fail with
+        // something cryptic. Also catches binds the resolver never saw (e.g. a same-baseline
+        // GAC copy on a machine running a different Tekla, the old issue #7 failure mode).
+        TeklaAssemblyResolver.EnsureVersionMatch();
+
         // Align() caches its own result and keeps retrying while Tekla publishes no pipes yet,
         // so calling it per-operation makes "start server first, open Tekla later" work.
         TeklaRemotingChannel.Align();
@@ -61,18 +67,14 @@ public sealed class TeklaModelService : ITeklaModelService
             Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ex.Message);
         }
 
-        // GAC tripwire (diagnostic only — the redirect-based prevention is fundamentally
-        // incompatible with the byte-loading resolver, see App.config). A stale GAC copy at
-        // the compile-baseline version binds silently past the resolver and every dedicated
-        // tool fails against a newer running Tekla (issue #7; reproduced live: GAC 2021 vs
-        // Tekla 2023 — scripts fine, dedicated tools down). Proper fix: per-version builds.
+        // A GAC-sourced bind is harmless with per-version builds — a strong-named bind needs
+        // the exact compiled version, which is protocol-compatible by definition — but log it,
+        // as it means the running Tekla's own (possibly service-packed) DLLs were bypassed.
         var asm = typeof(TSM.Model).Assembly;
         if (asm.GlobalAssemblyCache)
             Console.Error.WriteLine(
-                $"[tekla] WARNING: Tekla.Structures.Model {asm.GetName().Version} was loaded from the GAC, " +
-                $"not from the running Tekla ({TeklaAssemblyResolver.BinDir ?? "bin not found"}). Dedicated " +
-                "tools will fail if the running Tekla is a different version. Remove the stale Tekla " +
-                "assemblies from the GAC (issue #7), or use a build matching your Tekla version.");
+                $"[tekla] note: Tekla.Structures.Model {asm.GetName().Version} was loaded from the GAC " +
+                $"(same version as this build), not from {TeklaAssemblyResolver.BinDir ?? "the Tekla bin"}.");
     }
 
     static TeklaModelService()
@@ -877,18 +879,17 @@ public sealed class TeklaModelService : ITeklaModelService
     }
 
     /// <summary>
-    /// Metadata references for script compilation. TeklaAssemblyResolver byte-loads the Tekla
-    /// assemblies, and byte-loaded assemblies have an EMPTY <c>Assembly.Location</c> — Roslyn
-    /// needs files on disk, so reference the DLLs from the resolver's bin directory directly.
+    /// Metadata references for script compilation. Prefer the DLL files in the resolver's bin
+    /// directory over loaded <c>Assembly</c> objects: the file set covers the whole closure
+    /// (Datatype/Plugins too) and works no matter how the assemblies were bound (LoadFrom, GAC).
     /// </summary>
     private static IReadOnlyList<Microsoft.CodeAnalysis.MetadataReference> BuildScriptReferences()
     {
         var bin = TeklaAssemblyResolver.BinDir;
         if (bin == null)
         {
-            // No resolver bin located (unusual): fall back to the loaded Assembly objects.
-            // Covers normal binds (GAC/probing, non-empty Location); byte-loaded ones are
-            // skipped inside BuildReferences and the compile errors will say Tekla is missing.
+            // No resolver bin located (unusual): fall back to the loaded Assembly objects —
+            // LoadFrom/GAC binds have a real Location, so Roslyn can read the files.
             return Scripting.ScriptEngine.BuildReferences(teklaAssemblies: new[]
             {
                 typeof(TSM.Model).Assembly,                           // Tekla.Structures.Model.dll
