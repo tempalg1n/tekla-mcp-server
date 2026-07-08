@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\TeklaMcp.Core\TeklaMcp.Core.csproj" />
+    <ProjectReference Include="..\TeklaMcp.Scripting\TeklaMcp.Scripting.csproj" />
   </ItemGroup>
 
 </Project>

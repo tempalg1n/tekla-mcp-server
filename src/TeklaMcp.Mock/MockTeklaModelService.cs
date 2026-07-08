@@ -457,6 +457,53 @@ public sealed class MockTeklaModelService : ITeklaModelService
         return result;
     }
 
+    // -- Script escape hatch --------------------------------------------------------------
+
+    public ScriptResult ExecuteScript(string code, bool allowMutations = false, int timeoutSeconds = 60)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var result = new ScriptResult { Backend = BackendName, Stage = "policy" };
+
+        var violations = Scripting.ScriptPolicy.Validate(code, allowMutations);
+        if (violations.Count > 0)
+        {
+            result.PolicyViolations.AddRange(violations);
+            result.Guidance = "Fix the policy violations and retry.";
+            result.DurationMs = watch.ElapsedMilliseconds;
+            return result;
+        }
+
+        // Compile-only validation: possible on any OS when the Tekla DLLs are available
+        // (e.g. extracted from the NuGet packages — see tools/TeklaApiDoc/README.md).
+        result.Stage = "compile";
+        var dllDir = Environment.GetEnvironmentVariable("TEKLA_MCP_SCRIPT_REF_DIR");
+        if (!string.IsNullOrWhiteSpace(dllDir) && System.IO.Directory.Exists(dllDir))
+        {
+            var dlls = System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll");
+            var script = Scripting.ScriptEngine.Create(
+                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: dlls));
+            result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
+            if (result.CompileErrors.Count > 0)
+            {
+                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                result.DurationMs = watch.ElapsedMilliseconds;
+                return result;
+            }
+        }
+        else
+        {
+            result.Guidance = "Compilation was SKIPPED (no Tekla DLLs on this machine — set " +
+                              "TEKLA_MCP_SCRIPT_REF_DIR to a folder with Tekla.Structures*.dll to enable it). ";
+        }
+
+        result.Success = true;
+        result.Guidance = (result.Guidance ?? "") +
+                          "Mock backend: the script was validated but NOT executed — execution requires " +
+                          "the real Tekla backend on Windows. Do not fabricate results from this run.";
+        result.DurationMs = watch.ElapsedMilliseconds;
+        return result;
+    }
+
     private void StampOrigin(string guid, string value)
     {
         if (!_udasByGuid.TryGetValue(guid, out var udas))

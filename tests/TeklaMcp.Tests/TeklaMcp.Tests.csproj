@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Cross-platform unit tests (net8.0, mock-only — no Tekla required).
+    Run with: dotnet test tests/TeklaMcp.Tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <!-- Runs on a newer installed runtime too (this repo is developed on machines with .NET 10). -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\TeklaMcp.Core\TeklaMcp.Core.csproj" />
+    <ProjectReference Include="..\..\src\TeklaMcp.Mock\TeklaMcp.Mock.csproj" />
+    <ProjectReference Include="..\..\src\TeklaMcp.Scripting\TeklaMcp.Scripting.csproj" />
+  </ItemGroup>
+
+</Project>

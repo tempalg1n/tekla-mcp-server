@@ -130,3 +130,48 @@ binding redirects (`AutoGenerateBindingRedirects` is enabled in the server proje
 
 If the single-process `net48` build fails to start, consider the two-process fallback
 described in [architecture.md](architecture.md).
+
+## Roslyn scripting on .NET Framework 4.8 (tekla_run_csharp)
+
+The script escape hatch uses `Microsoft.CodeAnalysis.CSharp.Scripting` 4.9.2 (the last line
+targeting `netstandard2.0`, so one package serves both server builds).
+
+**Verified on live Tekla 2023 (2026-07-08)**: read-only scripts compile and execute against a
+real ~400k-object model; `Print(...)` + JSON return value work; results match the dedicated
+tools (e.g. beam count 4367 == `tekla_count_objects`); policy blocks (`Console`, `System.IO`,
+`#r`) and compile errors (CS1061 + guidance) behave as designed. Also verified on macOS against
+the 2023 NuGet DLLs: policy → compile pipeline, all default imports resolve (mock backend,
+`TEKLA_MCP_SCRIPT_REF_DIR`).
+
+### Assembly loading interplay (important)
+
+`TeklaAssemblyResolver` **byte-loads** the Tekla assemblies (`Assembly.Load(byte[])`) — the
+`LoadFile`/binding-redirect scheme stack-overflowed on live Tekla (fixed in cbe716b). Two
+consequences to keep in mind:
+
+- **Byte-loaded assemblies have an empty `Assembly.Location`.** Roslyn metadata references for
+  scripts must come from the DLL **files** in `TeklaAssemblyResolver.BinDir`, not from
+  `typeof(...).Assembly` — see `TeklaModelService.BuildScriptReferences`.
+- **Anti-GAC bindingRedirects are fundamentally incompatible with this resolver — do not
+  bring them back.** On .NET Framework `Assembly.Load(byte[])` (unlike `LoadFile`) APPLIES
+  binding policy to the image's identity, so a `Tekla.* → 2999.9.9.9` redirect turns the
+  resolver's own preload into a bind for 2999.9.9.9 — a circular resolve ending in
+  FileNotFound (with the re-entrancy guard) or StackOverflow/hangs (without). Verified live
+  twice: cbe716b and the d167ff4 re-attempt (reverted).
+- **Known limitation (issue #7, reproduced live 2026-07-08):** a stale GAC copy at the
+  compile-baseline version (e.g. Tekla 2021 in the GAC, Tekla 2023 running) binds silently
+  past the resolver — scripts keep working (they compile/bind against the BinDir DLLs whose
+  version misses the GAC), but every dedicated tool fails on the remoting channel version.
+  `EnsureTeklaReady` logs a loud stderr warning. Interim workaround: remove the stale Tekla
+  assemblies from the GAC. Planned fix: **per-Tekla-version release builds** — the requested
+  assembly version then always matches the installed Tekla, and the GAC can only satisfy it
+  with a same-major (protocol-compatible) copy.
+
+**Still TODO(windows):**
+
+- Timeout abort uses `Thread.Abort` (supported on net48, no-op catch on net8) — verify an
+  aborted script doesn't wedge the Tekla remoting channel.
+- The mutation path (`allowMutations=true`) has not been run against a live model.
+- "Server started before Tekla" flow: `Align()` retries until Tekla publishes its pipes, and
+  the resolver re-probes for the Tekla bin on demand — verify a connection succeeds without
+  restarting the server.

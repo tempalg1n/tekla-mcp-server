@@ -48,8 +48,10 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 |---|---|---|
 | `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend (synthetic frame) |
+| `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, engine, SafeJson) + API reference search. No Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 | real Tekla Open API backend (Windows) |
 | `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host + `tekla_*` tools |
+| `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla) |
 
 Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
 `$(OS) != Windows_NT`, so non-Windows builds never pull in the Tekla project. The
@@ -126,13 +128,40 @@ New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTo
 The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`, grid parsing) is the
 most under-verified code in the repo — see `docs/tekla-api-notes.md`.
 
+### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
+
+`ModelScriptTools.cs` + `src/TeklaMcp.Scripting/` let agents run policy-checked C# scripts when no
+dedicated tool exists. Rules for maintaining it:
+
+- **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
+  the caller: the net48 backend passes DLL *file paths* from `TeklaAssemblyResolver.BinDir`
+  (NOT `typeof(...).Assembly` — the resolver byte-loads, so `Assembly.Location` is empty); the
+  mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last
+  to target netstandard2.0).
+- **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). The mock NEVER executes
+  (`Executed=false`); only the net48 backend runs scripts. Never throw — report failures in the DTO.
+- **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
+  If you extend the script surface (new imports, new globals), extend the policy AND the tests in
+  `tests/TeklaMcp.Tests/ScriptPolicyTests.cs` in the same change. Mutations require
+  `allowMutations=true`; the tool description obliges the agent to show the user the script and
+  get explicit approval first, and to keep changes traceable (`MCP_ORIGIN` UDA) — keep that
+  contract wording intact.
+- **Never let scripts touch stdout** — `Console` is banned by policy; script output goes through
+  `ScriptGlobals.Print` (capped) and `SafeJson` (capped, defensive).
+- **`tekla_search_api`/`tekla_get_api_doc`** read the `tools/TeklaApiDoc` output (git-ignored) found
+  via `TEKLA_MCP_API_REF_DIR` or by probing for `reference/tekla-api`. They must degrade to a
+  "how to generate" hint, never an error.
+- **A recurring script is a roadmap signal**: promote it to a first-class tool (interface + both
+  backends + dedicated tool) and keep `tekla_report_gap` pointing that way.
+
 ### Gap-reporting policy (for agents USING the server)
 
-The server sets MCP `ServerInstructions` (in `Program.cs`) telling connecting agents NOT to script
-around missing functionality, but to call `tekla_report_gap` (`ModelMetaTools.cs`) — which returns a
-ready-to-file issue draft and logs the request locally. The server never files issues itself (no
-credentials). When you ADD tools that close such gaps, keep this affordance working; when you find
-yourself wanting a workaround script, that's the signal a tool is missing.
+The server sets MCP `ServerInstructions` (in `Program.cs`) giving connecting agents an escalation
+ladder: dedicated tools first; then the sanctioned script escape hatch (`tekla_search_api` →
+`tekla_run_csharp`) for one-off needs; and `tekla_report_gap` (`ModelMetaTools.cs`) for anything
+missing or recurring — it returns a ready-to-file issue draft and logs the request locally. The
+server never files issues itself (no credentials). When you ADD tools that close such gaps, keep
+this affordance working; external ad-hoc automation and fabricated data remain forbidden.
 
 ---
 
@@ -151,8 +180,11 @@ dotnet build TeklaMcp.sln -c Release
 dotnet run --project src/TeklaMcp.Server -f net48 -c Release   # Tekla must be open
 ```
 
-There are no automated tests yet. If you add logic to `Core`/`Mock`, a small xUnit
-project under `tests/` is welcome (keep it `net8.0`, mock-only).
+**Tests (mock-only, any OS):**
+```bash
+dotnet test tests/TeklaMcp.Tests
+```
+Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8.0`, mock-only).
 
 ---
 

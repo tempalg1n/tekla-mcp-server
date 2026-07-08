@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sanctioned C# script "escape hatch" (tekla_run_csharp) + offline Tekla Open API
+    reference search (tekla_search_api / tekla_get_api_doc).
+
+    Targets netstandard2.0 so BOTH server builds can use it:
+      * net8.0 (Mock)  — validate + compile scripts (never executes them).
+      * net48 (Tekla)  — validate + compile + EXECUTE against the live model.
+
+    NO Tekla references here (golden rule #1) — scripts are compiled against Tekla
+    assemblies supplied by the caller at runtime (file paths or loaded assemblies).
+  -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>TeklaMcp.Scripting</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Roslyn scripting. 4.9.x is the well-tested line that still targets netstandard2.0
+         (5.x drops it), so the same package serves the net8.0 and net48 builds. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.9.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TeklaMcp.Core\TeklaMcp.Core.csproj" />
+  </ItemGroup>
+
+</Project>

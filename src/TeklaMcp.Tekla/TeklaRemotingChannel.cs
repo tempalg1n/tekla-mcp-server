@@ -18,10 +18,12 @@ namespace TeklaMcp.Tekla;
 /// remoting fails with "Failed to connect to an IPC Port" even though Tekla is running with
 /// a model open.
 ///
-/// <see cref="Align"/> runs once before the first <c>Model()</c> is created: it compares the
-/// baked-in channel name with the <c>Tekla.Structures.Model-*</c> pipes present on the machine
-/// and, when the default is not among them, rewrites the internal static
+/// <see cref="Align"/> runs before <c>Model()</c> is created: it compares the baked-in channel
+/// name with the <c>Tekla.Structures.Model-*</c> pipes present on the machine and, when the
+/// default is not among them, rewrites the internal static
 /// <c>Tekla.Structures.ModelInternal.Remoter.ChannelName</c> field to the published name.
+/// The result is cached — EXCEPT when no Tekla pipes were found at all (server started before
+/// Tekla): then the next call probes again, so "start server, open Tekla later" still aligns.
 /// Everything here is best-effort: on any failure it logs to stderr and leaves the default.
 ///
 /// Override: set <c>TEKLA_MCP_CHANNEL</c> to force an exact channel name (skips probing).
@@ -38,13 +40,14 @@ public static class TeklaRemotingChannel
         lock (Gate)
         {
             if (_done) return;
-            _done = true;
             try
             {
-                AlignCore();
+                // False only while Tekla publishes no pipes — retry on the next call.
+                _done = AlignCore();
             }
             catch (Exception ex)
             {
+                _done = true; // structural failure — retrying would only spam stderr
                 Console.Error.WriteLine(
                     "[tekla] remoting channel alignment failed (keeping default): " + ex.Message);
             }
@@ -60,7 +63,11 @@ public static class TeklaRemotingChannel
             var field = FindChannelNameField();
             var channel = field?.GetValue(null) as string ?? "(unknown)";
             var pipes = ListPublishedModelPipes();
-            return $"client channel '{channel}', API {asm.GetName().Version} from '{asm.Location}', " +
+            // Byte-loaded assemblies (TeklaAssemblyResolver) have an empty Location.
+            var origin = string.IsNullOrEmpty(asm.Location)
+                ? $"(byte-loaded from '{TeklaAssemblyResolver.BinDir ?? "?"}')"
+                : $"'{asm.Location}'";
+            return $"client channel '{channel}', API {asm.GetName().Version} from {origin}, " +
                    $"published model pipes: [{string.Join(", ", pipes)}]";
         }
         catch (Exception ex)
@@ -69,14 +76,15 @@ public static class TeklaRemotingChannel
         }
     }
 
-    private static void AlignCore()
+    /// <summary>Returns false when there was nothing to align to yet (no Tekla pipes) — retryable.</summary>
+    private static bool AlignCore()
     {
         var field = FindChannelNameField();
         if (field is null)
         {
             Console.Error.WriteLine(
                 "[tekla] Remoter.ChannelName not found in this Tekla API version; using the default channel.");
-            return;
+            return true;
         }
 
         var current = field.GetValue(null) as string ?? "";
@@ -87,12 +95,12 @@ public static class TeklaRemotingChannel
             field.SetValue(null, forced.Trim());
             Console.Error.WriteLine(
                 $"[tekla] remoting channel forced via TEKLA_MCP_CHANNEL: '{forced.Trim()}' (default was '{current}').");
-            return;
+            return true;
         }
 
         var pipes = ListPublishedModelPipes();
-        if (pipes.Count == 0) return;        // Tekla not running (or pipes unreadable) — nothing to align to.
-        if (pipes.Contains(current)) return; // the default channel IS published — no patch needed.
+        if (pipes.Count == 0) return false;       // Tekla not running (or pipes unreadable) — retry later.
+        if (pipes.Contains(current)) return true; // the default channel IS published — no patch needed.
 
         // Only consider pipes for the SAME Open API version the loaded assemblies speak;
         // the remoting protocol is not compatible across versions anyway.
@@ -107,7 +115,7 @@ public static class TeklaRemotingChannel
                 $"[tekla] no published Tekla model pipe matches the loaded API version ({version ?? "?"}). " +
                 $"Published: [{string.Join(", ", pipes)}]. Keeping default channel '{current}'. " +
                 "This usually means the loaded Tekla assemblies do not match the running Tekla.");
-            return;
+            return true;
         }
 
         candidates.Sort(StringComparer.OrdinalIgnoreCase);
@@ -118,6 +126,7 @@ public static class TeklaRemotingChannel
             (candidates.Count > 1
                 ? $" Other candidates: [{string.Join(", ", candidates.GetRange(1, candidates.Count - 1))}]."
                 : ""));
+        return true;
     }
 
     private static FieldInfo? FindChannelNameField()

@@ -41,22 +41,52 @@ public sealed class TeklaModelService : ITeklaModelService
         "RU_FN1_MRK",
     };
 
-    static TeklaModelService()
+    private static bool _oneTimeInitDone;
+
+    private static void EnsureTeklaReady()
     {
-        // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
-        // the first Model() in this process (see TeklaRemotingChannel / issue #7).
+        // Align() caches its own result and keeps retrying while Tekla publishes no pipes yet,
+        // so calling it per-operation makes "start server first, open Tekla later" work.
         TeklaRemotingChannel.Align();
+
+        if (_oneTimeInitDone) return;
+        _oneTimeInitDone = true;
 
         // Process-wide switch (static): fetch object data in batches during enumeration instead
         // of one remoting round-trip per property read — the biggest speedup on large models
         // (issue #5).
-        TSM.ModelObjectEnumerator.AutoFetch = true;
+        try { TSM.ModelObjectEnumerator.AutoFetch = true; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ex.Message);
+        }
+
+        // GAC tripwire (diagnostic only — the redirect-based prevention is fundamentally
+        // incompatible with the byte-loading resolver, see App.config). A stale GAC copy at
+        // the compile-baseline version binds silently past the resolver and every dedicated
+        // tool fails against a newer running Tekla (issue #7; reproduced live: GAC 2021 vs
+        // Tekla 2023 — scripts fine, dedicated tools down). Proper fix: per-version builds.
+        var asm = typeof(TSM.Model).Assembly;
+        if (asm.GlobalAssemblyCache)
+            Console.Error.WriteLine(
+                $"[tekla] WARNING: Tekla.Structures.Model {asm.GetName().Version} was loaded from the GAC, " +
+                $"not from the running Tekla ({TeklaAssemblyResolver.BinDir ?? "bin not found"}). Dedicated " +
+                "tools will fail if the running Tekla is a different version. Remove the stale Tekla " +
+                "assemblies from the GAC (issue #7), or use a build matching your Tekla version.");
+    }
+
+    static TeklaModelService()
+    {
+        // Intentionally empty — touching Tekla types here (Align / AutoFetch) can recurse
+        // through AssemblyResolve while TeklaMcp.Tekla is still loading and overflow the stack.
+        // All Tekla-touching init lives in EnsureTeklaReady(), called lazily per operation.
     }
 
     public ConnectionInfo GetConnectionInfo()
     {
         try
         {
+            EnsureTeklaReady();
             var model = new TSM.Model();
             if (!model.GetConnectionStatus())
             {
@@ -794,6 +824,89 @@ public sealed class TeklaModelService : ITeklaModelService
         return result;
     }
 
+    // -- Script escape hatch --------------------------------------------------------------
+
+    /// <summary>
+    /// Validate → compile → EXECUTE an agent-authored script against the live model.
+    /// The script connects itself (<c>var model = new Model();</c>); Tekla references come
+    /// from the assemblies already loaded in this process (resolved by TeklaAssemblyResolver,
+    /// so they always match the running Tekla version).
+    /// </summary>
+    // Verified on live Tekla 2023 (2026-07-08): read-only scripts compile and execute, Print +
+    // JSON return value work, results match the dedicated tools. Mutation path and the timeout
+    // abort remain unverified — see docs/tekla-api-notes.md.
+    public ScriptResult ExecuteScript(string code, bool allowMutations = false, int timeoutSeconds = 60)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var result = new ScriptResult { Backend = BackendName, Stage = "policy" };
+        try
+        {
+            EnsureTeklaReady(); // the script's `new Model()` needs the remoting channel aligned
+
+            var violations = Scripting.ScriptPolicy.Validate(code, allowMutations);
+            if (violations.Count > 0)
+            {
+                result.PolicyViolations.AddRange(violations);
+                result.Guidance = "Fix the policy violations and retry.";
+                return result;
+            }
+
+            result.Stage = "compile";
+            var script = Scripting.ScriptEngine.Create(code, BuildScriptReferences());
+            result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
+            if (result.CompileErrors.Count > 0)
+            {
+                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                return result;
+            }
+
+            var globals = new Scripting.ScriptGlobals();
+            Scripting.ScriptEngine.Run(script, globals, timeoutSeconds, result);
+            // Printed output survives even a timeout/exception — the globals object is ours.
+            result.PrintedOutput.AddRange(globals.PrintedOutput);
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.Message;
+        }
+        finally
+        {
+            result.DurationMs = watch.ElapsedMilliseconds;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Metadata references for script compilation. TeklaAssemblyResolver byte-loads the Tekla
+    /// assemblies, and byte-loaded assemblies have an EMPTY <c>Assembly.Location</c> — Roslyn
+    /// needs files on disk, so reference the DLLs from the resolver's bin directory directly.
+    /// </summary>
+    private static IReadOnlyList<Microsoft.CodeAnalysis.MetadataReference> BuildScriptReferences()
+    {
+        var bin = TeklaAssemblyResolver.BinDir;
+        if (bin == null)
+        {
+            // No resolver bin located (unusual): fall back to the loaded Assembly objects.
+            // Covers normal binds (GAC/probing, non-empty Location); byte-loaded ones are
+            // skipped inside BuildReferences and the compile errors will say Tekla is missing.
+            return Scripting.ScriptEngine.BuildReferences(teklaAssemblies: new[]
+            {
+                typeof(TSM.Model).Assembly,                           // Tekla.Structures.Model.dll
+                typeof(global::Tekla.Structures.Identifier).Assembly, // Tekla.Structures.dll
+            });
+        }
+
+        // Datatype/Plugins are part of the Open API dependency closure (profile/material value
+        // types, plugin bases) — include them when present; missing files are skipped.
+        var names = new[]
+        {
+            "Tekla.Structures", "Tekla.Structures.Model",
+            "Tekla.Structures.Datatype", "Tekla.Structures.Plugins",
+        };
+        return Scripting.ScriptEngine.BuildReferences(
+            teklaDllPaths: Array.ConvertAll(names, n => System.IO.Path.Combine(bin, n + ".dll")));
+    }
+
     private static TSM.ModelObject? CreateOne(PartSpec spec)
     {
         var kind = (spec.Kind ?? "beam").Trim().ToLowerInvariant();
@@ -852,6 +965,7 @@ public sealed class TeklaModelService : ITeklaModelService
 
     private static TSM.Model GetConnectedModel()
     {
+        EnsureTeklaReady();
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
             throw new InvalidOperationException(

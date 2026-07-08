@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -20,6 +21,10 @@ public static class TeklaAssemblyResolver
 {
     private static readonly object Gate = new object();
     private static bool _registered;
+    private static readonly Dictionary<string, Assembly> Cache =
+        new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> Loading =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The Tekla 'bin' directory assemblies are resolved from, or null if not found.</summary>
     public static string? BinDir { get; private set; }
@@ -43,32 +48,94 @@ public static class TeklaAssemblyResolver
                 ? $"[tekla] resolving Tekla assemblies from: {BinDir} (via {Source})"
                 : "[tekla] Tekla 'bin' not found. Start Tekla, or set TEKLA_BIN_DIR. " +
                   "Connection will fail until then.");
+
+            if (BinDir != null)
+                PreloadCoreAssemblies();
         }
+    }
+
+    private static void PreloadCoreAssemblies()
+    {
+        // Warm the cache for the two assemblies every Open API call needs. The DLLs are not
+        // shipped with the server (ExcludeAssets="runtime"), so their binds fail probing and
+        // land in AssemblyResolve; preloading keeps the first Model() access to a single cache
+        // hit there. NOTE: Assembly.Load(byte[]) applies binding policy on .NET Framework —
+        // never combine this resolver with bindingRedirects on Tekla.* (see App.config).
+        foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
+            TryLoadFromBin(name);
     }
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
     {
-        if (string.IsNullOrEmpty(BinDir)) return null;
-
         var name = SafeName(args.Name);
-        if (string.IsNullOrEmpty(name)) return null;
+        if (name is null || name.Length == 0) return null;
 
+        // AssemblyResolve can fire on any thread (tool calls, the script-execution thread);
+        // Cache/Loading are plain collections, so serialize on the same gate Register uses.
+        // Monitor is reentrant, so a same-thread recursive resolve does not deadlock.
+        lock (Gate)
+        {
+            if (Cache.TryGetValue(name, out var cached))
+                return cached;
+
+            // A dependency bind can re-enter for the same simple name while the outer resolve
+            // is still on the stack — return null to break infinite recursion.
+            if (Loading.Contains(name))
+                return null;
+
+            // Tekla may have started AFTER this server (BinDir not found at Register time) —
+            // re-probe on Tekla binds so "start server first, open Tekla later" recovers
+            // without a restart. Gated on the name prefix to keep unrelated resolves (e.g.
+            // *.resources) from re-scanning processes.
+            if (BinDir is null && name.StartsWith("Tekla", StringComparison.OrdinalIgnoreCase))
+            {
+                BinDir = LocateBinDir(out var source);
+                Source = source;
+                if (BinDir != null)
+                {
+                    Console.Error.WriteLine($"[tekla] Tekla located after startup: {BinDir} (via {Source})");
+                    PreloadCoreAssemblies();
+                }
+            }
+
+            return BinDir is null ? null : TryLoadFromBin(name);
+        }
+    }
+
+    /// <summary>Load one assembly from <see cref="BinDir"/>. Caller must hold <see cref="Gate"/>.</summary>
+    private static Assembly? TryLoadFromBin(string name)
+    {
+        if (string.IsNullOrEmpty(BinDir)) return null;
+        if (Cache.TryGetValue(name, out var cached))
+            return cached;
+
+        var path = Path.Combine(BinDir!, name + ".dll");
+        if (!File.Exists(path))
+            return null;
+
+        Loading.Add(name);
         try
         {
-            // Supply any assembly (Tekla.* and its dependency closure) that exists in the Tekla
-            // bin. The handler only fires when the normal load failed, so loading a same-named
-            // DLL from the install is the intended behaviour.
+            // Load(bytes), not LoadFile: LoadFile binds assemblies in a separate load context
+            // where dependency binds re-entered AssemblyResolve until stack overflow on live
+            // Tekla. Loading from bytes lands in the default context with the DLL's real
+            // identity (e.g. 2023.0.0.0).
             //
-            // LoadFile, not LoadFrom: LoadFrom re-applies binding policy to the file's identity,
-            // and App.config deliberately redirects Tekla.* to an unreachable version (to keep
-            // the GAC out of the picture) — LoadFrom would chase that redirect and re-enter this
-            // handler. LoadFile loads exactly the file, no policy, no probing.
-            var path = Path.Combine(BinDir!, name + ".dll");
-            return File.Exists(path) ? Assembly.LoadFile(path) : null;
+            // Trade-off: byte-loaded assemblies have an EMPTY Assembly.Location. Anything that
+            // needs the file on disk (e.g. Roslyn metadata references for tekla_run_csharp)
+            // must go through BinDir paths instead — see TeklaModelService.ExecuteScript.
+            var bytes = File.ReadAllBytes(path);
+            var asm = Assembly.Load(bytes);
+            Cache[name] = asm;
+            return asm;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            Loading.Remove(name);
         }
     }
 
