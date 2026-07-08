@@ -136,15 +136,31 @@ described in [architecture.md](architecture.md).
 The script escape hatch uses `Microsoft.CodeAnalysis.CSharp.Scripting` 4.9.2 (the last line
 targeting `netstandard2.0`, so one package serves both server builds).
 
-**TODO(windows): the net48 execution path is UNVERIFIED.** Things to check on the real machine:
+**Verified on live Tekla 2023 (2026-07-08)**: read-only scripts compile and execute against a
+real ~400k-object model; `Print(...)` + JSON return value work; results match the dedicated
+tools (e.g. beam count 4367 == `tekla_count_objects`); policy blocks (`Console`, `System.IO`,
+`#r`) and compile errors (CS1061 + guidance) behave as designed. Also verified on macOS against
+the 2023 NuGet DLLs: policy → compile pipeline, all default imports resolve (mock backend,
+`TEKLA_MCP_SCRIPT_REF_DIR`).
 
-- Binding redirects for Roslyn's transitive deps (`System.Collections.Immutable`,
-  `System.Memory`, `System.Reflection.Metadata`) — auto-generated for the server exe, but
-  watch for `FileLoadException` on first script compile.
-- Metadata references come from the loaded Tekla assemblies (`typeof(TSM.Model).Assembly`
-  etc., resolved by `TeklaAssemblyResolver`) — verify `Assembly.Location` is non-empty there.
+### Assembly loading interplay (important)
+
+`TeklaAssemblyResolver` **byte-loads** the Tekla assemblies (`Assembly.Load(byte[])`) — the
+`LoadFile`/binding-redirect scheme stack-overflowed on live Tekla (fixed in cbe716b). Two
+consequences to keep in mind:
+
+- **Byte-loaded assemblies have an empty `Assembly.Location`.** Roslyn metadata references for
+  scripts must come from the DLL **files** in `TeklaAssemblyResolver.BinDir`, not from
+  `typeof(...).Assembly` — see `TeklaModelService.BuildScriptReferences`.
+- **The GAC guard is diagnostic-only now.** Without the old 2999.9.9.9 redirects, a stale GAC
+  copy at the compile-baseline version would bind silently past the resolver (issue #7);
+  `EnsureTeklaReady` logs a loud stderr warning when `typeof(Model).Assembly.GlobalAssemblyCache`
+  is true. (Tekla 2026 no longer GAC-registers its assemblies, so this fades away over time.)
+
+**Still TODO(windows):**
+
 - Timeout abort uses `Thread.Abort` (supported on net48, no-op catch on net8) — verify an
   aborted script doesn't wedge the Tekla remoting channel.
-- Verified on macOS against the 2023 NuGet DLLs: policy → compile pipeline, default imports
-  (`Tekla.Structures`, `.Model`, `.Model.UI`, `.Geometry3d`, `.Filtering`) all resolve, and
-  compile errors come back agent-readable (mock backend, `TEKLA_MCP_SCRIPT_REF_DIR`).
+- The mutation path (`allowMutations=true`) has not been run against a live model.
+- "Server started before Tekla" flow: `Align()` now retries until Tekla publishes its pipes —
+  verify a connection succeeds without restarting the server.

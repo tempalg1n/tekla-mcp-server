@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `src/TeklaMcp.Scripting/` project (netstandard2.0, Tekla-free) and a `tests/TeklaMcp.Tests` xUnit suite (policy, JSON rendering, reference search, mock pipeline).
 - Server instructions now describe the escalation ladder: dedicated tools → script escape hatch (with signature verification) → `tekla_report_gap` for anything recurring.
 
+### Fixed
+
+- **Live Tekla startup crash (StackOverflow) on assembly resolve**: `TeklaAssemblyResolver` now byte-loads the Tekla assemblies into the default context (with a cache and re-entrancy guard) instead of `LoadFile`, the broken 2999.9.9.9 binding redirects are gone from `App.config`, and Tekla-touching initialization moved out of the type initializer into lazy `EnsureTeklaReady()`. Verified against live Tekla 2023.
+- Follow-up hardening of that fix: the resolver cache is thread-safe (script execution binds on its own thread); remoting-channel alignment retries until Tekla publishes its pipes, so "start server first, open Tekla later" connects without a restart; a stale-GAC bind (issue #7's failure mode, no longer preventable without the redirects) now logs a loud stderr warning; and `tekla_run_csharp` compiles against the DLL files in the resolver's bin directory — byte-loaded assemblies have an empty `Assembly.Location`, which would have silently dropped the Tekla references from script compilation.
+
 ## [0.5.0] - 2026-07-07
 
 Reliability and scale: the live server now connects to Tekla setups that publish a non-default Open API channel (and ignores stale GAC assemblies), and whole-model tools are fast enough for 400k+-object models. Plus a formal gap-reporting affordance for agents.

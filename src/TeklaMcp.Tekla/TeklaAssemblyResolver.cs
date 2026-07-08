@@ -56,9 +56,10 @@ public static class TeklaAssemblyResolver
 
     private static void PreloadCoreAssemblies()
     {
-        // Warm the cache for the two assemblies every Open API call needs. App.config redirects
-        // Tekla.* to an unreachable version (2999.9.9.9) so binds always hit AssemblyResolve;
-        // preloading avoids re-entrant resolve loops (StackOverflow) on first Model() access.
+        // Warm the cache for the two assemblies every Open API call needs. The DLLs are not
+        // shipped with the server (ExcludeAssets="runtime"), so their binds fail probing and
+        // land in AssemblyResolve; preloading keeps the first Model() access off that path
+        // (re-entrant resolve loops caused a StackOverflow on live Tekla — see cbe716b).
         foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
             TryLoadFromBin(name);
     }
@@ -68,19 +69,26 @@ public static class TeklaAssemblyResolver
         if (string.IsNullOrEmpty(BinDir)) return null;
 
         var name = SafeName(args.Name);
-        if (string.IsNullOrEmpty(name)) return null;
+        if (name is null || name.Length == 0) return null;
 
-        if (Cache.TryGetValue(name, out var cached))
-            return cached;
+        // AssemblyResolve can fire on any thread (tool calls, the script-execution thread);
+        // Cache/Loading are plain collections, so serialize on the same gate Register uses.
+        // Monitor is reentrant, so a same-thread recursive resolve does not deadlock.
+        lock (Gate)
+        {
+            if (Cache.TryGetValue(name, out var cached))
+                return cached;
 
-        // Dependency loads during LoadFile can re-enter for the same simple name while the
-        // outer resolve is still on the stack — return null to break infinite recursion.
-        if (Loading.Contains(name))
-            return null;
+            // A dependency bind can re-enter for the same simple name while the outer resolve
+            // is still on the stack — return null to break infinite recursion.
+            if (Loading.Contains(name))
+                return null;
 
-        return TryLoadFromBin(name);
+            return TryLoadFromBin(name);
+        }
     }
 
+    /// <summary>Load one assembly from <see cref="BinDir"/>. Caller must hold <see cref="Gate"/>.</summary>
     private static Assembly? TryLoadFromBin(string name)
     {
         if (string.IsNullOrEmpty(BinDir)) return null;
@@ -94,10 +102,14 @@ public static class TeklaAssemblyResolver
         Loading.Add(name);
         try
         {
-            // Load(bytes), not LoadFile: LoadFile binds assemblies in a separate load context,
-            // so the default binder still cannot satisfy the App.config redirect to 2999.9.9.9
-            // and AssemblyResolve re-enters until stack overflow. Loading from bytes lands in
-            // the default context with the DLL's real identity (e.g. 2023.0.0.0).
+            // Load(bytes), not LoadFile: LoadFile binds assemblies in a separate load context
+            // where dependency binds re-entered AssemblyResolve until stack overflow on live
+            // Tekla. Loading from bytes lands in the default context with the DLL's real
+            // identity (e.g. 2023.0.0.0).
+            //
+            // Trade-off: byte-loaded assemblies have an EMPTY Assembly.Location. Anything that
+            // needs the file on disk (e.g. Roslyn metadata references for tekla_run_csharp)
+            // must go through BinDir paths instead — see TeklaModelService.ExecuteScript.
             var bytes = File.ReadAllBytes(path);
             var asm = Assembly.Load(bytes);
             Cache[name] = asm;

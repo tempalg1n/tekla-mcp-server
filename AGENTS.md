@@ -133,9 +133,11 @@ most under-verified code in the repo — see `docs/tekla-api-notes.md`.
 `ModelScriptTools.cs` + `src/TeklaMcp.Scripting/` let agents run policy-checked C# scripts when no
 dedicated tool exists. Rules for maintaining it:
 
-- **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla assemblies from
-  the caller: the net48 backend passes its loaded assemblies; the mock passes DLL paths from
-  `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last to target netstandard2.0).
+- **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
+  the caller: the net48 backend passes DLL *file paths* from `TeklaAssemblyResolver.BinDir`
+  (NOT `typeof(...).Assembly` — the resolver byte-loads, so `Assembly.Location` is empty); the
+  mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last
+  to target netstandard2.0).
 - **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). The mock NEVER executes
   (`Executed=false`); only the net48 backend runs scripts. Never throw — report failures in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
