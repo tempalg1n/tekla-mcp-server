@@ -61,16 +61,18 @@ public sealed class TeklaModelService : ITeklaModelService
             Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ex.Message);
         }
 
-        // Universal-build sanity check. Since the 2999.9.9.9 binding redirects were dropped
-        // (they broke loading on live installs — see cbe716b), a stale GAC copy at the compile
-        // baseline version would bind silently and bypass TeklaAssemblyResolver — the exact
-        // failure mode of issue #7. Can't prevent it anymore, so at least make it loud.
+        // Universal-build tripwire. App.config redirects Tekla.* past the GAC so this should
+        // never fire; if it does, the redirects were removed/tampered (e.g. a hand-edited
+        // TeklaMcp.Server.exe.config) and the server is speaking a stale API version — the
+        // exact failure mode of issue #7 (reproduced live: GAC 2021 vs running Tekla 2023,
+        // scripts fine but every dedicated tool down).
         var asm = typeof(TSM.Model).Assembly;
         if (asm.GlobalAssemblyCache)
             Console.Error.WriteLine(
                 $"[tekla] WARNING: Tekla.Structures.Model {asm.GetName().Version} was loaded from the GAC, " +
-                $"not from the running Tekla ({TeklaAssemblyResolver.BinDir ?? "bin not found"}). If the " +
-                "connection fails or misbehaves, remove stale Tekla assemblies from the GAC (issue #7).");
+                $"not from the running Tekla ({TeklaAssemblyResolver.BinDir ?? "bin not found"}). Check the " +
+                "Tekla.* bindingRedirect blocks in TeklaMcp.Server.exe.config, or remove the stale GAC " +
+                "assemblies (issue #7).");
     }
 
     static TeklaModelService()

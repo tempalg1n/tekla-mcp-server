@@ -56,18 +56,17 @@ public static class TeklaAssemblyResolver
 
     private static void PreloadCoreAssemblies()
     {
-        // Warm the cache for the two assemblies every Open API call needs. The DLLs are not
-        // shipped with the server (ExcludeAssets="runtime"), so their binds fail probing and
-        // land in AssemblyResolve; preloading keeps the first Model() access off that path
-        // (re-entrant resolve loops caused a StackOverflow on live Tekla — see cbe716b).
+        // Warm the cache for the two assemblies every Open API call needs. Every Tekla.* bind
+        // fails by design (App.config redirects them to the unreachable 2999.9.9.9 so the GAC
+        // never wins — issue #7) and lands in AssemblyResolve; preloading keeps the first
+        // Model() access to a single cache hit there (re-entrant resolve loops caused a
+        // StackOverflow on live Tekla with the old LoadFile scheme — see cbe716b).
         foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
             TryLoadFromBin(name);
     }
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
     {
-        if (string.IsNullOrEmpty(BinDir)) return null;
-
         var name = SafeName(args.Name);
         if (name is null || name.Length == 0) return null;
 
@@ -84,7 +83,22 @@ public static class TeklaAssemblyResolver
             if (Loading.Contains(name))
                 return null;
 
-            return TryLoadFromBin(name);
+            // Tekla may have started AFTER this server (BinDir not found at Register time) —
+            // re-probe on Tekla binds so "start server first, open Tekla later" recovers
+            // without a restart. Gated on the name prefix to keep unrelated resolves (e.g.
+            // *.resources) from re-scanning processes.
+            if (BinDir is null && name.StartsWith("Tekla", StringComparison.OrdinalIgnoreCase))
+            {
+                BinDir = LocateBinDir(out var source);
+                Source = source;
+                if (BinDir != null)
+                {
+                    Console.Error.WriteLine($"[tekla] Tekla located after startup: {BinDir} (via {Source})");
+                    PreloadCoreAssemblies();
+                }
+            }
+
+            return BinDir is null ? null : TryLoadFromBin(name);
         }
     }
 
