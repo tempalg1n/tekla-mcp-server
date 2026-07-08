@@ -152,19 +152,23 @@ consequences to keep in mind:
 - **Byte-loaded assemblies have an empty `Assembly.Location`.** Roslyn metadata references for
   scripts must come from the DLL **files** in `TeklaAssemblyResolver.BinDir`, not from
   `typeof(...).Assembly` — see `TeklaModelService.BuildScriptReferences`.
-- **The GAC must lose every Tekla bind.** Reproduced live (2026-07-08): with the redirects
-  removed, a host with stale Tekla 2021 in the GAC silently bound 2021 against a running
-  Tekla 2023 — scripts kept working (they compile/bind against BinDir 2023) while every
-  dedicated tool failed on the remoting channel version. The 2999.9.9.9 redirects in
-  `App.config` are therefore restored — they are safe with the byte-loading resolver (cache +
-  preload + re-entrancy guard turn the redirected bind into a single AssemblyResolve hop;
-  worst case is a bind error, not the old LoadFile StackOverflow). `EnsureTeklaReady` keeps a
-  stderr tripwire for the case where the redirects were stripped from the deployed config.
+- **Anti-GAC bindingRedirects are fundamentally incompatible with this resolver — do not
+  bring them back.** On .NET Framework `Assembly.Load(byte[])` (unlike `LoadFile`) APPLIES
+  binding policy to the image's identity, so a `Tekla.* → 2999.9.9.9` redirect turns the
+  resolver's own preload into a bind for 2999.9.9.9 — a circular resolve ending in
+  FileNotFound (with the re-entrancy guard) or StackOverflow/hangs (without). Verified live
+  twice: cbe716b and the d167ff4 re-attempt (reverted).
+- **Known limitation (issue #7, reproduced live 2026-07-08):** a stale GAC copy at the
+  compile-baseline version (e.g. Tekla 2021 in the GAC, Tekla 2023 running) binds silently
+  past the resolver — scripts keep working (they compile/bind against the BinDir DLLs whose
+  version misses the GAC), but every dedicated tool fails on the remoting channel version.
+  `EnsureTeklaReady` logs a loud stderr warning. Interim workaround: remove the stale Tekla
+  assemblies from the GAC. Planned fix: **per-Tekla-version release builds** — the requested
+  assembly version then always matches the installed Tekla, and the GAC can only satisfy it
+  with a same-major (protocol-compatible) copy.
 
 **Still TODO(windows):**
 
-- Re-verify dedicated tools on the GAC-polluted machine after restoring the redirects
-  (rebuild required — the redirects live in `TeklaMcp.Server.exe.config`).
 - Timeout abort uses `Thread.Abort` (supported on net48, no-op catch on net8) — verify an
   aborted script doesn't wedge the Tekla remoting channel.
 - The mutation path (`allowMutations=true`) has not been run against a live model.

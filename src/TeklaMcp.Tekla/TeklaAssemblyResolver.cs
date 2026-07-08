@@ -56,11 +56,11 @@ public static class TeklaAssemblyResolver
 
     private static void PreloadCoreAssemblies()
     {
-        // Warm the cache for the two assemblies every Open API call needs. Every Tekla.* bind
-        // fails by design (App.config redirects them to the unreachable 2999.9.9.9 so the GAC
-        // never wins — issue #7) and lands in AssemblyResolve; preloading keeps the first
-        // Model() access to a single cache hit there (re-entrant resolve loops caused a
-        // StackOverflow on live Tekla with the old LoadFile scheme — see cbe716b).
+        // Warm the cache for the two assemblies every Open API call needs. The DLLs are not
+        // shipped with the server (ExcludeAssets="runtime"), so their binds fail probing and
+        // land in AssemblyResolve; preloading keeps the first Model() access to a single cache
+        // hit there. NOTE: Assembly.Load(byte[]) applies binding policy on .NET Framework —
+        // never combine this resolver with bindingRedirects on Tekla.* (see App.config).
         foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
             TryLoadFromBin(name);
     }
