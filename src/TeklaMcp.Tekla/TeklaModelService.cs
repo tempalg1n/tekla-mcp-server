@@ -41,22 +41,31 @@ public sealed class TeklaModelService : ITeklaModelService
         "RU_FN1_MRK",
     };
 
+    private static bool _teklaReady;
+
+    private static void EnsureTeklaReady()
+    {
+        if (_teklaReady) return;
+        _teklaReady = true;
+        TeklaRemotingChannel.Align();
+        try { TSM.ModelObjectEnumerator.AutoFetch = true; }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ex.Message);
+        }
+    }
+
     static TeklaModelService()
     {
-        // Align the remoting channel with the pipe the running Tekla actually publishes BEFORE
-        // the first Model() in this process (see TeklaRemotingChannel / issue #7).
-        TeklaRemotingChannel.Align();
-
-        // Process-wide switch (static): fetch object data in batches during enumeration instead
-        // of one remoting round-trip per property read — the biggest speedup on large models
-        // (issue #5).
-        TSM.ModelObjectEnumerator.AutoFetch = true;
+        // Intentionally empty — touching Tekla types here (Align / AutoFetch) can recurse
+        // through AssemblyResolve while TeklaMcp.Tekla is still loading and overflow the stack.
     }
 
     public ConnectionInfo GetConnectionInfo()
     {
         try
         {
+            EnsureTeklaReady();
             var model = new TSM.Model();
             if (!model.GetConnectionStatus())
             {
@@ -907,6 +916,7 @@ public sealed class TeklaModelService : ITeklaModelService
 
     private static TSM.Model GetConnectedModel()
     {
+        EnsureTeklaReady();
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
             throw new InvalidOperationException(

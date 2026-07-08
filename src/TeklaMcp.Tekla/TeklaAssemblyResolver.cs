@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -20,6 +21,10 @@ public static class TeklaAssemblyResolver
 {
     private static readonly object Gate = new object();
     private static bool _registered;
+    private static readonly Dictionary<string, Assembly> Cache =
+        new Dictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> Loading =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The Tekla 'bin' directory assemblies are resolved from, or null if not found.</summary>
     public static string? BinDir { get; private set; }
@@ -43,7 +48,19 @@ public static class TeklaAssemblyResolver
                 ? $"[tekla] resolving Tekla assemblies from: {BinDir} (via {Source})"
                 : "[tekla] Tekla 'bin' not found. Start Tekla, or set TEKLA_BIN_DIR. " +
                   "Connection will fail until then.");
+
+            if (BinDir != null)
+                PreloadCoreAssemblies();
         }
+    }
+
+    private static void PreloadCoreAssemblies()
+    {
+        // Warm the cache for the two assemblies every Open API call needs. App.config redirects
+        // Tekla.* to an unreachable version (2999.9.9.9) so binds always hit AssemblyResolve;
+        // preloading avoids re-entrant resolve loops (StackOverflow) on first Model() access.
+        foreach (var name in new[] { "Tekla.Structures", "Tekla.Structures.Model" })
+            TryLoadFromBin(name);
     }
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
@@ -53,22 +70,46 @@ public static class TeklaAssemblyResolver
         var name = SafeName(args.Name);
         if (string.IsNullOrEmpty(name)) return null;
 
+        if (Cache.TryGetValue(name, out var cached))
+            return cached;
+
+        // Dependency loads during LoadFile can re-enter for the same simple name while the
+        // outer resolve is still on the stack — return null to break infinite recursion.
+        if (Loading.Contains(name))
+            return null;
+
+        return TryLoadFromBin(name);
+    }
+
+    private static Assembly? TryLoadFromBin(string name)
+    {
+        if (string.IsNullOrEmpty(BinDir)) return null;
+        if (Cache.TryGetValue(name, out var cached))
+            return cached;
+
+        var path = Path.Combine(BinDir!, name + ".dll");
+        if (!File.Exists(path))
+            return null;
+
+        Loading.Add(name);
         try
         {
-            // Supply any assembly (Tekla.* and its dependency closure) that exists in the Tekla
-            // bin. The handler only fires when the normal load failed, so loading a same-named
-            // DLL from the install is the intended behaviour.
-            //
-            // LoadFile, not LoadFrom: LoadFrom re-applies binding policy to the file's identity,
-            // and App.config deliberately redirects Tekla.* to an unreachable version (to keep
-            // the GAC out of the picture) — LoadFrom would chase that redirect and re-enter this
-            // handler. LoadFile loads exactly the file, no policy, no probing.
-            var path = Path.Combine(BinDir!, name + ".dll");
-            return File.Exists(path) ? Assembly.LoadFile(path) : null;
+            // Load(bytes), not LoadFile: LoadFile binds assemblies in a separate load context,
+            // so the default binder still cannot satisfy the App.config redirect to 2999.9.9.9
+            // and AssemblyResolve re-enters until stack overflow. Loading from bytes lands in
+            // the default context with the DLL's real identity (e.g. 2023.0.0.0).
+            var bytes = File.ReadAllBytes(path);
+            var asm = Assembly.Load(bytes);
+            Cache[name] = asm;
+            return asm;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            Loading.Remove(name);
         }
     }
 

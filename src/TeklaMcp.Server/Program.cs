@@ -33,6 +33,7 @@ else
     // One build, any Tekla version: resolve the Tekla Open API assemblies from the
     // installed/running Tekla at runtime. Must run before the first Tekla type is touched.
     TeklaMcp.Tekla.TeklaAssemblyResolver.Register();
+    TeklaMcp.Tekla.TeklaRemotingChannel.Align();
     builder.Services.AddSingleton<ITeklaModelService, TeklaMcp.Tekla.TeklaModelService>();
 }
 #else
