@@ -20,6 +20,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\TeklaMcp.Core\TeklaMcp.Core.csproj" />
     <ProjectReference Include="..\..\src\TeklaMcp.Mock\TeklaMcp.Mock.csproj" />
+    <ProjectReference Include="..\..\src\TeklaMcp.Server\TeklaMcp.Server.csproj" />
     <ProjectReference Include="..\..\src\TeklaMcp.Scripting\TeklaMcp.Scripting.csproj" />
   </ItemGroup>
 

@@ -980,6 +980,9 @@ public sealed class TeklaModelService : ITeklaModelService
     /// Conservative: only types whose class name maps 1:1 to an enum value. Anything else
     /// falls back to a full scan (Matches() verifies the exact type name either way).
     /// </summary>
+    // Only maps types Tekla can pre-filter by enum (an optimization to skip non-candidates).
+    // Friendly aliases like "Bolt" are NOT here on purpose: they resolve in Matches via
+    // TeklaTypeAliases over a full scan, which is correct even without an enum fast path.
     private static readonly Dictionary<string, TSM.ModelObject.ModelObjectEnum> TypeEnumMap =
         new Dictionary<string, TSM.ModelObject.ModelObjectEnum>(StringComparer.OrdinalIgnoreCase)
         {
@@ -1123,8 +1126,8 @@ public sealed class TeklaModelService : ITeklaModelService
         if (q.GuidIn != null && q.GuidIn.Count > 0 &&
             !q.GuidIn.Exists(g => string.Equals(g, o.Guid, StringComparison.OrdinalIgnoreCase)))
             return false;
-        if (!string.IsNullOrWhiteSpace(q.Type) &&
-            !string.Equals(o.Type, q.Type, StringComparison.OrdinalIgnoreCase)) return false;
+        // Honors friendly aliases, e.g. q.Type="Bolt" matches the concrete "BoltArray".
+        if (!TeklaTypeAliases.TypeMatches(o.Type, q.Type)) return false;
         if (!string.IsNullOrWhiteSpace(q.Class) &&
             !string.Equals(o.Class, q.Class, StringComparison.OrdinalIgnoreCase)) return false;
         if (!string.IsNullOrWhiteSpace(q.Profile) &&
@@ -1157,6 +1160,9 @@ public sealed class TeklaModelService : ITeklaModelService
                 return false;
             if (!string.IsNullOrWhiteSpace(q.AttributeContains) &&
                 attrValue.IndexOf(q.AttributeContains, StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+            if (!string.IsNullOrWhiteSpace(q.AttributeNotEquals) &&
+                string.Equals(attrValue, q.AttributeNotEquals, StringComparison.OrdinalIgnoreCase))
                 return false;
         }
 

@@ -32,8 +32,9 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
-        => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
+        => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals: attributeNotEquals, useSelection: useSelection));
 
     [McpServerTool(Name = "tekla_sum_weight")]
     [Description("Sum weight (kg) for objects matching optional filters. Set useSelection=true to sum only the current UI selection.")]
@@ -49,9 +50,10 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
+        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals: attributeNotEquals, useSelection: useSelection));
         var totalWeight = 0.0;
         var withWeight = 0;
         foreach (var obj in objects)
@@ -71,10 +73,12 @@ public static class ModelWorkflowTools
 
     [McpServerTool(Name = "tekla_group_weight_by")]
     [Description("Group objects by one field and return count + total weight per group. " +
-                 "groupBy: 'type', 'class', 'profile', 'material', 'name' or 'assembly' (assembly mark / ASSEMBLY_POS).")]
+                 "groupBy: 'type', 'class', 'profile', 'material', 'name', 'assembly' (mark / " +
+                 "ASSEMBLY_POS), OR any attribute/UDA/report name, e.g. 'BOLT_GRADE'. Non-built-in " +
+                 "fields read one property per object — filter (e.g. type='Bolt') to keep it fast.")]
     public static IReadOnlyList<GroupedMetricRow> GroupWeightBy(
         ITeklaModelService model,
-        [Description("Group key: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")] string groupBy,
+        [Description("Group key: a built-in ('type','class','profile','material','name','assembly') or any attribute/UDA name, e.g. 'BOLT_GRADE'.")] string groupBy,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
@@ -85,12 +89,14 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of groups to return. Default 50.")] int limit = 50)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
+        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals: attributeNotEquals, useSelection: useSelection));
+        var builtIn = IsBuiltInGroupField(groupBy);
         var rows = objects
-            .GroupBy(o => Normalize(GetGroupKey(o, groupBy)))
+            .GroupBy(o => Normalize(builtIn ? GetGroupKey(o, groupBy) : ResolveAttributeKey(model, o, groupBy)))
             .Select(g => new GroupedMetricRow
             {
                 Key = g.Key,
@@ -107,10 +113,13 @@ public static class ModelWorkflowTools
 
     [McpServerTool(Name = "tekla_list_distinct_values")]
     [Description("List distinct values of a field with count + total weight per value. " +
-                 "field: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")]
+                 "field: a built-in ('type','class','profile','material','name','assembly') OR any " +
+                 "attribute/UDA/report name, e.g. 'BOLT_GRADE', 'BOLT_STANDARD'. Great for building " +
+                 "a reference of the values actually present (e.g. list_distinct_values(field=" +
+                 "'BOLT_GRADE', type='Bolt')). Non-built-in fields read one property per object.")]
     public static IReadOnlyList<GroupedMetricRow> ListDistinctValues(
         ITeklaModelService model,
-        [Description("Field: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")] string field,
+        [Description("Field: a built-in ('type','class','profile','material','name','assembly') or any attribute/UDA name, e.g. 'BOLT_GRADE'.")] string field,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
@@ -121,13 +130,17 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of values to return. Default 100.")] int limit = 100)
-        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection, limit);
+        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals, useSelection, limit);
 
     [McpServerTool(Name = "tekla_select_objects")]
     [Description("Select objects in Tekla UI by filters (including UDA/attribute filters or explicit GUID list) and return selected count + preview. " +
-                 "With useSelection=true the filter is applied within the current selection (narrowing it).")]
+                 "'type' accepts aliases (e.g. 'Bolt' => 'BoltArray'). To select bolts by strength " +
+                 "use attributeName='BOLT_GRADE' with attributeEquals/attributeNotEquals (e.g. " +
+                 "BOLT_GRADE != '88'), not material/class. Selects by filter, so no GUID list is " +
+                 "needed even for thousands of objects. With useSelection=true the filter narrows the current selection.")]
     public static SelectionResult SelectObjects(
         ITeklaModelService model,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
@@ -140,10 +153,11 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal, e.g. BOLT_GRADE != '88' (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Optional GUID list (comma/semicolon/newline separated). If set, only these GUIDs are considered.")] string? guidIn = null,
         [Description("Narrow within the current selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Safety limit for selected objects. Default 2000.")] int limit = 2000)
-        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, ParseList(guidIn), useSelection), limit);
+        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals: attributeNotEquals, guidIn: ParseList(guidIn), useSelection: useSelection), limit);
 
     [McpServerTool(Name = "tekla_export_objects")]
     [Description("Export objects matching filters as a text table for the user. " +
@@ -162,10 +176,11 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal (requires attributeName set).")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of rows. Default 1000.")] int limit = 1000)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection), limit);
+        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, attributeNotEquals: attributeNotEquals, useSelection: useSelection), limit);
         return FormatTable(objects, format);
     }
 
@@ -182,6 +197,7 @@ public static class ModelWorkflowTools
         string? attributeName = null,
         string? attributeEquals = null,
         string? attributeContains = null,
+        string? attributeNotEquals = null,
         IReadOnlyList<string>? guidIn = null,
         bool useSelection = false) =>
         new ObjectQuery
@@ -196,6 +212,7 @@ public static class ModelWorkflowTools
             AttributeName = attributeName,
             AttributeEquals = attributeEquals,
             AttributeContains = attributeContains,
+            AttributeNotEquals = attributeNotEquals,
             GuidIn = guidIn is null ? new List<string>() : guidIn.ToList(),
             UseSelection = useSelection,
         };
@@ -211,6 +228,23 @@ public static class ModelWorkflowTools
             if (!string.IsNullOrWhiteSpace(trimmed)) result.Add(trimmed);
         }
         return result;
+    }
+
+    /// <summary>True for the fast fields readable straight off <see cref="ModelObjectInfo"/>.</summary>
+    private static bool IsBuiltInGroupField(string? groupBy)
+    {
+        switch ((groupBy ?? "").Trim().ToLowerInvariant())
+        {
+            case "type":
+            case "class":
+            case "profile":
+            case "material":
+            case "name":
+            case "assembly":
+            case "assembly_pos":
+            case "mark": return true;
+            default: return false;
+        }
     }
 
     private static string GetGroupKey(ModelObjectInfo obj, string groupBy)
@@ -229,6 +263,16 @@ public static class ModelWorkflowTools
                 throw new ArgumentException(
                     "Unsupported group field. Use one of: type, class, profile, material, name, assembly.");
         }
+    }
+
+    /// <summary>
+    /// Resolve a non-built-in group field (any UDA/report/attribute name) for one object via
+    /// the service. Costs one property read per object — callers filter first to keep it cheap.
+    /// </summary>
+    private static string ResolveAttributeKey(ITeklaModelService model, ModelObjectInfo obj, string attributeName)
+    {
+        var props = model.GetProperties(obj.Guid, new[] { attributeName });
+        return props.Udas.TryGetValue(attributeName, out var value) ? value : "";
     }
 
     private static string Normalize(string value) =>

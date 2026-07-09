@@ -96,7 +96,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
             var guidSet = new HashSet<string>(query.GuidIn.Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
             q = q.Where(o => guidSet.Contains(o.Guid));
         }
-        if (!string.IsNullOrWhiteSpace(query.Type)) q = q.Where(o => Eq(o.Type, query.Type));
+        if (!string.IsNullOrWhiteSpace(query.Type)) q = q.Where(o => TeklaTypeAliases.TypeMatches(o.Type, query.Type));
         if (!string.IsNullOrWhiteSpace(query.Class)) q = q.Where(o => Eq(o.Class, query.Class));
         if (!string.IsNullOrWhiteSpace(query.Profile)) q = q.Where(o => Contains(o.Profile, query.Profile));
         if (!string.IsNullOrWhiteSpace(query.Material)) q = q.Where(o => Contains(o.Material, query.Material));
@@ -119,6 +119,8 @@ public sealed class MockTeklaModelService : ITeklaModelService
                     !Eq(value, query.AttributeEquals)) return false;
                 if (!string.IsNullOrWhiteSpace(query.AttributeContains) &&
                     !Contains(value, query.AttributeContains)) return false;
+                if (!string.IsNullOrWhiteSpace(query.AttributeNotEquals) &&
+                    Eq(value, query.AttributeNotEquals)) return false;
                 return true;
             });
         }
@@ -683,16 +685,29 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     private void SeedUdas()
     {
+        var boltIndex = 0;
         foreach (var obj in _objects)
         {
             var baseMark = obj.Name == "COLUMN" ? "BK1" : (obj.Name == "BEAM" ? "BK2" : "");
-            _udasByGuid[obj.Guid] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var udas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["MCP_TAG"] = "mock",
                 ["MCP_TYPE"] = obj.Type,
                 ["RU_FN1_MRK"] = baseMark,
                 ["RU_OBJ_TYPE"] = obj.Name,
             };
+
+            // Bolts carry grade/standard as report attributes (mirrors the live backend), so
+            // attribute filters like BOLT_GRADE != 88 are exercised. Alternate 8.8 / 10.9.
+            if (string.Equals(obj.Type, "BoltArray", StringComparison.OrdinalIgnoreCase))
+            {
+                var highGrade = boltIndex % 2 == 1;
+                udas["BOLT_GRADE"] = highGrade ? "109" : "88";
+                udas["BOLT_STANDARD"] = highGrade ? "7805-10.9" : "7990-8.8";
+                boltIndex++;
+            }
+
+            _udasByGuid[obj.Guid] = udas;
         }
     }
 
@@ -796,11 +811,13 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 p.X, p.Y, 10);
         }
 
-        // Bolts: M20 8.8, ~0.25 kg each
+        // Bolts: M20, ~0.25 kg each. Type is "BoltArray" (what the live Tekla API reports),
+        // and — like the real backend — the strength grade lives in the BOLT_GRADE attribute
+        // (seeded in SeedUdas), NOT in Material. See TeklaTypeAliases for the "Bolt" alias.
         for (var i = 0; i < 16; i++)
         {
             var p = columnPoints[i % columnPoints.Length];
-            Add("Bolt", "M20", "0", "M20", "8.8", 0, 0.25, "BOLT",
+            Add("BoltArray", "M20", "0", "M20", "", 0, 0.25, "BOLT",
                 p.X + (i % 2 == 0 ? 60 : -60),
                 p.Y + ((i / 2) % 2 == 0 ? 60 : -60),
                 50);

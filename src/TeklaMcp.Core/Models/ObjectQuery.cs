@@ -9,7 +9,11 @@ namespace TeklaMcp.Core.Models;
 /// </summary>
 public sealed class ObjectQuery
 {
-    /// <summary>Exact object type, e.g. "Beam", "ContourPlate", "Bolt".</summary>
+    /// <summary>
+    /// Exact object type, e.g. "Beam", "ContourPlate", "Bolt". Friendly aliases are accepted:
+    /// "Bolt" also matches Tekla's "BoltArray"/"BoltGroup" and "Plate" matches "ContourPlate"
+    /// (see <see cref="TeklaTypeAliases"/>), so the filter works with the names an agent expects.
+    /// </summary>
     public string? Type { get; set; }
 
     /// <summary>Exact Tekla class, e.g. "2".</summary>
@@ -40,6 +44,13 @@ public sealed class ObjectQuery
 
     /// <summary>Substring attribute value match (case-insensitive).</summary>
     public string? AttributeContains { get; set; }
+
+    /// <summary>
+    /// Attribute value the object must NOT have (case-insensitive). Requires the attribute
+    /// named by <see cref="AttributeName"/> to be present — objects that lack it are excluded.
+    /// Enables "everything whose BOLT_GRADE is not 88" filters.
+    /// </summary>
+    public string? AttributeNotEquals { get; set; }
 
     /// <summary>
     /// Optional explicit GUID allow-list. When provided, only objects from this list are matched.

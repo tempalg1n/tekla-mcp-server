@@ -25,20 +25,24 @@ public static class ModelQueryTools
     [McpServerTool(Name = "tekla_find_objects")]
     [Description("Find objects matching optional filters. Any argument left empty is ignored. " +
                  "'type' and 'class' match exactly (case-insensitive); 'profile', 'material' and " +
-                 "'nameContains' match as case-insensitive substrings. Supports UDA and generic " +
-                 "attribute filters to avoid guessing where a value is stored.")]
+                 "'nameContains' match as case-insensitive substrings. 'type' accepts friendly " +
+                 "aliases: 'Bolt' matches Tekla's 'BoltArray', 'Plate' matches 'ContourPlate'. " +
+                 "For bolts, strength grade/standard live in the BOLT_GRADE/BOLT_STANDARD " +
+                 "attributes (use attributeName), NOT in material/class. Passing attributeName " +
+                 "alone (no value) selects objects that HAVE that attribute set.")]
     public static IReadOnlyList<ModelObjectInfo> FindObjects(
         ITeklaModelService model,
-        [Description("Object type, exact match, e.g. 'Beam', 'ContourPlate', 'Bolt'.")] string? type = null,
+        [Description("Object type, exact match with aliases, e.g. 'Beam', 'ContourPlate'/'Plate', 'Bolt'.")] string? type = null,
         [Description("Tekla class, exact match, e.g. '2'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'HEA300'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355'.")] string? material = null,
         [Description("Substring of the object name.")] string? nameContains = null,
         [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
         [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
-        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS' or 'RU_FN1_MRK'.")] string? attributeName = null,
+        [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS', 'BOLT_GRADE'. Alone (no value) = must be set.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("Value the attribute must NOT equal, e.g. BOLT_GRADE != '88'. Requires attributeName set.")] string? attributeNotEquals = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Maximum number of objects to return. Default 100.")] int limit = 100)
         => model.FindObjects(
@@ -54,6 +58,7 @@ public static class ModelQueryTools
                 AttributeName = attributeName,
                 AttributeEquals = attributeEquals,
                 AttributeContains = attributeContains,
+                AttributeNotEquals = attributeNotEquals,
                 UseSelection = useSelection,
             },
             limit);

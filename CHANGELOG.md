@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Friendly object-type aliases** so filters work with the names agents naturally use, not the ones Tekla's runtime reports: `type="Bolt"` now matches `BoltArray`/`BoltGroup` and `type="Plate"` matches `ContourPlate` (new `TeklaTypeAliases`, applied by both the mock and live backends). Previously `type="Bolt"` silently returned nothing on the live backend.
+- **`attributeNotEquals` filter** on `tekla_find_objects`, `tekla_count_objects`, `tekla_sum_weight`, `tekla_group_weight_by`, `tekla_list_distinct_values`, `tekla_select_objects` and `tekla_export_objects` — e.g. select bolts whose `BOLT_GRADE` is not `88` in one call instead of a script. Requires `attributeName` set; objects lacking the attribute are excluded.
+- **`tekla_group_weight_by` / `tekla_list_distinct_values` now accept any attribute/UDA/report name** as the group field (not just the built-ins), so `list_distinct_values(field="BOLT_GRADE", type="Bolt")` builds a reference of the grades actually present. Non-built-in fields read one property per object, so filter first.
+
+### Changed
+
+- Tool descriptions now point agents at the right place for bolt strength (the `BOLT_GRADE`/`BOLT_STANDARD` attributes, not `material`/`class`) and note that passing `attributeName` alone (no value) selects objects that *have* that attribute set. The mock's synthetic bolts were updated to mirror the live backend (type `BoltArray`, grade in `BOLT_GRADE`) so these paths are covered by tests.
+
 ## [0.6.0] - 2026-07-08
 
 Two big ones: releases are now **per-Tekla-version builds** (download the zip matching your Tekla — no more GAC lottery), and agents get a **policy-checked C# scripting escape hatch** for Open API capabilities that have no dedicated tool yet.
