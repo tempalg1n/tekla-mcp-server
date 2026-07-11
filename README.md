@@ -43,21 +43,6 @@ The server is written in **C#** because Tekla Open API ships as .NET assemblies 
 | `MockTeklaModelService` | `net8.0` | Synthetic steel frame (~42 objects) for development and testing without Tekla |
 | `TeklaModelService` | `net48` (Windows) | Live data from the open Tekla model (verified on Tekla 2023) |
 
-```
-┌──────────────┐  stdio (JSON-RPC)   ┌───────────────────────────────────────┐
-│  MCP client  │ ──────────────────► │            TeklaMcp.Server            │
-│ (Claude,     │                     │  MCP tools (tekla_*)                  │
-│  Cursor, …)  │ ◄────────────────── │            │                          │
-└──────────────┘                     │            ▼  ITeklaModelService      │
-                                     │   ┌─────────────────┐  ┌────────────┐ │
-                                     │   │ Mock (net8.0)   │  │Tekla(net48)│ │
-                                     │   │ synthetic data  │  │ Open API   │ │
-                                     │   └─────────────────┘  └─────┬──────┘ │
-                                     └──────────────────────────────┼────────┘
-                                                                    ▼
-                                                       Tekla Structures (open model)
-```
-
 Details: [docs/architecture.md](docs/architecture.md).
 
 ---
