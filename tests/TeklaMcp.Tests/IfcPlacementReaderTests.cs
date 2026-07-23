@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Compression;
 using TeklaMcp.Core.Ifc;
 using Xunit;
 
@@ -87,6 +88,33 @@ public class IfcPlacementReaderTests : IDisposable
         Assert.Equal(1, placement.AxisZ.Z, 6);
     }
 
+    /// <summary>
+    /// Field report (Renga IFC4): the PROJECT length unit is "#8 MILLI METRE" (inside
+    /// IFCUNITASSIGNMENT) but a bare auxiliary "#18 METRE" is declared later — last-wins
+    /// scaled every coordinate ×1000. The assignment-referenced unit must win.
+    /// </summary>
+    [Fact]
+    public void AuxiliaryLengthUnit_ProjectUnitFromAssignmentWins()
+    {
+        var path = WriteIfc("model-two-units.ifc",
+            "#8=IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);\n" +
+            "#9=IFCSIUNIT(*,.AREAUNIT.,$,.SQUARE_METRE.);\n" +
+            "#18=IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);\n" +
+            "#27=IFCUNITASSIGNMENT((#8,#9));\n" +
+            "#30=IFCCARTESIANPOINT((500.,0.,900.));\n" +
+            "#31=IFCAXIS2PLACEMENT3D(#30,$,$);\n" +
+            "#32=IFCLOCALPLACEMENT($,#31);\n" +
+            "#100=IFCWINDOW('" + WindowGuid + "',#2,'W',$,$,#32,$,$,2000.,1500.);");
+        var placement = IfcPlacementReader.TryRead(path, WindowGuid, out var error);
+
+        Assert.Null(error);
+        Assert.NotNull(placement);
+        Assert.Equal(1, placement!.UnitScaleToMm);
+        Assert.Equal(500, placement.Origin.X, 2);
+        Assert.Equal(900, placement.Origin.Z, 2);
+        Assert.Equal(1500, placement.OverallWidth);
+    }
+
     [Fact]
     public void MetreUnits_ScaledToMillimetres()
     {
@@ -159,6 +187,42 @@ public class IfcPlacementReaderTests : IDisposable
         Assert.Equal("K-1", placement.Name);
         Assert.Null(placement.OverallWidth);
         Assert.Equal(10, placement.Origin.X, 2);
+    }
+
+    /// <summary>
+    /// Field report: Tekla's reference cache (DataStorage\ref\*.ifczip) may be the only copy
+    /// of the reference model on disk. An .ifczip is a plain zip holding the .ifc.
+    /// </summary>
+    [Fact]
+    public void IfcZipArchive_EntityResolvedInsideZip()
+    {
+        var ifcPath = WriteIfc("inner.ifc", MillimetreModel);
+        var zipPath = Path.Combine(_dir, "16514dced35de423.ifczip");
+        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            archive.CreateEntryFromFile(ifcPath, "3219-АР.ifc");
+
+        var placement = IfcPlacementReader.TryRead(zipPath, WindowGuid, out var error);
+
+        Assert.Null(error);
+        Assert.NotNull(placement);
+        Assert.Equal("IFCWINDOW", placement!.EntityType);
+        Assert.Equal(6000, placement.Origin.X, 2);
+        Assert.Equal(2800, placement.Origin.Y, 2);
+        Assert.Equal(3900, placement.Origin.Z, 2);
+        Assert.Equal(1500, placement.OverallWidth);
+    }
+
+    [Fact]
+    public void EmptyZipArchive_ReturnsParseError()
+    {
+        var zipPath = Path.Combine(_dir, "empty.ifczip");
+        using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        { /* no entries */ }
+
+        var placement = IfcPlacementReader.TryRead(zipPath, WindowGuid, out var error);
+
+        Assert.Null(placement);
+        Assert.Contains("No IFC entry", error);
     }
 
     [Fact]

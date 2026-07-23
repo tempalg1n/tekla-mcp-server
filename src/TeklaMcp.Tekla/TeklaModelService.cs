@@ -1428,17 +1428,28 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
         try
         {
-            // TODO(windows): ModelInternal.Operation is signature-verified for Tekla 2026,
-            // but its runtime behavior and key names must be checked across Tekla 2021–2026.
-            var customMethod = typeof(TSMI.Operation).GetMethod(
-                "GetReferenceModelObjectCustomAttributes",
-                new[] { typeof(int) });
-            var custom = customMethod?.Invoke(null, new object[] { reference.Identifier.ID })
-                as IDictionary<string, string>;
-            if (custom != null)
-                foreach (var pair in custom.Take(100))
+            var rows = ReadCustomAttributeRows(reference.Identifier.ID);
+            if (rows != null)
+            {
+                foreach (var pair in rows.Take(100))
                     AddAttribute(attributes, pair.Key, pair.Value);
-            if (custom != null && custom.Count > 100) info.Truncated = true;
+                if (rows.Count > 100) info.Truncated = true;
+            }
+            else
+            {
+                // Internal surface unavailable (other Tekla version): fall back to the public
+                // wrapper. It throws ArgumentException when an IFC object carries duplicate
+                // attribute names (Tekla's own Dictionary.Add) — caught and surfaced below.
+                var customMethod = typeof(TSMI.Operation).GetMethod(
+                    "GetReferenceModelObjectCustomAttributes",
+                    new[] { typeof(int) });
+                var custom = customMethod?.Invoke(null, new object[] { reference.Identifier.ID })
+                    as IDictionary<string, string>;
+                if (custom != null)
+                    foreach (var pair in custom.Take(100))
+                        AddAttribute(attributes, pair.Key, pair.Value);
+                if (custom != null && custom.Count > 100) info.Truncated = true;
+            }
         }
         catch (Exception ex)
         {
@@ -1550,8 +1561,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
             var referenceModel = reference.GetReferenceModel();
             if (referenceModel is null) return;
 
-            var path = ResolveReferenceFile(referenceModel, modelPath);
-            if (path is null)
+            var paths = ResolveReferenceFiles(referenceModel, modelPath);
+            if (paths.Count == 0)
             {
                 info.Message = AppendMessage(
                     info.Message,
@@ -1560,10 +1571,21 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 return;
             }
 
-            var placement = ReadIfcPlacementCached(path, info.ExternalGuid, out var error);
+            // Field report: the GlobalId may be resolvable in only one of the copies (e.g. the
+            // .ifczip cache holds the displayed revision, the original .ifc a newer one) — try
+            // each candidate until the entity is found.
+            TeklaMcp.Core.Ifc.IfcEntityPlacement? placement = null;
+            var errors = new List<string>();
+            foreach (var path in paths)
+            {
+                placement = ReadIfcPlacementCached(path, info.ExternalGuid, out var error);
+                if (placement != null) break;
+                if (!string.IsNullOrWhiteSpace(error)) errors.Add(error!);
+            }
             if (placement is null)
             {
-                info.Message = AppendMessage(info.Message, "IFC fallback: " + error);
+                info.Message = AppendMessage(
+                    info.Message, "IFC fallback: " + string.Join(" ", errors.Distinct()));
                 return;
             }
 
@@ -1590,7 +1612,12 @@ public sealed partial class TeklaModelService : ITeklaModelService
             info.PlacementZAxis = RotateZ(placement.AxisZ.X, placement.AxisZ.Y, placement.AxisZ.Z, rotationDegrees);
             info.PlacementSource = "ifc-file";
 
-            if (string.IsNullOrWhiteSpace(info.Entity)) info.Entity = placement.EntityType;
+            // The report-property path can yield junk like "Auto"; the STEP keyword from the
+            // file (e.g. IFCWINDOW) is authoritative for IFC overlays.
+            if (!string.IsNullOrWhiteSpace(placement.EntityType) &&
+                (string.IsNullOrWhiteSpace(info.Entity) ||
+                 !info.Entity.StartsWith("IFC", StringComparison.OrdinalIgnoreCase)))
+                info.Entity = placement.EntityType;
             if (string.IsNullOrWhiteSpace(info.Name)) info.Name = placement.Name;
             if (string.IsNullOrWhiteSpace(info.ObjectType)) info.ObjectType = placement.ObjectType;
             if (!info.OverallWidth.HasValue && placement.OverallWidth.HasValue)
@@ -1630,6 +1657,69 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
+    /// <summary>
+    /// Duplicate-tolerant read of reference-object custom attributes. Tekla's own
+    /// TSMI.Operation.GetReferenceModelObjectCustomAttributes Dictionary.Add()s "key;value"
+    /// rows from the remoting buffer and throws ArgumentException when an IFC object carries
+    /// the same attribute name twice — e.g. one property present in several psets (v0.7.0
+    /// field report). Replays the same internal sequence reflectively (confirmed by
+    /// decompiling Tekla 2023: DelegateProxy.Delegate.GetReferenceModelObjectCustomAttributes
+    /// → ListExporter.ImportStringList) and keeps every row instead. Returns null when the
+    /// internal surface is unavailable, so the caller can fall back to the public wrapper.
+    /// </summary>
+    private static List<KeyValuePair<string, string>>? ReadCustomAttributeRows(int referenceObjectId)
+    {
+        try
+        {
+            var assembly = typeof(TSMI.Operation).Assembly;
+            var proxyType = assembly.GetType("Tekla.Structures.ModelInternal.DelegateProxy");
+            var interfaceType = assembly.GetType("Tekla.Structures.ModelInternal.ICDelegate");
+            var clientIdType = assembly.GetType("Tekla.Structures.ModelInternal.dotClientId_t");
+            var exporterType = assembly.GetType("Tekla.Structures.ModelInternal.ListExporter");
+            var listType = assembly.GetType("Tekla.Structures.ModelInternal.StringList");
+            const System.Reflection.BindingFlags anyStatic =
+                System.Reflection.BindingFlags.Public |
+                System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Static;
+            var delegateInstance = proxyType?.GetProperty("Delegate", anyStatic)?.GetValue(null, null);
+            var getClientId = clientIdType?.GetMethod("GetClientId", anyStatic);
+            var call = interfaceType != null && clientIdType != null
+                ? interfaceType.GetMethod(
+                    "GetReferenceModelObjectCustomAttributes",
+                    new[] { typeof(int), clientIdType.MakeByRefType() })
+                : null;
+            var import = exporterType?.GetMethod("ImportStringList", anyStatic);
+            if (delegateInstance == null || getClientId == null || call == null ||
+                import == null || listType == null)
+                return null;
+
+            var status = call.Invoke(
+                delegateInstance,
+                new[] { (object)referenceObjectId, getClientId.Invoke(null, null) });
+            var rows = new List<KeyValuePair<string, string>>();
+            if (!(status is int ok) || ok <= 0) return rows;
+
+            var stringList = Activator.CreateInstance(listType);
+            import.Invoke(null, new[] { stringList });
+            foreach (var item in (System.Collections.IEnumerable)stringList!)
+            {
+                var row = item as string;
+                if (string.IsNullOrEmpty(row)) continue;
+                // The first ';' separates the name. Tekla's own parser drops rows whose value
+                // contains ';' entirely (Split + length==2 check) — keep the full tail instead.
+                var separator = row!.IndexOf(';');
+                if (separator <= 0) continue;
+                rows.Add(new KeyValuePair<string, string>(
+                    row.Substring(0, separator), row.Substring(separator + 1)));
+            }
+            return rows;
+        }
+        catch
+        {
+            return null; // internal surface changed — fall back to the public wrapper
+        }
+    }
+
     /// <summary>Result cache for IFC placement lookups, keyed by path + mtime + guid.</summary>
     private static readonly object IfcCacheGate = new object();
     private static readonly Dictionary<string, (TeklaMcp.Core.Ifc.IfcEntityPlacement? Placement, string? Error)>
@@ -1656,9 +1746,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
         return placement;
     }
 
-    /// <summary>Reference file path: prefer the local revision copy, else Filename (which may be relative to the model folder).</summary>
-    private static string? ResolveReferenceFile(TSM.ReferenceModel referenceModel, string modelPath)
+    /// <summary>
+    /// Existing on-disk copies of the reference model, most-authoritative first: the active
+    /// revision copy (usually Tekla's .ifczip cache under DataStorage\ref — the snapshot the
+    /// model actually displays, now parseable), then Filename (the originally inserted file;
+    /// may be relative to the model folder).
+    /// </summary>
+    private static List<string> ResolveReferenceFiles(TSM.ReferenceModel referenceModel, string modelPath)
     {
+        var found = new List<string>();
         var candidates = new List<string?>
         {
             ReadOptionalString(referenceModel, "ActiveFilePath"),
@@ -1668,14 +1764,20 @@ public sealed partial class TeklaModelService : ITeklaModelService
         {
             if (string.IsNullOrWhiteSpace(candidate)) continue;
             var raw = candidate!.Trim();
-            if (System.IO.File.Exists(raw)) return raw;
-            if (!string.IsNullOrWhiteSpace(modelPath))
-            {
-                var combined = System.IO.Path.Combine(modelPath, raw.TrimStart('.', '\\', '/'));
-                if (System.IO.File.Exists(combined)) return combined;
-            }
+            // Path.Combine keeps ".\x" and "..\x" semantics intact (unlike trimming leading
+            // dots) and returns raw unchanged when it is already rooted.
+            var resolved = System.IO.File.Exists(raw)
+                ? raw
+                : (!string.IsNullOrWhiteSpace(modelPath) &&
+                   System.IO.File.Exists(System.IO.Path.Combine(modelPath, raw))
+                    ? System.IO.Path.Combine(modelPath, raw)
+                    : null);
+            if (resolved is null) continue;
+            try { resolved = System.IO.Path.GetFullPath(resolved); }
+            catch { /* keep the un-normalized form */ }
+            if (!found.Contains(resolved, StringComparer.OrdinalIgnoreCase)) found.Add(resolved);
         }
-        return null;
+        return found;
     }
 
     private static Point3D RotateZ(double x, double y, double z, double degrees)

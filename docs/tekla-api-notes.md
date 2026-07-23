@@ -154,8 +154,9 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | List components | `Part.GetComponents()`; `Connection.GetPrimaryObject/GetSecondaryObjects`, `UpVector`, `AutoDirectionType`, `Status` | ✅ Signatures verified; ⚠️ custom connection runtime behavior not yet verified |
 | Create connection | `new Connection`, `Name`, `Number`, `SetPrimaryObject`, `SetSecondaryObjects`, `UpVector`, `LoadAttributesFromFile`, `Insert` | ✅ Signatures verified; ⚠️ **live write path unverified**; a geometry commit runs before insert |
 | Reference metadata | `ReferenceModelObject.GetReferenceModel()`, `ReferenceModelObjectAttributeEnumerator`, report-property fallbacks; newer custom-attribute API invoked reflectively | ✅ common signatures compile against Tekla 2021; ⚠️ exporter/version key names vary |
+| Reference custom attributes | Duplicate-tolerant replay of the internal sequence `DelegateProxy.Delegate.GetReferenceModelObjectCustomAttributes` → `ListExporter.ImportStringList` (all reflective; confirmed by decompiling Tekla 2023). Tekla's own public wrapper `Dictionary.Add`s `"key;value"` rows and THROWS on duplicate attribute names — the internal replay keeps every row; the public wrapper stays as fallback for other versions | ✅ verified live (Tekla 2023, 2026-07-23): 24 attributes for an IFC window that previously errored; ⚠️ internal surface must be re-checked per Tekla version |
 | Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB (`aabbSource: "tekla-faces"`) | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs**; v0.7.0 field report: throws for IFC overlay windows — see IFC fallback |
-| Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members) | ✅ unit-tested cross-platform; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
+| Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members). Reads `.ifczip`/`.zip` (Tekla's `DataStorage\ref` cache — often the ONLY on-disk copy; `ActiveFilePath` points there) and plain `.ifc`; tries every existing copy (cache first, then `Filename`) until the GlobalId resolves. Project length unit = the `LENGTHUNIT` referenced from `IFCUNITASSIGNMENT` — files carry auxiliary length units (Renga IFC4: project `MILLI METRE` + bare `METRE`) and last-wins scales ×1000 | ✅ verified live (Tekla 2023, 2026-07-23) against `3219-АР.ifc` window `0VZkpIecn7$9mG$7iL8u45`: `ifc-file` placement + estimate AABB match the exact `tekla-faces` AABB; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
 | Reference lookup by IFC GUID | `ReferenceModel.GetReferenceModelObjectByExternalGuid(String)` invoked reflectively over `GetAllObjectsWithType(REFERENCE_MODEL)` | ⚠️ API availability varies by Tekla version; falls back with a clear message |
 
 ## Drawing API implementation notes
@@ -307,9 +308,12 @@ this Tekla version" message instead of failing cryptically on the remoting chann
   "write-path proxies initialized (ModuleManager configuration: …)"), and (b) the drawing
   tools connect. If several Tekla sessions run under different Windows sessions, verify the
   suffix choice or force `TEKLA_MCP_CHANNEL`.
-- IFC placement fallback: verify against 3219-АР.ifc — placement/AABB of the reference
-  window `0VZkpIecn7$9mG$7iL8u45` must match the workaround values from the field report;
-  check a rotated (`Rotation ≠ 0`) and a scaled overlay, and a base-point model.
+- IFC placement fallback: ✅ verified live 2026-07-23 (Tekla 2023, `3219_Model_playground`)
+  against the 3219-АР reference window `0VZkpIecn7$9mG$7iL8u45` — `placementSource:
+  "ifc-file"` origin (-496, 5795.82, 9200) and the `ifc-placement-estimate` AABB match the
+  exact `tekla-faces` AABB; resolved from the `DataStorage\ref\*.ifczip` cache (the original
+  `.\INCOMING\*.ifc` did not exist on disk). Still TODO: a rotated (`Rotation ≠ 0`) and a
+  scaled overlay, and a base-point model.
 - Per-version fail-fast (issue #11): on a machine whose GAC holds a DIFFERENT Tekla version
   than the build (e.g. tekla2023 build, 2021 in the GAC), verify the dedicated tools work and
   that a deliberately wrong zip (e.g. tekla2021 on running Tekla 2023) produces the

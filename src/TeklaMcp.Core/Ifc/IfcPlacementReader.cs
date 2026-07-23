@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Text;
 using TeklaMcp.Core.Models;
 
@@ -35,7 +36,8 @@ public sealed class IfcEntityPlacement
 /// GlobalId: IFCLOCALPLACEMENT chain → composed IFCAXIS2PLACEMENT3D matrices → origin + axes,
 /// with the project length unit applied. This is the fallback used when the Tekla Open API
 /// cannot return reference-object geometry (field report: internal face queries fail for IFC
-/// overlay windows while the data in the file itself is correct).
+/// overlay windows while the data in the file itself is correct). Reads plain .ifc files and
+/// .ifczip/.zip archives (the STEP entry inside is located automatically).
 ///
 /// Deliberately NOT a general IFC parser: no representation/geometry, no styles. Memory-safe
 /// on large files — the placement entities it indexes are a tiny fraction of a model file,
@@ -154,8 +156,9 @@ public static class IfcPlacementReader
         public readonly Dictionary<int, (int LocationId, int AxisId, int RefDirectionId)> AxisPlacements =
             new Dictionary<int, (int, int, int)>();
         public double? LengthUnitToMm;
-        public readonly Dictionary<int, string> SiUnits = new Dictionary<int, string>();
-        public readonly List<string> ConversionUnits = new List<string>();
+        public readonly Dictionary<int, double> SiLengthUnits = new Dictionary<int, double>();
+        public readonly Dictionary<int, string> ConversionLengthUnits = new Dictionary<int, string>();
+        public readonly List<int> AssignedUnitIds = new List<int>();
     }
 
     private static FileIndex ScanFile(string filePath, string globalId)
@@ -185,14 +188,25 @@ public static class IfcPlacementReader
                 // IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);
                 var args = SplitTopLevel(record.Args);
                 if (args.Count >= 4 && args[1].Equals(".LENGTHUNIT.", StringComparison.OrdinalIgnoreCase))
-                    index.LengthUnitToMm = 1000.0 * SiPrefixFactor(args[2]);
+                    index.SiLengthUnits[record.Id] = 1000.0 * SiPrefixFactor(args[2]);
             }
             else if (type == "IFCCONVERSIONBASEDUNIT")
             {
                 // Rare (imperial). IFCCONVERSIONBASEDUNIT(#dim,.LENGTHUNIT.,'INCH',#measure);
                 var args = SplitTopLevel(record.Args);
                 if (args.Count >= 3 && args[1].Equals(".LENGTHUNIT.", StringComparison.OrdinalIgnoreCase))
-                    index.ConversionUnits.Add(DecodeString(args[2]));
+                    index.ConversionLengthUnits[record.Id] = DecodeString(args[2]);
+            }
+            else if (type == "IFCUNITASSIGNMENT")
+            {
+                // IFCUNITASSIGNMENT((#8,#9,…)) — the set of PROJECT units.
+                var args = SplitTopLevel(record.Args);
+                if (args.Count > 0)
+                    foreach (var token in SplitTopLevel(Unparenthesize(args[0])))
+                    {
+                        var id = RefId(token);
+                        if (id != 0) index.AssignedUnitIds.Add(id);
+                    }
             }
             else if (index.TargetId == 0 && record.Args.Length > 24 &&
                      record.Args.StartsWith(guidToken, StringComparison.Ordinal))
@@ -214,15 +228,45 @@ public static class IfcPlacementReader
             }
         }
 
+        // The project length unit is the LENGTHUNIT referenced from IFCUNITASSIGNMENT. Files
+        // can carry ADDITIONAL length-unit records for derived/auxiliary units — field report:
+        // Renga IFC4 declares "#8 MILLI METRE" as the project unit and a bare "#18 METRE"
+        // later, so last-record-wins scaled every coordinate ×1000. An assignment-referenced
+        // unit wins; without one, the first declared record breaks the tie.
+        index.LengthUnitToMm = SelectAssignedOrFirst(index.SiLengthUnits, index.AssignedUnitIds, out var si)
+            ? si : (double?)null;
+
         // Imperial length units would need the measure-with-unit factor; refuse silently and
         // let the caller know via the assumed-mm warning path rather than guess wrong.
-        if (index.LengthUnitToMm is null && index.ConversionUnits.Count > 0)
+        if (index.LengthUnitToMm is null &&
+            SelectAssignedOrFirst(index.ConversionLengthUnits, index.AssignedUnitIds, out var conversionName))
         {
-            var name = index.ConversionUnits[0].ToUpperInvariant();
+            var name = conversionName.ToUpperInvariant();
             if (name.Contains("INCH")) index.LengthUnitToMm = 25.4;
             else if (name.Contains("FOOT") || name.Contains("FEET")) index.LengthUnitToMm = 304.8;
         }
         return index;
+    }
+
+    /// <summary>
+    /// Picks the unit record referenced from IFCUNITASSIGNMENT; when none is referenced,
+    /// falls back to the lowest-id (first-declared) record. False when the map is empty.
+    /// </summary>
+    private static bool SelectAssignedOrFirst<T>(
+        Dictionary<int, T> unitsById, List<int> assignedIds, out T value)
+    {
+        foreach (var id in assignedIds)
+            if (unitsById.TryGetValue(id, out value!))
+                return true;
+        var bestId = int.MaxValue;
+        value = default!;
+        foreach (var pair in unitsById)
+            if (pair.Key < bestId)
+            {
+                bestId = pair.Key;
+                value = pair.Value;
+            }
+        return bestId != int.MaxValue;
     }
 
     private static double SiPrefixFactor(string prefix)
@@ -337,7 +381,7 @@ public static class IfcPlacementReader
     /// </summary>
     private static IEnumerable<StepRecord> ReadRecords(string filePath)
     {
-        using var reader = new StreamReader(filePath, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        using var reader = OpenStepText(filePath);
         var buffer = new StringBuilder();
         string? line;
         while ((line = reader.ReadLine()) != null)
@@ -370,6 +414,69 @@ public static class IfcPlacementReader
                 Type = text.Substring(eq + 1, open - eq - 1).Trim().ToUpperInvariant(),
                 Args = text.Substring(open + 1, close - open - 1),
             };
+        }
+    }
+
+    /// <summary>
+    /// Opens the STEP text: a plain .ifc, or the .ifc entry inside an .ifczip/.zip archive
+    /// (field report: Tekla's reference cache under DataStorage\ref stores .ifczip files, and
+    /// that cache may be the only copy of the reference model present on disk). Zip content is
+    /// detected by the "PK" signature, not the extension. FileShare is permissive because the
+    /// running Tekla may hold the cache file open.
+    /// </summary>
+    private static StreamReader OpenStepText(string filePath)
+    {
+        var stream = new FileStream(
+            filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        try
+        {
+            var isZip = stream.ReadByte() == 'P' && stream.ReadByte() == 'K';
+            stream.Position = 0;
+            if (!isZip)
+                return new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+
+            var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+            ZipArchiveEntry? best = null;
+            var bestIsIfc = false;
+            foreach (var entry in archive.Entries)
+            {
+                if (entry.Length == 0) continue;
+                var isIfc = entry.Name.EndsWith(".ifc", StringComparison.OrdinalIgnoreCase);
+                if (best == null || (isIfc && !bestIsIfc) ||
+                    (isIfc == bestIsIfc && entry.Length > best.Length))
+                {
+                    best = entry;
+                    bestIsIfc = isIfc;
+                }
+            }
+            if (best == null)
+            {
+                archive.Dispose();
+                throw new InvalidDataException(
+                    "No IFC entry inside archive " + Path.GetFileName(filePath) + ".");
+            }
+            return new ArchiveEntryReader(archive, best.Open());
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>StreamReader over a zip entry that also disposes the containing archive.</summary>
+    private sealed class ArchiveEntryReader : StreamReader
+    {
+        private readonly ZipArchive _archive;
+
+        public ArchiveEntryReader(ZipArchive archive, Stream entryStream)
+            : base(entryStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true)
+            => _archive = archive;
+
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) _archive.Dispose();
         }
     }
 
