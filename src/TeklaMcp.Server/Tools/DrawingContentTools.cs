@@ -37,7 +37,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
 
-        return model.CreateDrawingViews(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -47,7 +47,7 @@ public static class DrawingContentTools
                 Name = name ?? "",
                 Scale = scale,
             },
-        }, apply);
+        }, apply));
     }
 
     [McpServerTool(Name = "tekla_create_ga_drawing_view")]
@@ -114,7 +114,7 @@ public static class DrawingContentTools
                 Message = "restrictionMin must be component-wise less than or equal to restrictionMax.",
             };
 
-        return model.CreateDrawingViews(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -138,7 +138,7 @@ public static class DrawingContentTools
                 Name = name ?? "",
                 Scale = scale,
             },
-        }, apply);
+        }, apply));
     }
 
     private static bool IsZeroVector(Point3D value) =>
@@ -184,7 +184,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
 
-        return model.CreateDrawingViews(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -201,7 +201,7 @@ public static class DrawingContentTools
                 Name = name ?? "",
                 Scale = scale,
             },
-        }, apply);
+        }, apply));
     }
 
     [McpServerTool(Name = "tekla_create_detail_view")]
@@ -231,7 +231,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "centerPoint, boundaryPoint, labelPoint and insertionPoint must use 'x,y,z'.");
 
-        return model.CreateDrawingViews(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -246,7 +246,7 @@ public static class DrawingContentTools
                 Name = name ?? "",
                 Scale = scale,
             },
-        }, apply);
+        }, apply));
     }
 
     [McpServerTool(Name = "tekla_modify_drawing_view")]
@@ -286,7 +286,7 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "modify_drawing_views", apply,
                 "width, height and scale must be greater than zero when supplied.");
-        return model.ModifyDrawingViews(new[]
+        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingViews(new[]
         {
             new DrawingViewModification
             {
@@ -303,7 +303,7 @@ public static class DrawingContentTools
                 RotateZDegrees = rotateZDegrees,
                 RotateOnDrawingPlaneDegrees = rotateOnDrawingPlaneDegrees,
             },
-        }, apply);
+        }, apply));
     }
 
     [McpServerTool(Name = "tekla_delete_drawing_view")]
@@ -314,7 +314,7 @@ public static class DrawingContentTools
         [Description("Session View ID2.")] int? viewId2 = null,
         [Description("Ephemeral view index fallback; re-list before use.")] int viewIndex = -1,
         [Description("Set true to delete; false returns preview.")] bool apply = false) =>
-        model.ModifyDrawingViews(new[]
+        ToolHelpers.FailIfNothingApplied(model.ModifyDrawingViews(new[]
         {
             new DrawingViewModification
             {
@@ -323,7 +323,7 @@ public static class DrawingContentTools
                 ViewId2 = viewId2,
                 Delete = true,
             },
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_create_drawing_objects")]
     [Description("Batch-create up to 200 annotations/graphics/dimensions/marks in the ACTIVE " +
@@ -332,8 +332,8 @@ public static class DrawingContentTools
         ITeklaModelService model,
         [Description("Structured drawing-object specs (maximum 200).")] IReadOnlyList<DrawingObjectSpec> objects,
         [Description("Set true to create; false returns preview.")] bool apply = false) =>
-        model.CreateDrawingObjects(
-            (objects ?? new List<DrawingObjectSpec>()).Take(200).ToList(), apply);
+        ToolHelpers.FailIfNothingApplied(model.CreateDrawingObjects(
+            (objects ?? new List<DrawingObjectSpec>()).Take(200).ToList(), apply));
 
     [McpServerTool(Name = "tekla_create_drawing_text")]
     [Description("Create text in a view (view-local/model coordinates) or on the sheet (paper mm). " +
@@ -632,7 +632,7 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "modify_drawing_objects", apply,
                 "visibility must be drawing, view, show_drawing, or show_view.");
-        return model.ModifyDrawingObjects(
+        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: types, useSelection: useSelection),
             new DrawingObjectModification
@@ -643,7 +643,7 @@ public static class DrawingContentTools
                 AttributeFile = attributeFile,
             },
             apply,
-            limit);
+            limit));
     }
 
     [McpServerTool(Name = "tekla_delete_drawing_objects")]
@@ -660,12 +660,12 @@ public static class DrawingContentTools
         var rejected = RejectEmptyMutationScope(
             model, "delete_drawing_objects", objectIds, types, useSelection, apply);
         if (rejected != null) return rejected;
-        return model.ModifyDrawingObjects(
+        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: types, useSelection: useSelection),
             new DrawingObjectModification { Delete = true },
             apply,
-            limit);
+            limit));
     }
 
     [McpServerTool(Name = "tekla_merge_drawing_marks")]
@@ -681,10 +681,10 @@ public static class DrawingContentTools
         var rejected = RejectEmptyMutationScope(
             model, "merge_drawing_marks", objectIds, null, useSelection, apply);
         if (rejected != null) return rejected;
-        return model.OperateDrawingMarks(
+        return ToolHelpers.FailIfNothingApplied(model.OperateDrawingMarks(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: "Mark,MarkSet", useSelection: useSelection),
-            "merge", apply, limit);
+            "merge", apply, limit));
     }
 
     [McpServerTool(Name = "tekla_split_drawing_marks")]
@@ -700,10 +700,10 @@ public static class DrawingContentTools
         var rejected = RejectEmptyMutationScope(
             model, "split_drawing_marks", objectIds, null, useSelection, apply);
         if (rejected != null) return rejected;
-        return model.OperateDrawingMarks(
+        return ToolHelpers.FailIfNothingApplied(model.OperateDrawingMarks(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: "Mark,MarkSet", useSelection: useSelection),
-            "split", apply, limit);
+            "split", apply, limit));
     }
 
     private static DrawingWriteResult CreateOne(
@@ -779,7 +779,7 @@ public static class DrawingContentTools
                 "create_drawing_objects", apply,
                 "symbolIndex must be between 0 and 255.");
 
-        return model.CreateDrawingObjects(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingObjects(new[]
         {
             new DrawingObjectSpec
             {
@@ -801,7 +801,7 @@ public static class DrawingContentTools
                 UpDirection = upDirection,
                 Distance = distance,
             },
-        }, apply);
+        }, apply));
     }
 
     private static int MinimumPointCount(string kind)

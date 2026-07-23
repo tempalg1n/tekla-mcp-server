@@ -80,13 +80,42 @@ between the 2021 API surface and newer Tekla DLLs — Trimble's own model is per
 over newer ones). If none is found at startup, the resolver re-probes whenever a `Tekla.*` bind
 occurs, so "start the server first, open Tekla later" recovers without a restart.
 
-**Remoting channel name.** The Open API client connects to a named pipe
-`Tekla.Structures.Model-{app}:{apiVersion}`; the baked-in default has an empty `{app}` suffix,
-but some Tekla setups publish e.g. `Tekla.Structures.Model-Console:2023.0.0.0` (issue #7).
-`TeklaRemotingChannel.Align()` (called before the first `Model()`) probes the machine's named
-pipes and patches the internal `Remoter.ChannelName` to the published name when they disagree.
-Override with the `TEKLA_MCP_CHANNEL` env var. "Not connected" errors now include the client
-channel, loaded API version/path, and the published `Tekla.Structures.Model-*` pipes.
+**Remoting channel names (SESSIONNAME).** Confirmed by decompiling the Tekla 2023
+assemblies: every Open API assembly computes its channel name as
+
+```
+{AssemblyName}-{SESSIONNAME}:{AssemblyVersion}
+```
+
+where `{SESSIONNAME}` is the `SESSIONNAME` environment variable of the process computing the
+name (`TeklaStructuresInternal.Remoter.GetSessionName()`). Tekla's own process has the
+Windows session variable (`Console`, `RDP-Tcp#47`, …); a server launched by an MCP client
+frequently has none — that is the real mechanism behind issue #7's mysterious `-Console`
+suffix. THREE assemblies each have their own Remoter + lazily-connected static
+`DelegateProxy`:
+
+- `Tekla.Structures.dll` (base) — hosts `ModuleManager`, whose static ctor connects over
+  this channel. **Every `Insert`/`Modify` calls `ModelModuleManager.CheckModules` →
+  `ModuleManager`**, so a misaligned base channel produces the deceptive "reads work,
+  `apply=true` fails with a ModuleManager type-initializer exception" pattern (v0.7.0 field
+  report). A static proxy whose type initializer failed once is dead until the process
+  restarts (the API's own doc: "Currently, there's no way to re-establish the connection").
+- `Tekla.Structures.Model.dll` — model reads/writes.
+- `Tekla.Structures.Drawing.dll` — drawing tools.
+
+`TeklaRemotingChannel.Align()` (called before the first `Model()`) probes the published
+`Tekla.Structures*` pipes, derives the session suffix, sets `SESSIONNAME` for this process
+(so every Remoter computes the right name itself) and belt-and-braces patches the three
+internal `Remoter.ChannelName` fields. `WarmUpWriteProxies()` then force-initializes
+`ModuleManager` right after the first successful connection — the only moment the channels
+are known-good. Override with the `TEKLA_MCP_CHANNEL` env var (model channel; its session
+suffix is applied to the others). "Not connected" errors include the model + base channels,
+`SESSIONNAME`, loaded API version/path, and the published Tekla pipes.
+
+Also: the Open API writes `Connection failed : …` to **stdout** when a channel connect
+fails (`GenericDelegateProxy` ctor). `Program.cs` routes `Console.Out` to stderr before any
+Tekla type loads — the MCP transport itself uses the raw `Console.OpenStandardOutput()`
+stream and is unaffected.
 
 **Build overrides**: `-p:TeklaVersion=<nuget version>` picks the Tekla version to compile for
 (see [docs/releasing.md](releasing.md) for the version-per-year table);
@@ -125,7 +154,9 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | List components | `Part.GetComponents()`; `Connection.GetPrimaryObject/GetSecondaryObjects`, `UpVector`, `AutoDirectionType`, `Status` | ✅ Signatures verified; ⚠️ custom connection runtime behavior not yet verified |
 | Create connection | `new Connection`, `Name`, `Number`, `SetPrimaryObject`, `SetSecondaryObjects`, `UpVector`, `LoadAttributesFromFile`, `Insert` | ✅ Signatures verified; ⚠️ **live write path unverified**; a geometry commit runs before insert |
 | Reference metadata | `ReferenceModelObject.GetReferenceModel()`, `ReferenceModelObjectAttributeEnumerator`, report-property fallbacks; newer custom-attribute API invoked reflectively | ✅ common signatures compile against Tekla 2021; ⚠️ exporter/version key names vary |
-| Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs** |
+| Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB (`aabbSource: "tekla-faces"`) | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs**; v0.7.0 field report: throws for IFC overlay windows — see IFC fallback |
+| Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members) | ✅ unit-tested cross-platform; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
+| Reference lookup by IFC GUID | `ReferenceModel.GetReferenceModelObjectByExternalGuid(String)` invoked reflectively over `GetAllObjectsWithType(REFERENCE_MODEL)` | ⚠️ API availability varies by Tekla version; falls back with a clear message |
 
 ## Drawing API implementation notes
 
@@ -269,7 +300,16 @@ this Tekla version" message instead of failing cryptically on the remoting chann
   object types across the 2021–2026 release builds.
 - "Server started before Tekla" flow: `Align()` retries until Tekla publishes its pipes, and
   the resolver re-probes for the Tekla bin on demand — verify a connection succeeds without
-  restarting the server.
+  restarting the server. NOTE: if a Tekla tool call ran while Tekla was down, the Model
+  DelegateProxy's failed type-init is cached by the CLR — only a server restart recovers.
+- SESSIONNAME channel alignment (v0.7.0 field-report fix): on the live machine verify that
+  (a) `tekla_create_beam` with `apply=true` creates the beam (stderr shows
+  "write-path proxies initialized (ModuleManager configuration: …)"), and (b) the drawing
+  tools connect. If several Tekla sessions run under different Windows sessions, verify the
+  suffix choice or force `TEKLA_MCP_CHANNEL`.
+- IFC placement fallback: verify against 3219-АР.ifc — placement/AABB of the reference
+  window `0VZkpIecn7$9mG$7iL8u45` must match the workaround values from the field report;
+  check a rotated (`Rotation ≠ 0`) and a scaled overlay, and a base-point model.
 - Per-version fail-fast (issue #11): on a machine whose GAC holds a DIFFERENT Tekla version
   than the build (e.g. tekla2023 build, 2021 in the GAC), verify the dedicated tools work and
   that a deliberately wrong zip (e.g. tekla2021 on running Tekla 2023) produces the

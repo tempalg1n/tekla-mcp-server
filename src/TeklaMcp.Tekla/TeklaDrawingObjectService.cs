@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -416,7 +417,7 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add((spec.Type ?? "view") + ": " + exItem.Message);
+                    result.Errors.Add((spec.Type ?? "view") + ": " + ErrorText.Flatten(exItem));
                 }
             }
 
@@ -433,7 +434,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -483,7 +484,7 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add((view.Name ?? "view") + ": " + exItem.Message);
+                    result.Errors.Add((view.Name ?? "view") + ": " + ErrorText.Flatten(exItem));
                 }
             }
             if (apply && (result.ModifiedCount > 0 || result.DeletedCount > 0))
@@ -492,7 +493,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }

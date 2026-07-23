@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply with a
+`Tekla.Structures.ModuleManager` type-initializer exception, and
+`tekla_get_reference_geometry` unable to deliver world geometry for IFC overlay objects.
+
+### Fixed
+
+- **Writes failing with «Инициализатор типа "Tekla.Structures.ModuleManager" выдал
+  исключение» while reads work.** Root cause (confirmed by decompiling the Tekla
+  assemblies): every Open API channel name is `{Assembly}-{SESSIONNAME}:{version}`, and an
+  MCP server launched by an MCP client usually has no `SESSIONNAME` environment variable —
+  so the Model channel was aligned (issue #7 fix) but the BASE `Tekla.Structures` channel,
+  which every `Insert`/`Modify` touches through `ModuleManager`, was not.
+  `TeklaRemotingChannel.Align()` now derives the session suffix from the published pipes,
+  sets `SESSIONNAME` for the server process and aligns all three channels (base, Model,
+  Drawing). Write-path proxies are additionally warmed up right after the first successful
+  connection, when the channels are known-good, instead of lazily inside the first write.
+- **Opaque wrapper errors.** «Адресат вызова создал исключение» /
+  «Инициализатор типа … выдал исключение» are never reported as-is anymore: every error
+  surfaced by the Tekla backend goes through `ErrorText.Flatten`, which unwraps
+  `TargetInvocationException` / `TypeInitializationException` / `AggregateException` chains
+  and keeps the real cause (e.g. the failing remoting channel name) visible.
+- **MCP protocol protection.** The Tekla Open API writes "Connection failed : …" to stdout
+  when a remoting channel fails; `Console.Out` is now routed to stderr so a Tekla connection
+  failure can no longer corrupt the MCP stdio framing.
+- **Total apply-failures are now protocol errors (`isError=true`).** A write tool that was
+  asked to commit (`apply=true`) but wrote nothing while reporting per-item errors now
+  raises an MCP tool error with the flattened error list, instead of returning a
+  normal-looking result with `createdCount: 0`. Previews and partial successes are
+  unchanged. (The requested `tekla_create_beams_batch` already exists as
+  `tekla_create_beams` — up to 200 beams in one commit.)
+
+### Added
+
+- **IFC placement fallback in `tekla_get_reference_geometry`.** When the Tekla API cannot
+  deliver reference-object geometry (the reported case for IFC overlay windows), the server
+  now parses the reference IFC file itself: resolves the `IFCLOCALPLACEMENT` chain by IFC
+  GlobalId, applies the project length unit and the reference-model insertion
+  (Position/Scale/Rotation), and returns world placement `placementOrigin` +
+  `placementX/Y/ZAxis` (GLOBAL mm, `placementSource: "ifc-file"`), plus
+  `OverallWidth`/`OverallHeight`, entity and name when Tekla did not provide them. If no
+  exact face AABB is available, an estimated AABB is derived from placement + overall
+  dimensions and labeled `aabbSource: "ifc-placement-estimate"` (exact face AABBs are
+  labeled `"tekla-faces"`). Agents no longer need to parse IFC files manually.
+- `tekla_get_reference_geometry` accepts `externalGuids` — address reference objects
+  directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
+  `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
+  it.
+
 ## [0.7.0] - 2026-07-23
 
 First-class tools for the three biggest gaps observed in a real end-to-end modeling session:

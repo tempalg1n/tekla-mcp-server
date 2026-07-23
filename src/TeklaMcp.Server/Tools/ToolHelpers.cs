@@ -109,4 +109,53 @@ internal static class ToolHelpers
         o.EndX.HasValue && o.EndY.HasValue && o.EndZ.HasValue;
 
     public static double Hypot(double a, double b) => Math.Sqrt(a * a + b * b);
+
+    /// <summary>
+    /// Escalates a TOTAL apply-failure into a protocol-level tool error (isError=true).
+    /// Field feedback: apply=true answering with createdCount=0 + a populated errors[] as a
+    /// NORMAL result let agents mistake 16 consecutive failed writes for progress. Previews
+    /// (apply=false) and partial successes pass through untouched — their per-item errors
+    /// stay visible in the structured result.
+    /// </summary>
+    public static WriteResult FailIfNothingApplied(WriteResult result)
+    {
+        if (!result.Applied) return result;
+        var touched = result.CreatedCount + result.ModifiedCount + result.DeletedCount;
+        if (touched > 0) return result;
+        if (result.Errors.Count == 0 && string.IsNullOrWhiteSpace(result.Message)) return result;
+
+        throw new ModelContextProtocol.McpException(
+            "apply=true failed: no objects were written (operation '" + result.Operation +
+            "', planned " + result.PlannedCount + "). " +
+            Summarize(result.Errors, result.Message));
+    }
+
+    /// <summary>
+    /// Drawing-side counterpart of <see cref="FailIfNothingApplied(WriteResult)"/>. Keyed on
+    /// errors only: several drawing operations (open/save/close) legitimately succeed with
+    /// zero created/modified/deleted counts and an informational message.
+    /// </summary>
+    public static DrawingWriteResult FailIfNothingApplied(DrawingWriteResult result)
+    {
+        if (!result.Applied || result.Errors.Count == 0) return result;
+        var touched = result.CreatedCount + result.ModifiedCount + result.DeletedCount;
+        if (touched > 0 || result.OutputFiles.Count > 0) return result;
+
+        throw new ModelContextProtocol.McpException(
+            "apply=true failed: nothing was written (drawing operation '" + result.Operation +
+            "', planned " + result.PlannedCount + "). " +
+            Summarize(result.Errors, result.Message));
+    }
+
+    private static string Summarize(List<string> errors, string? message)
+    {
+        var distinct = errors.Distinct().Take(5).ToList();
+        var text = distinct.Count > 0
+            ? "Errors: " + string.Join(" | ", distinct) +
+              (errors.Distinct().Count() > 5 ? " | …" : "")
+            : "";
+        if (!string.IsNullOrWhiteSpace(message))
+            text += (text.Length > 0 ? " " : "") + "Message: " + message;
+        return text;
+    }
 }

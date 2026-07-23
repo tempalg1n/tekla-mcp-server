@@ -60,6 +60,27 @@ public class MockCapabilityTests
         Assert.Single(item.Faces);
         Assert.Equal(5400, item.MinX);
         Assert.Equal(2400, item.MaxZ);
+        Assert.NotEmpty(item.AabbSource);
+        Assert.NotNull(item.PlacementOrigin);
+        Assert.NotNull(item.PlacementXAxis);
+        Assert.NotNull(item.PlacementZAxis);
+    }
+
+    [Fact]
+    public void Reference_geometry_addressable_by_external_ifc_guid()
+    {
+        var model = new MockTeklaModelService();
+        var byGuid = model.GetReferenceGeometry(
+            new List<int>(), externalGuids: new[] { "2X_m0ckWindowGuid" });
+
+        var item = Assert.Single(byGuid);
+        Assert.Equal("2X_m0ckWindowGuid", item.ExternalGuid);
+        Assert.Equal("IFCWINDOW", item.Entity);
+        Assert.NotNull(item.PlacementOrigin);
+
+        // Unknown IFC GUIDs resolve to nothing rather than fabricated objects.
+        Assert.Empty(model.GetReferenceGeometry(
+            new List<int>(), externalGuids: new[] { "0unknownGuid0000000000" }));
     }
 
     [Fact]

@@ -14,13 +14,19 @@ public static class ModelReferenceTools
     [McpServerTool(Name = "tekla_get_reference_geometry")]
     [Description(
         "Get semantic metadata and WORLD geometry for IFC/reference-model objects: external IFC " +
-        "GUID, entity (e.g. IFCWINDOW), OverallWidth/Height, world AABB and capped face polygons. " +
-        "Reference objects commonly have GUID 00000000-...; address them by the integer id returned " +
-        "by tekla_get_selected_objects, or set useSelection=true. Best-effort across IFC exporters.")]
+        "GUID, entity (e.g. IFCWINDOW), OverallWidth/Height, world AABB, placement (origin + " +
+        "X/Y/Z axes in GLOBAL mm) and capped face polygons. When the Tekla API cannot deliver " +
+        "geometry, the reference IFC file is parsed directly (placementSource='ifc-file'; " +
+        "aabbSource says whether the AABB is exact or a placement-based estimate). Address " +
+        "objects by integer id, by IFC GlobalId via externalGuids, or set useSelection=true. " +
+        "Best-effort across IFC exporters.")]
     public static IReadOnlyList<ReferenceGeometryInfo> GetReferenceGeometry(
         ITeklaModelService model,
         [Description("Comma/semicolon/newline-separated Tekla integer IDs. Ignored with useSelection=true.")]
         string? ids = null,
+        [Description("Comma/semicolon/newline-separated IFC GlobalIds (22-char, e.g. '0VZkpIecn7$9mG$7iL8u45'). " +
+                     "Takes precedence over ids/useSelection.")]
+        string? externalGuids = null,
         [Description("Read currently selected ReferenceModelObject instances. Default true.")]
         bool useSelection = true,
         [Description("Maximum reference objects (default 20, max 100).")]
@@ -44,6 +50,7 @@ public static class ModelReferenceTools
             maxObjects < 0 ? 0 : (maxObjects > 100 ? 100 : maxObjects),
             maxFacesPerObject < 0 ? 0 : (maxFacesPerObject > 1000 ? 1000 : maxFacesPerObject),
             maxTotalFaces < 0 ? 0 : (maxTotalFaces > 5000 ? 5000 : maxTotalFaces),
-            maxTotalPoints < 0 ? 0 : (maxTotalPoints > 100000 ? 100000 : maxTotalPoints));
+            maxTotalPoints < 0 ? 0 : (maxTotalPoints > 100000 ? 100000 : maxTotalPoints),
+            ToolHelpers.ParseList(externalGuids));
     }
 }

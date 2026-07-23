@@ -67,9 +67,12 @@ public interface ITeklaModelService
 
     /// <summary>
     /// Read semantic metadata and world geometry for reference-model objects. Reference objects
-    /// are addressed by integer Tekla IDs because their Tekla GUID is commonly empty. When
+    /// are addressed by integer Tekla IDs because their Tekla GUID is commonly empty, or by
+    /// external IFC GlobalIds via <paramref name="externalGuids"/>. When
     /// <paramref name="useSelection"/> is true, <paramref name="ids"/> may be empty.
     /// Face data is best-effort and capped per object; failures are returned in each DTO.
+    /// When the Open API cannot deliver geometry, implementations should fall back to parsing
+    /// the reference IFC file itself for placement + overall dimensions.
     /// </summary>
     IReadOnlyList<ReferenceGeometryInfo> GetReferenceGeometry(
         IReadOnlyList<int> ids,
@@ -77,7 +80,8 @@ public interface ITeklaModelService
         int maxObjects = 20,
         int maxFacesPerObject = 100,
         int maxTotalFaces = 1000,
-        int maxTotalPoints = 20000);
+        int maxTotalPoints = 20000,
+        IReadOnlyList<string>? externalGuids = null);
 
     /// <summary>
     /// Select objects in the Tekla UI by query and return a lightweight result snapshot.

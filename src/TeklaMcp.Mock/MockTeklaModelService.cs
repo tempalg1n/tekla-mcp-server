@@ -194,10 +194,17 @@ public sealed class MockTeklaModelService : ITeklaModelService
         int maxObjects = 20,
         int maxFacesPerObject = 100,
         int maxTotalFaces = 1000,
-        int maxTotalPoints = 20000)
+        int maxTotalPoints = 20000,
+        IReadOnlyList<string>? externalGuids = null)
     {
         var requested = ids ?? new List<int>();
-        if (useSelection)
+        if (externalGuids != null && externalGuids.Count > 0)
+            // The mock knows exactly one IFC window; resolve its canonical GUID, reject others.
+            requested = externalGuids
+                .Select((g, i) => string.Equals(g, "2X_m0ckWindowGuid", StringComparison.Ordinal) ? 901 + i : -1)
+                .Where(id => id > 0)
+                .ToList();
+        else if (useSelection)
             requested = _selectedObjects
                 .Where(o => Eq(o.Type, "ReferenceModelObject"))
                 .Select(o => o.Id)
@@ -228,6 +235,12 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 MaxX = 6600,
                 MaxY = 200,
                 MaxZ = 2400,
+                AabbSource = "tekla-faces",
+                PlacementOrigin = new Point3D(5400, 0, 900),
+                PlacementXAxis = new Point3D(1, 0, 0),
+                PlacementYAxis = new Point3D(0, 1, 0),
+                PlacementZAxis = new Point3D(0, 0, 1),
+                PlacementSource = "ifc-file",
                 Truncated = maxFacesPerObject > 0 && !includeFace,
                 Faces = includeFace
                     ? new List<ReferenceFaceInfo>

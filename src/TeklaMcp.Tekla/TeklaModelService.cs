@@ -67,7 +67,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try { TSM.ModelObjectEnumerator.AutoFetch = true; }
         catch (Exception ex)
         {
-            Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ex.Message);
+            Console.Error.WriteLine("[tekla] AutoFetch unavailable (continuing): " + ErrorText.Flatten(ex));
         }
 
         // A GAC-sourced bind is harmless with per-version builds — a strong-named bind needs
@@ -115,7 +115,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            return new ConnectionInfo { Connected = false, Backend = BackendName, Message = ex.Message };
+            return new ConnectionInfo { Connected = false, Backend = BackendName, Message = ErrorText.Flatten(ex) };
         }
     }
 
@@ -270,7 +270,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
 
         return result;
@@ -319,7 +319,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
         int maxObjects = 20,
         int maxFacesPerObject = 100,
         int maxTotalFaces = 1000,
-        int maxTotalPoints = 20000)
+        int maxTotalPoints = 20000,
+        IReadOnlyList<string>? externalGuids = null)
     {
         var result = new List<ReferenceGeometryInfo>();
         maxObjects = Math.Max(0, Math.Min(maxObjects, 100));
@@ -331,9 +332,29 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             var model = GetConnectedModel();
+            var modelPath = "";
+            try { modelPath = model.GetInfo()?.ModelPath ?? ""; }
+            catch { /* used only to resolve relative reference-model paths */ }
             var objects = new List<TSM.ReferenceModelObject>();
 
-            if (useSelection)
+            if (externalGuids != null && externalGuids.Count > 0)
+            {
+                foreach (var externalGuid in externalGuids
+                             .Where(g => !string.IsNullOrWhiteSpace(g))
+                             .Distinct()
+                             .Take(maxObjects))
+                {
+                    var found = FindByExternalGuid(model, externalGuid, out var lookupMessage);
+                    if (found != null) objects.Add(found);
+                    else
+                        result.Add(new ReferenceGeometryInfo
+                        {
+                            ExternalGuid = externalGuid,
+                            Message = lookupMessage ?? "No reference object with this IFC GUID.",
+                        });
+                }
+            }
+            else if (useSelection)
             {
                 var selected = new TSMUI.ModelObjectSelector().GetSelectedObjects();
                 while (objects.Count < maxObjects && selected.MoveNext())
@@ -360,7 +381,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     }
                     catch (Exception exItem)
                     {
-                        result.Add(new ReferenceGeometryInfo { Id = id, Message = exItem.Message });
+                        result.Add(new ReferenceGeometryInfo { Id = id, Message = ErrorText.Flatten(exItem) });
                     }
                 }
             }
@@ -372,7 +393,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 var allowedFaces = Math.Min(maxFacesPerObject, facesLeft);
                 var info = InGlobalWorkPlane(
                     model,
-                    () => MapReferenceGeometry(reference, allowedFaces, pointsLeft));
+                    () => MapReferenceGeometry(reference, allowedFaces, pointsLeft, modelPath));
                 facesLeft -= info.Faces.Count;
                 pointsLeft -= info.Faces.Sum(face => face.Points.Count);
                 if (maxFacesPerObject > 0 &&
@@ -387,7 +408,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Add(new ReferenceGeometryInfo { Message = ex.Message });
+            result.Add(new ReferenceGeometryInfo { Message = ErrorText.Flatten(ex) });
         }
 
         return result;
@@ -571,7 +592,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
 
         return result;
@@ -609,7 +630,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
 
         return result;
@@ -653,7 +674,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
 
         return result;
@@ -808,13 +829,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             if (result.Preview.Count < 20) result.Preview.Add(info);
                         }
                     }
-                    catch (Exception exItem) { result.Errors.Add(exItem.Message); }
+                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
                 }
                 model.CommitChanges();
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ex.Message; }
+        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
         return result;
     }
 
@@ -878,13 +899,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                         var info = Map(mo);
                         if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
                     }
-                    catch (Exception exItem) { result.Errors.Add(exItem.Message); }
+                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
                 }
                 model.CommitChanges();
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ex.Message; }
+        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
         return result;
     }
 
@@ -914,11 +935,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
             foreach (var mo in matched)
             {
                 try { if (mo.Delete()) result.DeletedCount++; }
-                catch (Exception exItem) { result.Errors.Add(exItem.Message); }
+                catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
             }
             model.CommitChanges();
         }
-        catch (Exception ex) { result.Message = ex.Message; }
+        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
         return result;
     }
 
@@ -1051,7 +1072,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(exItem.Message);
+                    result.Errors.Add(ErrorText.Flatten(exItem));
                 }
             }
 
@@ -1059,7 +1080,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -1134,7 +1155,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            result.Error = ex.Message;
+            result.Error = ErrorText.Flatten(ex);
         }
         finally
         {
@@ -1355,7 +1376,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
     private static ReferenceGeometryInfo MapReferenceGeometry(
         TSM.ReferenceModelObject reference,
         int maxFaces,
-        int maxPoints)
+        int maxPoints,
+        string modelPath = "")
     {
         var info = new ReferenceGeometryInfo
         {
@@ -1378,7 +1400,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            info.Message = AppendMessage(info.Message, "Reference model: " + ex.Message);
+            info.Message = AppendMessage(info.Message, "Reference model: " + ErrorText.Flatten(ex));
         }
 
         try
@@ -1401,7 +1423,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            info.Message = AppendMessage(info.Message, "Parametric attributes: " + ex.Message);
+            info.Message = AppendMessage(info.Message, "Parametric attributes: " + ErrorText.Flatten(ex));
         }
 
         try
@@ -1420,7 +1442,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            info.Message = AppendMessage(info.Message, "Custom attributes: " + ex.Message);
+            info.Message = AppendMessage(info.Message, "Custom attributes: " + ErrorText.Flatten(ex));
         }
 
         foreach (var key in new[]
@@ -1497,12 +1519,246 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
             catch (Exception ex)
             {
-                info.Message = AppendMessage(info.Message, "Faces: " + ex.Message);
+                info.Message = AppendMessage(info.Message, "Faces: " + ErrorText.Flatten(ex));
             }
         }
+        if (info.MinX.HasValue) info.AabbSource = "tekla-faces";
+
+        // Field report: the internal face query fails for IFC overlay objects while the IFC
+        // file itself carries correct placements. Parse the file directly — placement origin +
+        // axes (and OverallWidth/Height) are enough to place фахверк members around openings.
+        TryFillFromIfcFile(reference, info, modelPath);
 
         info.Attributes = new Dictionary<string, string>(attributes);
         return info;
+    }
+
+    /// <summary>
+    /// Best-effort fallback/enrichment from the reference IFC file on disk: world placement
+    /// (origin + axes in GLOBAL mm, honoring the reference model's Position/Scale/Rotation),
+    /// entity/name/dimensions when Tekla did not deliver them, and an estimated AABB when no
+    /// exact face geometry is available.
+    /// </summary>
+    private static void TryFillFromIfcFile(
+        TSM.ReferenceModelObject reference,
+        ReferenceGeometryInfo info,
+        string modelPath)
+    {
+        if (string.IsNullOrWhiteSpace(info.ExternalGuid)) return;
+        try
+        {
+            var referenceModel = reference.GetReferenceModel();
+            if (referenceModel is null) return;
+
+            var path = ResolveReferenceFile(referenceModel, modelPath);
+            if (path is null)
+            {
+                info.Message = AppendMessage(
+                    info.Message,
+                    "IFC fallback: reference file not found on disk (" +
+                    (referenceModel.Filename ?? "") + ").");
+                return;
+            }
+
+            var placement = ReadIfcPlacementCached(path, info.ExternalGuid, out var error);
+            if (placement is null)
+            {
+                info.Message = AppendMessage(info.Message, "IFC fallback: " + error);
+                return;
+            }
+
+            // Insertion transform of the overlay: world = Position + Rz(rot) * (Scale * p).
+            // TODO(windows): verify Rotation semantics and Rotation3D/base-point setups live.
+            var scale = referenceModel.Scale > 0 ? referenceModel.Scale : 1.0;
+            var position = referenceModel.Position;
+            var rotationDegrees = ReadOptionalDouble(referenceModel, "Rotation") ?? 0.0;
+            var basePoint = ReadOptionalGuid(referenceModel, "BasePointGuid");
+            if (basePoint.HasValue && basePoint.Value != Guid.Empty)
+                info.Message = AppendMessage(
+                    info.Message,
+                    "IFC fallback: reference model uses a base point; placement may be offset.");
+
+            var origin = RotateZ(
+                placement.Origin.X * scale, placement.Origin.Y * scale, placement.Origin.Z * scale,
+                rotationDegrees);
+            info.PlacementOrigin = new Point3D(
+                Math.Round(origin.X + (position?.X ?? 0), 2),
+                Math.Round(origin.Y + (position?.Y ?? 0), 2),
+                Math.Round(origin.Z + (position?.Z ?? 0), 2));
+            info.PlacementXAxis = RotateZ(placement.AxisX.X, placement.AxisX.Y, placement.AxisX.Z, rotationDegrees);
+            info.PlacementYAxis = RotateZ(placement.AxisY.X, placement.AxisY.Y, placement.AxisY.Z, rotationDegrees);
+            info.PlacementZAxis = RotateZ(placement.AxisZ.X, placement.AxisZ.Y, placement.AxisZ.Z, rotationDegrees);
+            info.PlacementSource = "ifc-file";
+
+            if (string.IsNullOrWhiteSpace(info.Entity)) info.Entity = placement.EntityType;
+            if (string.IsNullOrWhiteSpace(info.Name)) info.Name = placement.Name;
+            if (string.IsNullOrWhiteSpace(info.ObjectType)) info.ObjectType = placement.ObjectType;
+            if (!info.OverallWidth.HasValue && placement.OverallWidth.HasValue)
+                info.OverallWidth = Math.Round(placement.OverallWidth.Value * scale, 2);
+            if (!info.OverallHeight.HasValue && placement.OverallHeight.HasValue)
+                info.OverallHeight = Math.Round(placement.OverallHeight.Value * scale, 2);
+            if (!string.IsNullOrWhiteSpace(placement.Warning))
+                info.Message = AppendMessage(info.Message, "IFC fallback: " + placement.Warning);
+
+            // No exact solid available? Estimate the AABB from the placement rectangle
+            // (IfcWindow/IfcDoor convention: width along local X, height along local Z).
+            // Correct position and in-wall extent, zero thickness — clearly labeled as such.
+            if (!info.MinX.HasValue && info.OverallWidth.HasValue && info.OverallHeight.HasValue)
+            {
+                var o = info.PlacementOrigin!;
+                var x = info.PlacementXAxis!;
+                var z = info.PlacementZAxis!;
+                var w = info.OverallWidth.Value;
+                var h = info.OverallHeight.Value;
+                foreach (var corner in new[]
+                         {
+                             o,
+                             new Point3D(o.X + x.X * w, o.Y + x.Y * w, o.Z + x.Z * w),
+                             new Point3D(o.X + z.X * h, o.Y + z.Y * h, o.Z + z.Z * h),
+                             new Point3D(
+                                 o.X + x.X * w + z.X * h,
+                                 o.Y + x.Y * w + z.Y * h,
+                                 o.Z + x.Z * w + z.Z * h),
+                         })
+                    ExtendBounds(info, corner);
+                info.AabbSource = "ifc-placement-estimate";
+            }
+        }
+        catch (Exception ex)
+        {
+            info.Message = AppendMessage(info.Message, "IFC fallback: " + ErrorText.Flatten(ex));
+        }
+    }
+
+    /// <summary>Result cache for IFC placement lookups, keyed by path + mtime + guid.</summary>
+    private static readonly object IfcCacheGate = new object();
+    private static readonly Dictionary<string, (TeklaMcp.Core.Ifc.IfcEntityPlacement? Placement, string? Error)>
+        IfcCache = new Dictionary<string, (TeklaMcp.Core.Ifc.IfcEntityPlacement?, string?)>();
+
+    private static TeklaMcp.Core.Ifc.IfcEntityPlacement? ReadIfcPlacementCached(
+        string path, string externalGuid, out string? error)
+    {
+        var key = path + "|" + System.IO.File.GetLastWriteTimeUtc(path).Ticks + "|" + externalGuid;
+        lock (IfcCacheGate)
+        {
+            if (IfcCache.TryGetValue(key, out var cached))
+            {
+                error = cached.Error;
+                return cached.Placement;
+            }
+        }
+        var placement = TeklaMcp.Core.Ifc.IfcPlacementReader.TryRead(path, externalGuid, out error);
+        lock (IfcCacheGate)
+        {
+            if (IfcCache.Count > 512) IfcCache.Clear();
+            IfcCache[key] = (placement, error);
+        }
+        return placement;
+    }
+
+    /// <summary>Reference file path: prefer the local revision copy, else Filename (which may be relative to the model folder).</summary>
+    private static string? ResolveReferenceFile(TSM.ReferenceModel referenceModel, string modelPath)
+    {
+        var candidates = new List<string?>
+        {
+            ReadOptionalString(referenceModel, "ActiveFilePath"),
+            referenceModel.Filename,
+        };
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+            var raw = candidate!.Trim();
+            if (System.IO.File.Exists(raw)) return raw;
+            if (!string.IsNullOrWhiteSpace(modelPath))
+            {
+                var combined = System.IO.Path.Combine(modelPath, raw.TrimStart('.', '\\', '/'));
+                if (System.IO.File.Exists(combined)) return combined;
+            }
+        }
+        return null;
+    }
+
+    private static Point3D RotateZ(double x, double y, double z, double degrees)
+    {
+        if (Math.Abs(degrees) < 1e-9) return new Point3D(x, y, z);
+        var radians = degrees * Math.PI / 180.0;
+        var cos = Math.Cos(radians);
+        var sin = Math.Sin(radians);
+        return new Point3D(x * cos - y * sin, x * sin + y * cos, z);
+    }
+
+    /// <summary>Optional Tekla API members (absent on older versions) are read reflectively.</summary>
+    private static double? ReadOptionalDouble(object source, string propertyName)
+    {
+        try
+        {
+            var value = source.GetType().GetProperty(propertyName)?.GetValue(source, null);
+            return value is double d ? d : (double?)null;
+        }
+        catch { return null; }
+    }
+
+    private static string? ReadOptionalString(object source, string propertyName)
+    {
+        try
+        {
+            return source.GetType().GetProperty(propertyName)?.GetValue(source, null) as string;
+        }
+        catch { return null; }
+    }
+
+    private static Guid? ReadOptionalGuid(object source, string propertyName)
+    {
+        try
+        {
+            var value = source.GetType().GetProperty(propertyName)?.GetValue(source, null);
+            return value is Guid g ? g : (Guid?)null;
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Finds a ReferenceModelObject by its IFC GlobalId across all reference models, via the
+    /// (newer) ReferenceModel.GetReferenceModelObjectByExternalGuid API when available.
+    /// </summary>
+    private static TSM.ReferenceModelObject? FindByExternalGuid(
+        TSM.Model model, string externalGuid, out string? message)
+    {
+        message = null;
+        var sawLookupApi = false;
+        try
+        {
+            var enumerator = model.GetModelObjectSelector().GetAllObjectsWithType(
+                TSM.ModelObject.ModelObjectEnum.REFERENCE_MODEL);
+            while (enumerator.MoveNext())
+            {
+                if (!(enumerator.Current is TSM.ReferenceModel referenceModel)) continue;
+                var lookup = referenceModel.GetType().GetMethod(
+                    "GetReferenceModelObjectByExternalGuid", new[] { typeof(string) });
+                if (lookup is null) continue;
+                sawLookupApi = true;
+                try
+                {
+                    if (lookup.Invoke(referenceModel, new object[] { externalGuid })
+                        is TSM.ReferenceModelObject found)
+                        return found;
+                }
+                catch (Exception exLookup)
+                {
+                    message = AppendMessage(message, ErrorText.Flatten(exLookup));
+                }
+            }
+            if (!sawLookupApi)
+                message = AppendMessage(
+                    message,
+                    "This Tekla version has no GetReferenceModelObjectByExternalGuid API; " +
+                    "address the object by integer id or selection instead.");
+        }
+        catch (Exception ex)
+        {
+            message = AppendMessage(message, ErrorText.Flatten(ex));
+        }
+        return null;
     }
 
     private static void AddAttribute(
@@ -1611,6 +1867,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
             throw new InvalidOperationException(
                 "No connection to Tekla Structures. Start Tekla and open a model first. " +
                 "(" + TeklaRemotingChannel.Describe() + ")");
+
+        // First successful connection = the only moment we KNOW the channels are aligned and
+        // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,
+        // instead of letting the first Insert/Modify trigger them at an arbitrary later time.
+        TeklaRemotingChannel.WarmUpWriteProxies();
         return model;
     }
 

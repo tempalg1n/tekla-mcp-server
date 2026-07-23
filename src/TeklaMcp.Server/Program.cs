@@ -13,6 +13,12 @@ using TeklaMcp.Mock;
 // for the protocol, so ALL logging must go to stderr (configured below).
 // ---------------------------------------------------------------------------
 
+// Nothing in this process may write to stdout except the MCP transport (which uses the raw
+// Console.OpenStandardOutput stream, not Console.Out). The Tekla Open API itself does
+// Console.WriteLine("Connection failed : …") when a remoting channel fails — one such line
+// would corrupt the JSON-RPC framing. Route all Console.Out writers to stderr up front.
+Console.SetOut(Console.Error);
+
 // The server has no appsettings/user-secrets dependency. Disabling generic-host defaults keeps
 // stdio startup deterministic and avoids host configuration/file-watcher stalls when a net8
 // artifact rolls forward to a newer installed .NET runtime.

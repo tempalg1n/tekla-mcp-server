@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -42,7 +43,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -112,7 +113,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -138,7 +139,7 @@ public sealed partial class TeklaModelService
             }
             catch (Exception ex)
             {
-                result.Message = "Could not read the active drawing sheet: " + ex.Message;
+                result.Message = "Could not read the active drawing sheet: " + ErrorText.Flatten(ex);
                 return result;
             }
 
@@ -150,7 +151,7 @@ public sealed partial class TeklaModelService
 
             result.Available = true;
             try { result.DrawingKey = MapDrawing(active, active).Key; }
-            catch (Exception ex) { notes.Add("Drawing key unavailable: " + ex.Message); }
+            catch (Exception ex) { notes.Add("Drawing key unavailable: " + ErrorText.Flatten(ex)); }
             try
             {
                 result.Width = Math.Round(sheet.Width, 3);
@@ -158,24 +159,24 @@ public sealed partial class TeklaModelService
             }
             catch (Exception ex)
             {
-                notes.Add("Sheet dimensions unavailable: " + ex.Message);
+                notes.Add("Sheet dimensions unavailable: " + ErrorText.Flatten(ex));
             }
             try { result.Origin = ToDto(sheet.Origin); }
-            catch (Exception ex) { notes.Add("Sheet origin unavailable: " + ex.Message); }
+            catch (Exception ex) { notes.Add("Sheet origin unavailable: " + ErrorText.Flatten(ex)); }
             try { result.FrameOrigin = ToDto(sheet.FrameOrigin); }
-            catch (Exception ex) { notes.Add("Sheet frame origin unavailable: " + ex.Message); }
+            catch (Exception ex) { notes.Add("Sheet frame origin unavailable: " + ErrorText.Flatten(ex)); }
 
             TSD.LayoutAttributes? layout = null;
             try { layout = active.Layout; }
-            catch (Exception ex) { notes.Add("Drawing layout unavailable: " + ex.Message); }
+            catch (Exception ex) { notes.Add("Drawing layout unavailable: " + ErrorText.Flatten(ex)); }
             if (layout != null)
             {
                 // TODO(windows): verify actual ContainerView dimensions versus Layout.SheetSize
                 // for auto-sized sheets in every supported Tekla release.
                 try { result.SizeDefinitionMode = layout.SizeDefinitionMode.ToString(); }
-                catch (Exception ex) { notes.Add("Layout size mode unavailable: " + ex.Message); }
+                catch (Exception ex) { notes.Add("Layout size mode unavailable: " + ErrorText.Flatten(ex)); }
                 try { result.AutoSizeOptions = layout.AutoSizeOptions.ToString(); }
-                catch (Exception ex) { notes.Add("Layout auto-size options unavailable: " + ex.Message); }
+                catch (Exception ex) { notes.Add("Layout auto-size options unavailable: " + ErrorText.Flatten(ex)); }
                 try
                 {
                     var configuredSize = layout.SheetSize;
@@ -187,13 +188,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception ex)
                 {
-                    notes.Add("Configured layout sheet size unavailable: " + ex.Message);
+                    notes.Add("Configured layout sheet size unavailable: " + ErrorText.Flatten(ex));
                 }
             }
         }
         catch (Exception ex)
         {
-            notes.Add(ex.Message);
+            notes.Add(ErrorText.Flatten(ex));
         }
 
         if (notes.Count > 0)
@@ -268,7 +269,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -311,7 +312,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -342,7 +343,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -371,7 +372,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -427,13 +428,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + exItem.Message);
+                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + ErrorText.Flatten(exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -518,7 +519,7 @@ public sealed partial class TeklaModelService
                 catch (Exception exItem)
                 {
                     result.Errors.Add(
-                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + exItem.Message);
+                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + ErrorText.Flatten(exItem));
                 }
             }
             if (!apiSucceeded)
@@ -537,7 +538,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -590,13 +591,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + exItem.Message);
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }
@@ -728,13 +729,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + exItem.Message);
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ex.Message;
+            result.Message = ErrorText.Flatten(ex);
         }
         return result;
     }

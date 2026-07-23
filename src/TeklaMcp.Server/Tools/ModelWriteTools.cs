@@ -37,7 +37,7 @@ public static class ModelWriteTools
         [Description("Depth offset (mm).")] double? depthOffset = null,
         [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.CreateParts(new[]
+        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -49,7 +49,7 @@ public static class ModelWriteTools
                     plane, planeOffset, rotation, rotationOffset, depth, depthOffset),
                 MatchPositionGuid = matchPositionGuid,
             }
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_create_beams")]
     [Description("Create up to 200 beams in ONE batch. Each item uses PartSpec Start/End/Profile " +
@@ -62,7 +62,7 @@ public static class ModelWriteTools
     {
         var specs = (beams ?? new List<PartSpec>()).Take(200).ToList();
         foreach (var spec in specs) spec.Kind = "beam";
-        var result = model.CreateParts(specs, apply);
+        var result = ToolHelpers.FailIfNothingApplied(model.CreateParts(specs, apply));
         if (beams != null && beams.Count > 200)
             result.Message = "Batch capped at 200 of " + beams.Count + " beam specs.";
         return result;
@@ -81,7 +81,7 @@ public static class ModelWriteTools
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = 'COLUMN'.")] string name = "COLUMN",
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.CreateParts(new[]
+        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -90,7 +90,7 @@ public static class ModelWriteTools
                 End = new Point3D(x, y, topZ),
                 Profile = profile, Material = material, Class = @class, Name = name,
             }
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_create_plate")]
     [Description("Create a contour plate from 3+ GLOBAL points 'x,y,z; x,y,z; ...' and a profile " +
@@ -103,7 +103,7 @@ public static class ModelWriteTools
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = default.")] string name = "",
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.CreateParts(new[]
+        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -111,7 +111,7 @@ public static class ModelWriteTools
                 Contour = ToolHelpers.ParsePoints(contour),
                 Profile = profile, Material = material, Class = @class, Name = name,
             }
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_modify_part")]
     [Description("Modify one part by GUID: set any of profile/material/class/name, and/or move its " +
@@ -133,7 +133,7 @@ public static class ModelWriteTools
         [Description("Depth offset (mm), or omitted to keep/match.")] double? depthOffset = null,
         [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.ModifyParts(new[]
+        => ToolHelpers.FailIfNothingApplied(model.ModifyParts(new[]
         {
             new PartModification
             {
@@ -148,7 +148,7 @@ public static class ModelWriteTools
                     plane, planeOffset, rotation, rotationOffset, depth, depthOffset),
                 MatchPositionGuid = matchPositionGuid,
             }
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_swap_handles")]
     [Description("Swap the start/end handles of parts matching filters (re-orient wrongly-modeled " +
@@ -169,7 +169,7 @@ public static class ModelWriteTools
             ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, guidIn: guidIn, useSelection: useSelection),
             limit);
         var mods = targets.Select(o => new PartModification { Guid = o.Guid, SwapHandles = true }).ToList();
-        return model.ModifyParts(mods, apply);
+        return ToolHelpers.FailIfNothingApplied(model.ModifyParts(mods, apply));
     }
 
     [McpServerTool(Name = "tekla_delete_objects")]
@@ -188,8 +188,8 @@ public static class ModelWriteTools
         [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
         [Description("Safety cap. Default 200.")] int limit = 200,
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.DeleteObjects(
+        => ToolHelpers.FailIfNothingApplied(model.DeleteObjects(
             ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, guidIn, useSelection),
             apply,
-            limit);
+            limit));
 }

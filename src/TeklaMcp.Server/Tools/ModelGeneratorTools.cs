@@ -42,7 +42,7 @@ public static class ModelGeneratorTools
                 Message = $"Could not resolve grids. {a.Message} {b.Message}".Trim(),
             };
 
-        return model.CreateParts(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -51,7 +51,7 @@ public static class ModelGeneratorTools
                 End = new Point3D(b.X, b.Y, b.Z),
                 Profile = profile, Material = material, Class = @class, Name = name,
             }
-        }, apply);
+        }, apply));
     }
 
     [McpServerTool(Name = "tekla_create_column_grid")]
@@ -81,7 +81,7 @@ public static class ModelGeneratorTools
                     End = new Point3D(x, y, topZ),
                     Profile = profile, Material = material, Class = @class, Name = name,
                 });
-        return model.CreateParts(specs, apply);
+        return ToolHelpers.FailIfNothingApplied(model.CreateParts(specs, apply));
     }
 
     [McpServerTool(Name = "tekla_generate_frame")]
@@ -141,7 +141,7 @@ public static class ModelGeneratorTools
 
         var result = model.CreateParts(specs, apply);
         result.Operation = "generate_frame";
-        return result;
+        return ToolHelpers.FailIfNothingApplied(result);
     }
 
     [McpServerTool(Name = "tekla_straighten_columns")]
@@ -184,7 +184,7 @@ public static class ModelGeneratorTools
 
         var result = model.ModifyParts(mods, apply);
         result.Operation = "straighten_columns";
-        return result;
+        return ToolHelpers.FailIfNothingApplied(result);
     }
 
     [McpServerTool(Name = "tekla_fix_column_handles")]
@@ -221,7 +221,7 @@ public static class ModelGeneratorTools
 
         var result = model.ModifyParts(mods, apply);
         result.Operation = "fix_column_handles";
-        return result;
+        return ToolHelpers.FailIfNothingApplied(result);
     }
 
     private static PartSpec Beam(double x1, double y1, double z1, double x2, double y2, double z2,

@@ -1,39 +1,67 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
+using TS = Tekla.Structures;
+using TSD = Tekla.Structures.Drawing;
 using TSM = Tekla.Structures.Model;
 
 namespace TeklaMcp.Tekla;
 
 /// <summary>
-/// Points the Open API client at the remoting channel the running Tekla ACTUALLY publishes.
+/// Points the Open API clients at the remoting channels the running Tekla ACTUALLY publishes.
 ///
-/// The Open API talks to Tekla over .NET remoting (IPC named pipes). The client-side channel
-/// name is baked into Tekla.Structures.Model.dll as
-/// <c>Tekla.Structures.Model-{app}:{apiVersion}</c> with an empty <c>{app}</c> suffix — but
-/// some Tekla setups publish the pipe under a different suffix (observed in the wild:
-/// <c>Console</c>, so the pipe is <c>Tekla.Structures.Model-Console:2023.0.0.0</c> — see
-/// issue #7). When the names disagree, <c>Model.GetConnectionStatus()</c> returns false and
-/// remoting fails with "Failed to connect to an IPC Port" even though Tekla is running with
-/// a model open.
+/// The Open API talks to Tekla over .NET remoting (IPC named pipes). Every Open API assembly
+/// derives its channel name the same way (verified by decompiling the Tekla 2023 assemblies):
 ///
-/// <see cref="Align"/> runs before <c>Model()</c> is created: it compares the baked-in channel
-/// name with the <c>Tekla.Structures.Model-*</c> pipes present on the machine and, when the
-/// default is not among them, rewrites the internal static
-/// <c>Tekla.Structures.ModelInternal.Remoter.ChannelName</c> field to the published name.
-/// The result is cached — EXCEPT when no Tekla pipes were found at all (server started before
-/// Tekla): then the next call probes again, so "start server, open Tekla later" still aligns.
-/// Everything here is best-effort: on any failure it logs to stderr and leaves the default.
+///     {AssemblyName}-{SESSIONNAME}:{AssemblyVersion}
 ///
-/// Override: set <c>TEKLA_MCP_CHANNEL</c> to force an exact channel name (skips probing).
+/// where {SESSIONNAME} is the SESSIONNAME environment variable of the process that computes
+/// the name (<c>TeklaStructuresInternal.Remoter.GetSessionName()</c>). Tekla's own process has
+/// the Windows session variable (e.g. "Console", "RDP-Tcp#47"), but an MCP server launched by
+/// an MCP client frequently has NO SESSIONNAME at all, so its client-side names come out as
+/// "…-:version" and never match the published pipes (issue #7's mysterious "-Console" suffix).
+///
+/// THREE assemblies matter, each with its own Remoter and its own lazily-connected static
+/// DelegateProxy:
+///   - Tekla.Structures.dll — base. Hosts ModuleManager, whose static ctor connects over THIS
+///     channel. Every Insert/Modify calls ModelModuleManager.CheckModules → ModuleManager, so
+///     a misaligned base channel produces the deceptive "reads work, apply=true fails with
+///     'The type initializer for Tekla.Structures.ModuleManager threw an exception'" pattern.
+///   - Tekla.Structures.Model.dll — model reads and writes.
+///   - Tekla.Structures.Drawing.dll — drawing tools.
+///
+/// A static proxy whose type initializer failed once is dead for the process lifetime (the
+/// API's own doc: "Currently, there's no way to re-establish the connection"), so alignment
+/// MUST happen before the first touch of each proxy.
+///
+/// <see cref="Align"/> runs before the first <c>Model()</c>: it derives the session suffix
+/// from the published Tekla.Structures* pipes, sets SESSIONNAME for this process so every
+/// Remoter computes the right name on its own, and belt-and-braces patches the internal
+/// static <c>Remoter.ChannelName</c> fields of all three assemblies when they were already
+/// initialized with a stale name. The result is cached — EXCEPT when no Tekla pipes were
+/// found at all (server started before Tekla): then the next call probes again. Everything
+/// here is best-effort: on any failure it logs to stderr and leaves the defaults.
+///
+/// Override: set <c>TEKLA_MCP_CHANNEL</c> to force an exact MODEL channel name (skips
+/// probing); the session suffix embedded in it is applied to the other channels too.
 /// </summary>
 public static class TeklaRemotingChannel
 {
-    private const string PipePrefix = "Tekla.Structures.Model-";
+    private const string PipePrefix = "Tekla.Structures";
+
+    /// <summary>Longest name first, so "Tekla.Structures" only matches as a last resort.</summary>
+    private static readonly string[] KnownAssemblyNames =
+    {
+        "Tekla.Structures.Drawing",
+        "Tekla.Structures.Model",
+        "Tekla.Structures",
+    };
 
     private static readonly object Gate = new object();
     private static bool _done;
+    private static bool _warmedUp;
 
     public static void Align()
     {
@@ -49,7 +77,38 @@ public static class TeklaRemotingChannel
             {
                 _done = true; // structural failure — retrying would only spam stderr
                 Console.Error.WriteLine(
-                    "[tekla] remoting channel alignment failed (keeping default): " + ex.Message);
+                    "[tekla] remoting channel alignment failed (keeping defaults): " + ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Force-initializes the write-path proxies (ModuleManager and its base-channel
+    /// DelegateProxy) once, right after the first successful model connection — i.e. at the
+    /// only moment we KNOW the channels are aligned and Tekla is up. Without this the base
+    /// proxy connects lazily inside the first Insert/Modify; if that ever happens with a
+    /// stale channel the CLR caches the failure until the server restarts. Never throws:
+    /// a failure is logged and Insert will report the same (now unwrapped) error.
+    /// </summary>
+    public static void WarmUpWriteProxies()
+    {
+        lock (Gate)
+        {
+            if (_warmedUp) return;
+            _warmedUp = true;
+            try
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+                    typeof(TS.ModuleManager).TypeHandle);
+                Console.Error.WriteLine(
+                    "[tekla] write-path proxies initialized (ModuleManager configuration: " +
+                    TS.ModuleManager.Configuration + ").");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    "[tekla] WARNING: write-path proxy init failed — apply=true operations " +
+                    "will fail until this is resolved: " + TeklaMcp.Core.ErrorText.Flatten(ex));
             }
         }
     }
@@ -60,14 +119,18 @@ public static class TeklaRemotingChannel
         try
         {
             var asm = typeof(TSM.Model).Assembly;
-            var field = FindChannelNameField();
-            var channel = field?.GetValue(null) as string ?? "(unknown)";
-            var pipes = ListPublishedModelPipes();
+            var channel = ReadChannel(asm, "Tekla.Structures.ModelInternal.Remoter") ?? "(unknown)";
+            var baseChannel = ReadChannel(
+                typeof(TS.TeklaStructuresInfo).Assembly,
+                "Tekla.Structures.TeklaStructuresInternal.Remoter") ?? "(unknown)";
+            var pipes = ListPublishedTeklaPipes();
             var origin = string.IsNullOrEmpty(asm.Location)
                 ? $"(no file location; resolver bin: '{TeklaAssemblyResolver.BinDir ?? "?"}')"
                 : $"'{asm.Location}'";
-            return $"client channel '{channel}', API {asm.GetName().Version} from {origin}, " +
-                   $"published model pipes: [{string.Join(", ", pipes)}]";
+            return $"model channel '{channel}', base channel '{baseChannel}', " +
+                   $"API {asm.GetName().Version} from {origin}, SESSIONNAME " +
+                   $"'{Environment.GetEnvironmentVariable("SESSIONNAME") ?? "(not set)"}', " +
+                   $"published Tekla pipes: [{string.Join(", ", pipes)}]";
         }
         catch (Exception ex)
         {
@@ -78,68 +141,166 @@ public static class TeklaRemotingChannel
     /// <summary>Returns false when there was nothing to align to yet (no Tekla pipes) — retryable.</summary>
     private static bool AlignCore()
     {
-        var field = FindChannelNameField();
-        if (field is null)
-        {
-            Console.Error.WriteLine(
-                "[tekla] Remoter.ChannelName not found in this Tekla API version; using the default channel.");
-            return true;
-        }
-
-        var current = field.GetValue(null) as string ?? "";
-
+        // 1) Determine the target session suffix WITHOUT touching any Tekla type: reading a
+        //    Remoter field runs its type initializer, which snapshots SESSIONNAME — the env
+        //    var must be corrected first.
+        string? suffix;
         var forced = Environment.GetEnvironmentVariable("TEKLA_MCP_CHANNEL");
         if (!string.IsNullOrWhiteSpace(forced))
         {
-            field.SetValue(null, forced.Trim());
+            suffix = SessionSuffixOf(forced!.Trim());
             Console.Error.WriteLine(
-                $"[tekla] remoting channel forced via TEKLA_MCP_CHANNEL: '{forced.Trim()}' (default was '{current}').");
-            return true;
+                $"[tekla] TEKLA_MCP_CHANNEL forces the model channel to '{forced.Trim()}'" +
+                (suffix is null ? " (no session suffix recognized in it)." : $" (session suffix '{suffix}')."));
         }
-
-        var pipes = ListPublishedModelPipes();
-        if (pipes.Count == 0) return false;       // Tekla not running (or pipes unreadable) — retry later.
-        if (pipes.Contains(current)) return true; // the default channel IS published — no patch needed.
-
-        // Only consider pipes for the SAME Open API version the loaded assemblies speak;
-        // the remoting protocol is not compatible across versions anyway.
-        var version = VersionSuffix(current);
-        var candidates = version is null
-            ? new List<string>()
-            : pipes.FindAll(p => p.EndsWith(":" + version, StringComparison.OrdinalIgnoreCase));
-
-        if (candidates.Count == 0)
+        else
         {
-            Console.Error.WriteLine(
-                $"[tekla] no published Tekla model pipe matches the loaded API version ({version ?? "?"}). " +
-                $"Published: [{string.Join(", ", pipes)}]. Keeping default channel '{current}'. " +
-                "This usually means the loaded Tekla assemblies do not match the running Tekla.");
-            return true;
+            var pipes = ListPublishedTeklaPipes();
+            if (pipes.Count == 0) return false; // Tekla not running (or pipes unreadable) — retry later.
+            suffix = DeriveSessionSuffix(pipes);
         }
 
-        candidates.Sort(StringComparer.OrdinalIgnoreCase);
-        var chosen = candidates[0];
-        field.SetValue(null, chosen);
-        Console.Error.WriteLine(
-            $"[tekla] remoting channel '{current}' is not published; using '{chosen}'." +
-            (candidates.Count > 1
-                ? $" Other candidates: [{string.Join(", ", candidates.GetRange(1, candidates.Count - 1))}]."
-                : ""));
+        // 2) Make this process compute the same channel names Tekla's process did. This fixes
+        //    all three assemblies at once, including proxies that have not initialized yet.
+        var current = Environment.GetEnvironmentVariable("SESSIONNAME");
+        if (suffix != null && !string.Equals(current, suffix, StringComparison.Ordinal))
+        {
+            Environment.SetEnvironmentVariable("SESSIONNAME", suffix);
+            Console.Error.WriteLine(
+                $"[tekla] SESSIONNAME set to '{suffix}' (was '{current ?? "(not set)"}') so the " +
+                "Open API computes the channel names the running Tekla actually publishes.");
+        }
+
+        // 3) Belt and braces: a Remoter whose type initializer ALREADY ran holds the stale
+        //    name in a static field — patch it directly (safe until the corresponding
+        //    DelegateProxy connects, which is exactly what Align's placement guarantees).
+        if (!string.IsNullOrWhiteSpace(forced))
+            PatchChannel(typeof(TSM.Model).Assembly,
+                "Tekla.Structures.ModelInternal.Remoter", forced!.Trim());
+        else if (suffix != null)
+        {
+            PatchToSuffix(typeof(TS.TeklaStructuresInfo).Assembly,
+                "Tekla.Structures.TeklaStructuresInternal.Remoter", suffix);
+            PatchToSuffix(typeof(TSM.Model).Assembly,
+                "Tekla.Structures.ModelInternal.Remoter", suffix);
+            TryPatchDrawing(suffix);
+        }
         return true;
     }
 
-    private static FieldInfo? FindChannelNameField()
+    /// <summary>
+    /// Picks the session suffix from published pipe names like
+    /// "Tekla.Structures.Model-Console:2023.0.0.0". Prefers pipes of the Tekla major version
+    /// this build was compiled for, and the current SESSIONNAME when several Tekla sessions
+    /// publish different suffixes.
+    /// </summary>
+    private static string? DeriveSessionSuffix(List<string> pipes)
+    {
+        var compiledMajor = TeklaAssemblyResolver.CompiledVersion?.Major;
+        var candidates = new List<(string Suffix, int? Major)>();
+        foreach (var pipe in pipes)
+        {
+            var colon = pipe.LastIndexOf(':');
+            if (colon <= 0) continue;
+            var name = pipe.Substring(0, colon);
+            int? major = Version.TryParse(pipe.Substring(colon + 1), out var v) ? v.Major : (int?)null;
+            foreach (var asm in KnownAssemblyNames)
+            {
+                if (!name.StartsWith(asm + "-", StringComparison.OrdinalIgnoreCase)) continue;
+                candidates.Add((name.Substring(asm.Length + 1), major));
+                break;
+            }
+        }
+        if (candidates.Count == 0) return null;
+
+        var preferred = candidates
+            .Where(c => compiledMajor is null || c.Major == compiledMajor)
+            .Select(c => c.Suffix)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (preferred.Count == 0)
+            preferred = candidates.Select(c => c.Suffix).Distinct(StringComparer.Ordinal).ToList();
+
+        if (preferred.Count == 1) return preferred[0];
+
+        // Several Tekla sessions (e.g. multiple RDP users) — keep the current session's if it
+        // is one of them, otherwise pick deterministically and say so.
+        var current = Environment.GetEnvironmentVariable("SESSIONNAME");
+        if (current != null && preferred.Contains(current)) return current;
+        preferred.Sort(StringComparer.OrdinalIgnoreCase);
+        Console.Error.WriteLine(
+            $"[tekla] several Tekla sessions publish pipes ({string.Join(", ", preferred)}); " +
+            $"using '{preferred[0]}'. Set TEKLA_MCP_CHANNEL to override.");
+        return preferred[0];
+    }
+
+    /// <summary>Extracts "Console" from "Tekla.Structures.Model-Console:2023.0.0.0".</summary>
+    private static string? SessionSuffixOf(string channel)
+    {
+        var colon = channel.LastIndexOf(':');
+        var name = colon > 0 ? channel.Substring(0, colon) : channel;
+        foreach (var asm in KnownAssemblyNames)
+            if (name.StartsWith(asm + "-", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(asm.Length + 1);
+        return null;
+    }
+
+    private static void PatchToSuffix(Assembly assembly, string remoterTypeName, string suffix)
+    {
+        var name = assembly.GetName();
+        PatchChannel(assembly, remoterTypeName, $"{name.Name}-{suffix}:{name.Version}");
+    }
+
+    /// <summary>
+    /// The Drawing assembly is loaded on demand; align it only when it can be resolved, and
+    /// never let a missing/old Drawing DLL break model alignment.
+    /// </summary>
+    private static void TryPatchDrawing(string suffix)
+    {
+        try
+        {
+            PatchToSuffix(typeof(TSD.DrawingHandler).Assembly,
+                "Tekla.Structures.DrawingInternal.Remoter", suffix);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                "[tekla] drawing channel alignment skipped: " + ex.Message);
+        }
+    }
+
+    private static void PatchChannel(Assembly assembly, string remoterTypeName, string expected)
     {
         // internal static readonly string on all inspected versions (2021 baseline). Setting an
         // InitOnly static via reflection is supported on .NET Framework, which is the only TFM
         // this project builds for.
-        var remoter = typeof(TSM.Model).Assembly
-            .GetType("Tekla.Structures.ModelInternal.Remoter", throwOnError: false);
+        var field = FindChannelNameField(assembly, remoterTypeName);
+        if (field is null)
+        {
+            Console.Error.WriteLine(
+                $"[tekla] {remoterTypeName}.ChannelName not found in this Tekla version; " +
+                "using the default channel.");
+            return;
+        }
+
+        var current = field.GetValue(null) as string ?? "";
+        if (string.Equals(current, expected, StringComparison.Ordinal)) return;
+        field.SetValue(null, expected);
+        Console.Error.WriteLine(
+            $"[tekla] {remoterTypeName}: channel '{current}' → '{expected}'.");
+    }
+
+    private static string? ReadChannel(Assembly assembly, string remoterTypeName)
+        => FindChannelNameField(assembly, remoterTypeName)?.GetValue(null) as string;
+
+    private static FieldInfo? FindChannelNameField(Assembly assembly, string remoterTypeName)
+    {
+        var remoter = assembly.GetType(remoterTypeName, throwOnError: false);
         return remoter?.GetField("ChannelName",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
     }
 
-    private static List<string> ListPublishedModelPipes()
+    private static List<string> ListPublishedTeklaPipes()
     {
         var result = new List<string>();
         try
@@ -159,11 +320,5 @@ public static class TeklaRemotingChannel
             // best-effort
         }
         return result;
-    }
-
-    private static string? VersionSuffix(string channel)
-    {
-        var i = channel.LastIndexOf(':');
-        return i >= 0 && i < channel.Length - 1 ? channel.Substring(i + 1) : null;
     }
 }

@@ -25,6 +25,23 @@ public sealed class ReferenceGeometryInfo
     public double? MaxX { get; set; }
     public double? MaxY { get; set; }
     public double? MaxZ { get; set; }
+
+    /// <summary>
+    /// Where the AABB came from: "tekla-faces" (exact, from Open API face polygons) or
+    /// "ifc-placement-estimate" (rectangle spanned by placement + OverallWidth/Height —
+    /// correct position/extent in the wall plane, zero thickness). Empty when no AABB.
+    /// </summary>
+    public string AabbSource { get; set; } = "";
+
+    /// <summary>World placement origin (GLOBAL model mm), when resolvable.</summary>
+    public Point3D? PlacementOrigin { get; set; }
+    /// <summary>World placement axes (unit vectors in GLOBAL model coordinates).</summary>
+    public Point3D? PlacementXAxis { get; set; }
+    public Point3D? PlacementYAxis { get; set; }
+    public Point3D? PlacementZAxis { get; set; }
+    /// <summary>"ifc-file" when the placement was parsed from the reference IFC on disk.</summary>
+    public string PlacementSource { get; set; } = "";
+
     public List<ReferenceFaceInfo> Faces { get; set; } = new List<ReferenceFaceInfo>();
     public Dictionary<string, string> Attributes { get; set; } =
         new Dictionary<string, string>();

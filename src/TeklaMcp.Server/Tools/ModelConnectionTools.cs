@@ -46,7 +46,7 @@ public static class ModelConnectionTools
         [Description("System component number; negative = custom component. Default -1.")] int number = -1,
         [Description("NA, BASIC, DIAGONAL, SPLICE, GLOBAL_Z, etc. Default NA uses upVector.")] string autoDirection = "NA",
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => model.CreateConnections(new[]
+        => ToolHelpers.FailIfNothingApplied(model.CreateConnections(new[]
         {
             new ConnectionSpec
             {
@@ -58,7 +58,7 @@ public static class ModelConnectionTools
                 AttributesFile = attributesFile ?? "",
                 AutoDirection = autoDirection ?? "NA",
             },
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_copy_connection")]
     [Description("Copy a connection's identity/orientation from an existing part to new primary/" +
@@ -91,7 +91,7 @@ public static class ModelConnectionTools
                     : "Source connection is ambiguous/not found; call tekla_list_connections and pass its id.",
             };
 
-        return model.CreateConnections(new[]
+        return ToolHelpers.FailIfNothingApplied(model.CreateConnections(new[]
         {
             new ConnectionSpec
             {
@@ -103,6 +103,6 @@ public static class ModelConnectionTools
                 AutoDirection = source.AutoDirection,
                 AttributesFile = attributesFile ?? "",
             },
-        }, apply);
+        }, apply));
     }
 }

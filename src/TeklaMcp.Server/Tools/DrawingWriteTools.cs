@@ -21,14 +21,14 @@ public static class DrawingWriteTools
         [Description("Opaque key from tekla_list_drawings, or unambiguous exact mark.")] string keyOrMark,
         [Description("Show the drawing editor UI. Default true.")] bool showDrawing = true,
         [Description("Set true to open; false returns preview only.")] bool apply = false) =>
-        model.OpenDrawing(keyOrMark, showDrawing, apply);
+        ToolHelpers.FailIfNothingApplied(model.OpenDrawing(keyOrMark, showDrawing, apply));
 
     [McpServerTool(Name = "tekla_save_drawing")]
     [Description("Save the active drawing. Preview unless apply=true.")]
     public static DrawingWriteResult SaveDrawing(
         ITeklaModelService model,
         [Description("Set true to save; false returns preview only.")] bool apply = false) =>
-        model.SaveActiveDrawing(apply);
+        ToolHelpers.FailIfNothingApplied(model.SaveActiveDrawing(apply));
 
     [McpServerTool(Name = "tekla_close_drawing")]
     [Description("Close the active drawing. Preview unless apply=true. save=false explicitly " +
@@ -37,7 +37,7 @@ public static class DrawingWriteTools
         ITeklaModelService model,
         [Description("Save changes before closing. false discards unsaved changes.")] bool save = true,
         [Description("Set true to close; false returns preview only.")] bool apply = false) =>
-        model.CloseActiveDrawing(save, apply);
+        ToolHelpers.FailIfNothingApplied(model.CloseActiveDrawing(save, apply));
 
     [McpServerTool(Name = "tekla_create_drawing")]
     [Description("Create one assembly/single-part/cast-unit/GA drawing. The drawing editor must be " +
@@ -50,7 +50,7 @@ public static class DrawingWriteTools
         [Description("Optional sheet number.")] int? sheetNumber = null,
         [Description("Drawing name (especially useful for GA).")] string name = "",
         [Description("Set true to create; false returns preview only.")] bool apply = false) =>
-        model.CreateDrawings(new[]
+        ToolHelpers.FailIfNothingApplied(model.CreateDrawings(new[]
         {
             new DrawingSpec
             {
@@ -60,7 +60,7 @@ public static class DrawingWriteTools
                 SheetNumber = sheetNumber,
                 Name = name ?? "",
             },
-        }, apply);
+        }, apply));
 
     [McpServerTool(Name = "tekla_create_drawings")]
     [Description("Batch-create up to 50 assembly/single-part/cast-unit/GA drawings. The editor " +
@@ -69,7 +69,7 @@ public static class DrawingWriteTools
         ITeklaModelService model,
         [Description("Structured drawing specifications (maximum 50).")] IReadOnlyList<DrawingSpec> drawings,
         [Description("Set true to create; false returns preview only.")] bool apply = false) =>
-        model.CreateDrawings((drawings ?? new List<DrawingSpec>()).Take(50).ToList(), apply);
+        ToolHelpers.FailIfNothingApplied(model.CreateDrawings((drawings ?? new List<DrawingSpec>()).Take(50).ToList(), apply));
 
     [McpServerTool(Name = "tekla_create_drawings_from_rule")]
     [Description("Create drawings using a saved Tekla AutoDrawing rule (safer than attempting " +
@@ -79,10 +79,10 @@ public static class DrawingWriteTools
         [Description("Saved AutoDrawing rule filename understood by Tekla.")] string ruleFile,
         [Description("Part/assembly model GUIDs, comma/semicolon/newline separated (max 50).")] string modelGuids,
         [Description("Set true to run AutoDrawing; false returns preview.")] bool apply = false) =>
-        model.CreateDrawingsFromRule(
+        ToolHelpers.FailIfNothingApplied(model.CreateDrawingsFromRule(
             ruleFile ?? "",
             ToolHelpers.ParseList(modelGuids).Take(50).ToList(),
-            apply);
+            apply));
 
     [McpServerTool(Name = "tekla_modify_drawings")]
     [Description("Modify name/titles/status flags on matched drawing-list rows. Null fields stay " +
@@ -103,7 +103,7 @@ public static class DrawingWriteTools
         [Description("New ready-for-issue flag; omit to keep.")] bool? isReadyForIssue = null,
         [Description("Safety cap (default 50).")] int limit = 50,
         [Description("Set true to commit; false returns preview only.")] bool apply = false) =>
-        model.ModifyDrawings(
+        ToolHelpers.FailIfNothingApplied(model.ModifyDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, type: type, markContains: markContains, nameContains: nameContains),
             new DrawingModification
@@ -118,7 +118,7 @@ public static class DrawingWriteTools
                 IsReadyForIssue = isReadyForIssue,
             },
             apply,
-            limit);
+            limit));
 
     [McpServerTool(Name = "tekla_delete_drawings")]
     [Description("Delete matched drawings. Active drawing cannot be deleted. Preview unless " +
@@ -201,9 +201,9 @@ public static class DrawingWriteTools
                 Backend = model.GetDrawingStatus().Backend,
                 Message = "Exactly one non-empty drawing key is required.",
             };
-        return model.OperateDrawings(
+        return ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(keyIn: keys[0]),
-            "place_views", null, apply, 1);
+            "place_views", null, apply, 1));
     }
 
     [McpServerTool(Name = "tekla_export_drawings_pdf")]
@@ -243,7 +243,7 @@ public static class DrawingWriteTools
                 Message = invalid,
             };
 
-        return model.OperateDrawings(
+        return ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, markContains: markContains, selectedOnly: selectedOnly),
             "print",
@@ -260,7 +260,7 @@ public static class DrawingWriteTools
                 Overwrite = overwrite,
             },
             apply,
-            limit);
+            limit));
     }
 
     private static string? ValidatePrintChoice(
@@ -284,9 +284,9 @@ public static class DrawingWriteTools
         bool selectedOnly,
         int limit,
         bool apply) =>
-        model.OperateDrawings(
+        ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, type: type, markContains: markContains,
                 nameContains: nameContains, selectedOnly: selectedOnly),
-            operation, null, apply, limit);
+            operation, null, apply, limit));
 }
