@@ -13,6 +13,37 @@ Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply wit
 
 ### Fixed
 
+- **Drawing-object enumeration died on non-serializable objects (e.g. `DetailMark`).**
+  After a detail view was created, every `tekla_select_drawing_objects` /
+  `tekla_list_drawing_objects` call on that drawing failed with
+  `SerializationException: DetailMarkSymbolAttributes … is not marked as serializable` —
+  Tekla's remoting channel cannot materialize a `DetailMark`, and one faulting object killed
+  the whole enumeration. Drawing-side enumerators now skip objects that fault during
+  `MoveNext()` (bounded retries, so a stuck enumerator cannot spin forever). Found live on
+  Tekla 2023 while smoke-testing the v0.7.0 drawing layer.
+- **`tekla_get_reference_geometry`: duplicate-key crash reading IFC custom attributes.**
+  Tekla's own `Operation.GetReferenceModelObjectCustomAttributes` builds a `Dictionary` from
+  `"key;value"` remoting rows with `Dictionary.Add`, so an IFC object carrying the same
+  attribute name twice (e.g. one property in several psets) threw «Элемент с тем же ключом
+  уже был добавлен» and no custom attributes were returned. The backend now replays the same
+  internal remoting sequence (confirmed by decompiling Tekla 2023) with duplicate-tolerant
+  parsing, falling back to the public wrapper on Tekla versions where the internal surface
+  differs. Verified live: 24 attributes (psets, Qto, window style) for the field-report
+  window instead of the error.
+- **`tekla_get_reference_geometry`: IFC fallback could not read Tekla's `.ifczip` cache.**
+  The active revision copy of a reference model (`ReferenceModel.ActiveFilePath`) usually
+  points into `DataStorage\ref\<hash>.ifczip` — a zip holding the `.ifc`. The parser read it
+  as STEP text, found nothing and reported «Entity with GlobalId … not found». `.ifczip` /
+  `.zip` archives (detected by content, not extension) are now unpacked transparently, every
+  existing on-disk copy (cache first, then `Filename`, absolute or model-relative) is tried
+  until the GlobalId resolves, and files held open by Tekla are shared correctly.
+- **`tekla_get_reference_geometry`: placements scaled ×1000 for Renga IFC4 files.** The
+  project length unit is the `LENGTHUNIT` referenced from `IFCUNITASSIGNMENT`, but the file
+  may declare additional auxiliary length units (Renga: project `MILLI METRE` + bare `METRE`
+  later); last-declaration-wins picked the wrong one and scaled every coordinate ×1000. The
+  assignment-referenced unit now wins. Verified live against the field-report window
+  `0VZkpIecn7$9mG$7iL8u45` in `3219-АР.ifc`: `placementSource: "ifc-file"` origin and the
+  `ifc-placement-estimate` AABB match the exact `tekla-faces` AABB.
 - **Writes failing with «Инициализатор типа "Tekla.Structures.ModuleManager" выдал
   исключение» while reads work.** Root cause (confirmed by decompiling the Tekla
   assemblies): every Open API channel name is `{Assembly}-{SESSIONNAME}:{version}`, and an

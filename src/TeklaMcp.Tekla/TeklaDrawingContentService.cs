@@ -520,7 +520,7 @@ public sealed partial class TeklaModelService
         if (!Guid.TryParse(modelGuid, out var guid))
             throw new ArgumentException("mark requires a valid modelGuid.");
         var enumerator = view.GetModelObjects(new TS.Identifier(guid));
-        while (enumerator.MoveNext())
+        while (SafeMoveNext(enumerator))
             if (enumerator.Current is TSD.ModelObject modelObject)
                 return modelObject;
         throw new InvalidOperationException("The model object is not represented in the target view.");

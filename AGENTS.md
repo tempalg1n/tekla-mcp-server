@@ -159,6 +159,10 @@ grid parsing) is the most under-verified code in the repo — see `docs/tekla-ap
 
 ### Conventions for DRAWING tools
 
+The drawing layer is experimental (new in v0.7.0) and has had limited live-model testing —
+treat field reports as expected, harden defensively (e.g. enumeration must survive objects
+that fault during remoting materialization), and keep user-facing docs marked accordingly.
+
 Drawing tools use `Tekla.Structures.Drawing` but follow the same boundary rules as model tools:
 no Tekla types outside `src/TeklaMcp.Tekla/`, flat Core DTOs, and believable stateful Mock
 behavior.

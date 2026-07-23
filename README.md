@@ -31,9 +31,9 @@ This server provides that bridge through the **Model Context Protocol**: a stand
 - Read the current UI selection in Tekla
 - Select objects in the Tekla UI by filter
 - Read and write user-defined attributes (UDAs) with safe preview-by-default writes
-- Search and QA the drawing list without opening drawings
-- Create, update, issue, print, and manage assembly/single-part/cast-unit/GA drawings
-- Inspect and edit drawing views, annotations, graphics, dimensions, marks, and symbols
+- Search and QA the drawing list without opening drawings *(experimental)*
+- Create, update, issue, print, and manage assembly/single-part/cast-unit/GA drawings *(experimental)*
+- Inspect and edit drawing views, annotations, graphics, dimensions, marks, and symbols *(experimental)*
 
 ---
 
@@ -135,6 +135,12 @@ drawing-specific tools**.
 | `tekla_fix_column_handles` | Re-orient flipped columns (swap inverted handles). |
 
 ### Drawing tools
+
+> **Experimental.** The drawing layer is new in v0.7.0 and has had far less field testing than
+> the model tools. Expect rough edges: individual tools may fail on object types or drawing
+> states that have not been exercised yet (Tekla's Drawing API surfaces version-specific
+> remoting/serialization quirks). Preview-by-default still protects your drawings, but keep
+> Ctrl+Z handy and please report failures — `tekla_report_gap` produces a ready-to-file issue.
 
 Drawing tools use Tekla's separate Drawing API and its editor state. Drawing-list queries work
 with the editor open or closed. View/object inspection and content editing require an **active

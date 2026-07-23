@@ -80,7 +80,11 @@ const string serverInstructions =
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +
     "show the user the script and what it will change, get their explicit go-ahead, only then " +
     "rerun with allowMutations=true — and keep changes traceable (MCP_ORIGIN UDA) and " +
-    "reversible (Tekla Ctrl+Z).";
+    "reversible (Tekla Ctrl+Z).\n\n" +
+    "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
+    "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
+    "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
+    "retrying blindly or scripting around it.";
 
 var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)

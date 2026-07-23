@@ -22,6 +22,23 @@ public sealed partial class TeklaModelService
         public int ViewIndex { get; set; }
     }
 
+    private const int DrawingEnumeratorFaultLimit = 64;
+
+    // Some drawing objects cannot be materialized over the Tekla remoting channel:
+    // e.g. enumerating a DetailMark throws SerializationException because
+    // DetailMarkSymbolAttributes is not [Serializable] (observed on Tekla 2023).
+    // MoveNext() faults on such objects; skip them instead of failing the whole
+    // enumeration, and stop if the enumerator keeps faulting without advancing.
+    private static bool SafeMoveNext(IEnumerator enumerator)
+    {
+        for (var faults = 0; faults < DrawingEnumeratorFaultLimit; faults++)
+        {
+            try { return enumerator.MoveNext(); }
+            catch { }
+        }
+        return false;
+    }
+
     private static List<TSD.View> EnumerateViews(
         TSD.Drawing drawing,
         bool recursive = true)
@@ -29,7 +46,7 @@ public sealed partial class TeklaModelService
         var result = new List<TSD.View>();
         var sheet = drawing.GetSheet();
         var enumerator = recursive ? sheet.GetAllViews() : sheet.GetViews();
-        while (enumerator.MoveNext())
+        while (SafeMoveNext(enumerator))
             if (enumerator.Current is TSD.View view)
                 result.Add(view);
         return result;
@@ -120,7 +137,7 @@ public sealed partial class TeklaModelService
         {
             selected = new List<TSD.DrawingObject>();
             var enumerator = handler.GetDrawingObjectSelector().GetSelected();
-            while (enumerator.MoveNext())
+            while (SafeMoveNext(enumerator))
                 if (enumerator.Current != null)
                     selected.Add(enumerator.Current);
         }
@@ -149,7 +166,7 @@ public sealed partial class TeklaModelService
             // children here avoids returning a child-view object once via its parent and again
             // via the child itself.
             var enumerator = view.GetObjects();
-            while (enumerator.MoveNext())
+            while (SafeMoveNext(enumerator))
             {
                 var obj = enumerator.Current;
                 if (obj == null) continue;
@@ -162,7 +179,7 @@ public sealed partial class TeklaModelService
         // GetAllObjects()) avoids walking into the placed views and duplicating their content.
         var sheet = drawing.GetSheet();
         var sheetObjects = sheet.GetObjects();
-        while (sheetObjects.MoveNext())
+        while (SafeMoveNext(sheetObjects))
         {
             var obj = sheetObjects.Current;
             if (obj == null || obj is TSD.ViewBase) continue;

@@ -29,6 +29,11 @@ ID from the current session.
 
 ### Drawing subsystem
 
+The drawing layer is **experimental** (first shipped in v0.7.0): it has had less live-model
+exposure than the model tools, and Tekla's Drawing API carries version-specific
+remoting/serialization quirks (e.g. some drawing objects cannot be materialized over the
+remoting channel and must be skipped during enumeration). Expect bugs to surface in the field.
+
 The Drawing API is a separate version-matched assembly (`Tekla.Structures.Drawing.dll`) but
 runs in the same live `net48` backend and behind the same `ITeklaModelService` boundary. The
 implementation is split across partial-class files to keep concerns reviewable:
