@@ -74,4 +74,19 @@ public class SafeJsonTests
         var json = SafeJson.ToJson(a); // must terminate
         Assert.Contains("cyclic", json);
     }
+
+    [Fact]
+    public void Total_size_truncation_still_returns_valid_json()
+    {
+        var manyLargeStrings = new List<string>();
+        for (var i = 0; i < 100; i++)
+            manyLargeStrings.Add(new string((char)('a' + i % 20), 4_000));
+
+        var json = SafeJson.ToJson(manyLargeStrings);
+        using var parsed = System.Text.Json.JsonDocument.Parse(json);
+
+        Assert.True(parsed.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Contains("Return a smaller", parsed.RootElement.GetProperty("guidance").GetString());
+        Assert.True(json.Length < 64_000);
+    }
 }

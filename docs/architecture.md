@@ -20,6 +20,81 @@ depend only on this interface. Two implementations:
 - `MockTeklaModelService` — synthetic data, cross-platform (`netstandard2.0`).
 - `TeklaModelService` — real Tekla Open API (`net48`, Windows-only).
 
+The service surface stays at backend primitives: queries/geometry, batched part mutations and
+batched connection creation, plus stateful Drawing API query/write batches. High-level
+generators or future detail replication belong in the tool layer and compose those primitives.
+Reference-model objects are an explicit exception to GUID-first addressing: Tekla commonly
+reports an empty GUID for them, so reference geometry is addressed by the integer model-object
+ID from the current session.
+
+### Drawing subsystem
+
+The drawing layer is **experimental** (first shipped in v0.7.0): it has had less live-model
+exposure than the model tools, and Tekla's Drawing API carries version-specific
+remoting/serialization quirks (e.g. some drawing objects cannot be materialized over the
+remoting channel and must be skipped during enumeration). Expect bugs to surface in the field.
+
+The Drawing API is a separate version-matched assembly (`Tekla.Structures.Drawing.dll`) but
+runs in the same live `net48` backend and behind the same `ITeklaModelService` boundary. The
+implementation is split across partial-class files to keep concerns reviewable:
+
+| Layer | Files | Responsibility |
+|---|---|---|
+| DTO/service contract | `DrawingInfo.cs`, `DrawingWriteModels.cs`, `ITeklaModelService.cs` | Flat serializable drawing/view/object queries, specs, and preview results |
+| Mock | `MockTeklaModelService.cs` | Stateful synthetic drawing list, active editor, views, and objects |
+| Live backend | `TeklaDrawingService.cs` | Drawing list, editor lifecycle, create/update/issue/delete/print |
+| Live backend | `TeklaDrawingObjectService.cs` | View/object enumeration, identity, selection, view create/modify |
+| Live backend | `TeklaDrawingContentService.cs` | Graphics, annotations, dimensions, marks, object edit/delete |
+| MCP tools | `DrawingQueryTools.cs`, `DrawingWriteTools.cs`, `DrawingContentTools.cs` | Agent-facing workflows and preview/apply safety |
+
+Drawing state has explicit preconditions:
+
+- list/status/QA queries do not require an open drawing;
+- active-drawing view/object queries and content writes require the drawing editor to be open;
+- drawing creation and AutoDrawing require the editor to be closed;
+- deleting, updating, or printing a drawing requires that target not to be active; update also
+  depends on Tekla numbering;
+- opening never silently replaces an already active drawing, and closing with `save=false`
+  explicitly discards unsaved editor changes.
+
+Persistent drawing mutations use the same `apply=false` preview convention as model writes.
+The live backend batches and caps targets, reports per-item errors, and commits active-drawing
+content through `Drawing.CommitChanges`. `MCP_ORIGIN` is attempted on created/modified drawing
+database objects, but drawing-side UDA availability is environment/object dependent.
+
+#### Drawing identity
+
+Public Drawing API objects do not provide a uniform identifier property. The live backend reads
+an object's own identifier with
+`DrawingInternal.DatabaseObjectExtensions.GetIdentifier` on a best-effort basis.
+`GetViewIdentifier` identifies a drawing object's containing view and is not a placed View's own
+identity:
+
+- a drawing key is `drawing:<ID>:<ID2>` when available;
+- otherwise it is an opaque composite of public type, associated model GUID, sheet number,
+  mark, and name;
+- view/object `ID:ID2` pairs are preferred when non-zero;
+- enumeration indices are deliberately ephemeral and must be refreshed after structural edits.
+
+The internal identifier surface is version-sensitive and not treated as a guaranteed persistent
+external ID. Exact mark lookup is only accepted when unambiguous.
+
+#### Drawing coordinates
+
+Model write inputs remain global model millimetres. Drawing content has three explicit spaces:
+
+| Space | Meaning |
+|---|---|
+| `view` | Target view/display-coordinate-system coordinates (model millimetres before drawing scale) |
+| `model` | Global model coordinates transformed with the target view's `DisplayCoordinateSystem` |
+| `sheet` | Drawing-paper millimetres; target is the sheet (`viewIndex=-1`, no view ID) |
+
+View placement/origin/frame dimensions and dimension-line distances are paper millimetres.
+Section/detail definition points are source-view-local; section depths are model millimetres.
+Read-side object geometry stays in the coordinate system Tekla exposes for that drawing object;
+the API does not silently label it as global. `DrawingViewInfo` therefore returns view/display
+coordinate systems so callers can transform deliberately.
+
 ### Why `netstandard2.0` for Core and Mock
 
 `netstandard2.0` is the common denominator understood by both modern `.NET 8` and
@@ -71,7 +146,8 @@ the simplest choice for a local tool running beside Tekla.
 ```
 Client → JSON-RPC (stdin) → MCP SDK → tool method [tekla_*]
        → ITeklaModelService (Mock | Tekla)
-       → (Windows) Tekla Open API → open model
+       → (Windows) Tekla Model API → open model
+                         Drawing API → drawing list / active editor
        → DTO (TeklaMcp.Core.Models.*) → JSON → (stdout) → client
 ```
 

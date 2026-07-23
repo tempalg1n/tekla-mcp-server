@@ -19,18 +19,62 @@ public static class ApiReference
     public const string DirEnvVar = "TEKLA_MCP_API_REF_DIR";
 
     private const string HowToGenerate =
-        "The local API reference is not available. Generate it with tools/TeklaApiDoc " +
-        "(see tools/TeklaApiDoc/README.md) into reference/tekla-api, or set " + DirEnvVar +
-        " to an existing generated folder. Without it you can still write scripts — " +
-        "compilation errors will point out wrong signatures.";
+        "The local API reference is not available. From a source checkout, generate Model + " +
+        "Drawing docs with tools/TeklaApiDoc (see tools/TeklaApiDoc/README.md) into " +
+        "reference/tekla-api. For a release install, generate/download that folder separately " +
+        "and set " + DirEnvVar + " to it. Without it, tekla_check_csharp still reports compiler errors.";
 
     private const int MaxLinesPerType = 8;
+
+    public static ApiReferenceStatus GetStatus()
+    {
+        var dir = FindDirectory();
+        var result = new ApiReferenceStatus
+        {
+            Available = dir != null,
+            Directory = dir ?? "",
+        };
+        if (dir == null)
+        {
+            result.Guidance = HowToGenerate;
+            return result;
+        }
+
+        try
+        {
+            var names = Directory.EnumerateFiles(dir, "*.md")
+                .Select(Path.GetFileNameWithoutExtension)
+                .Where(name => !string.IsNullOrWhiteSpace(name) &&
+                               !string.Equals(name, "INDEX", StringComparison.OrdinalIgnoreCase))
+                .Select(name => name!)
+                .ToList();
+            result.TypeCount = names.Count;
+            AddModule(result, names, "Tekla.Structures.Model.", "Model");
+            AddModule(result, names, "Tekla.Structures.Drawing.", "Drawing");
+            AddModule(result, names, "Tekla.Structures.Geometry3d.", "Geometry3d");
+            if (!result.Modules.Contains("Model"))
+                result.Warnings.Add("Model API pages are missing.");
+            if (!result.Modules.Contains("Drawing"))
+                result.Warnings.Add(
+                    "Drawing API pages are missing; regenerate with Tekla.Structures.Drawing.dll.");
+            result.Guidance = result.Warnings.Count == 0
+                ? "Offline Tekla API reference is ready (Model + Drawing coverage detected)."
+                : "Reference is usable but incomplete: " + string.Join(" ", result.Warnings);
+        }
+        catch (Exception ex)
+        {
+            result.Available = false;
+            result.Warnings.Add("Reference directory could not be inspected: " + ex.Message);
+            result.Guidance = HowToGenerate;
+        }
+        return result;
+    }
 
     /// <summary>Locate the reference folder: env var first, then walking up from the app/current dir.</summary>
     public static string? FindDirectory()
     {
         var env = Environment.GetEnvironmentVariable(DirEnvVar);
-        if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env))
+        if (!string.IsNullOrWhiteSpace(env) && HasMarkdownFiles(env))
             return env;
 
         foreach (var start in new[] { AppContext.BaseDirectory, SafeCurrentDirectory() })
@@ -39,7 +83,7 @@ public static class ApiReference
             for (var i = 0; i < 8 && !string.IsNullOrEmpty(dir); i++)
             {
                 var candidate = Path.Combine(dir, "reference", "tekla-api");
-                if (Directory.Exists(candidate) && Directory.EnumerateFiles(candidate, "*.md").Any())
+                if (HasMarkdownFiles(candidate))
                     return candidate;
                 dir = Path.GetDirectoryName(dir);
             }
@@ -73,7 +117,15 @@ public static class ApiReference
         // Score every type file: strong signal when all tokens appear in the type name,
         // otherwise match member signature lines (all tokens on one line, case-insensitive).
         var hits = new List<(ApiSearchHit Hit, int Score)>();
-        foreach (var file in Directory.EnumerateFiles(dir, "*.md"))
+        IEnumerable<string> searchFiles;
+        try { searchFiles = Directory.EnumerateFiles(dir, "*.md").ToList(); }
+        catch (Exception ex)
+        {
+            result.ReferenceAvailable = false;
+            result.Guidance = "Reference directory could not be read: " + ex.Message + ". " + HowToGenerate;
+            return result;
+        }
+        foreach (var file in searchFiles)
         {
             var typeName = Path.GetFileNameWithoutExtension(file);
             if (typeName.Equals("INDEX", StringComparison.OrdinalIgnoreCase))
@@ -124,15 +176,45 @@ public static class ApiReference
             return result;
         }
 
-        var files = Directory.EnumerateFiles(dir, "*.md")
-            .Where(f => !Path.GetFileNameWithoutExtension(f).Equals("INDEX", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        List<string> files;
+        try
+        {
+            files = Directory.EnumerateFiles(dir, "*.md")
+                .Where(f => !Path.GetFileNameWithoutExtension(f).Equals(
+                    "INDEX", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            result.Guidance = "Reference directory could not be read: " + ex.Message + ". " + HowToGenerate;
+            return result;
+        }
 
         // Exact full name, then exact short name (suffix), then substring — all case-insensitive.
         var trimmed = typeName!.Trim();
-        var file =
-            files.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).Equals(trimmed, StringComparison.OrdinalIgnoreCase))
-            ?? files.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f).EndsWith("." + trimmed, StringComparison.OrdinalIgnoreCase));
+        var file = files.FirstOrDefault(f =>
+            Path.GetFileNameWithoutExtension(f).Equals(trimmed, StringComparison.OrdinalIgnoreCase));
+        if (file == null)
+        {
+            var exactShortMatches = files.Where(f =>
+                    Path.GetFileNameWithoutExtension(f).EndsWith(
+                        "." + trimmed, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (exactShortMatches.Count > 1)
+            {
+                result.Suggestions = exactShortMatches
+                    .Select(Path.GetFileNameWithoutExtension)
+                    .Where(name => name != null)
+                    .Select(name => name!)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .Take(20)
+                    .ToList();
+                result.Guidance =
+                    "Short type name is ambiguous. Pass one fully-qualified name from Suggestions.";
+                return result;
+            }
+            file = exactShortMatches.SingleOrDefault();
+        }
 
         if (file == null)
         {
@@ -151,7 +233,14 @@ public static class ApiReference
 
         result.Found = true;
         result.TypeName = Path.GetFileNameWithoutExtension(file);
-        var text = File.ReadAllText(file);
+        string text;
+        try { text = File.ReadAllText(file); }
+        catch (Exception ex)
+        {
+            result.Found = false;
+            result.Guidance = "The matched reference page could not be read: " + ex.Message;
+            return result;
+        }
         maxChars = Math.Min(Math.Max(maxChars, 1_000), 100_000);
         if (text.Length > maxChars)
         {
@@ -192,5 +281,22 @@ public static class ApiReference
     {
         try { return Directory.GetCurrentDirectory(); }
         catch { return AppContext.BaseDirectory; }
+    }
+
+    private static bool HasMarkdownFiles(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory)) return false;
+        try { return Directory.EnumerateFiles(directory, "*.md").Any(); }
+        catch { return false; }
+    }
+
+    private static void AddModule(
+        ApiReferenceStatus result,
+        IEnumerable<string> names,
+        string prefix,
+        string module)
+    {
+        if (names.Any(name => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            result.Modules.Add(module);
     }
 }

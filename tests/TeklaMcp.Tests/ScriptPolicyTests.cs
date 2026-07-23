@@ -27,6 +27,8 @@ public class ScriptPolicyTests
     [InlineData("Environment.Exit(1);")]
     [InlineData("var c = new HttpClient();")]
     [InlineData("typeof(int).Assembly.GetTypes();")]
+    [InlineData("Type.GetType(\"System.Console\").GetMethod(\"WriteLine\").Invoke(null, null);")]
+    [InlineData("dynamic value = GetSomething();")]
     [InlineData("Console.WriteLine(\"breaks the MCP protocol\");")]
     [InlineData("var t = new Thread(() => {});")]
     public void Bans_dangerous_identifiers(string code)
@@ -65,6 +67,16 @@ public class ScriptPolicyTests
     }
 
     [Fact]
+    public void Allows_tekla_assembly_and_task_type_names()
+    {
+        Assert.Empty(ScriptPolicy.Validate(
+            "var a = new Tekla.Structures.Model.Assembly();\n" +
+            "var t = new Tekla.Structures.Model.Task();\n" +
+            "new { a, t }",
+            allowMutations: false));
+    }
+
+    [Fact]
     public void Bans_mutations_by_default_with_actionable_message()
     {
         var violations = ScriptPolicy.Validate("var b = new Beam(); b.Insert();", allowMutations: false);
@@ -80,6 +92,60 @@ public class ScriptPolicyTests
     {
         Assert.Empty(ScriptPolicy.Validate(
             "var b = new Beam(); b.Insert(); new Model().CommitChanges();", allowMutations: true));
+    }
+
+    [Fact]
+    public void Reports_mutating_members_even_when_allowed()
+    {
+        var analysis = ScriptPolicy.Analyze(
+            "var b = new Beam(); b.Insert(); new Model().CommitChanges();",
+            allowMutations: true);
+
+        Assert.Empty(analysis.Violations);
+        Assert.Equal(new[] { "CommitChanges", "Insert" }, analysis.MutatingMembers);
+    }
+
+    [Theory]
+    [InlineData("new DrawingHandler().SaveActiveDrawing();", "SaveActiveDrawing")]
+    [InlineData("new DrawingHandler().IssueDrawing(drawing);", "IssueDrawing")]
+    [InlineData("handler.CreateDimensionSet(view, points, vector, 10.0);", "CreateDimensionSet")]
+    [InlineData("hideable.HideFromDrawing();", "HideFromDrawing")]
+    [InlineData("task.AddObjectsToTask(ids);", "AddObjectsToTask")]
+    [InlineData("obj.SetUserProperties(strings, doubles, ints);", "SetUserProperties")]
+    [InlineData("new ModelHandler().Save(\"\", \"\");", "Save")]
+    [InlineData("ModelObjectEnumerator.AutoFetch = false;", "AutoFetch")]
+    [InlineData("mark.MergeMarks(other);", "MergeMarks")]
+    [InlineData("drawingObject.Scale(2.0);", "Scale")]
+    public void Detects_drawing_and_model_mutations(string code, string expectedMember)
+    {
+        var analysis = ScriptPolicy.Analyze(code, allowMutations: false);
+
+        Assert.Contains(expectedMember, analysis.MutatingMembers);
+        Assert.Contains(analysis.Violations, v => v.Contains(expectedMember));
+    }
+
+    [Fact]
+    public void Drawing_namespace_is_not_a_global_import()
+    {
+        Assert.DoesNotContain("Tekla.Structures.Drawing", ScriptEngine.DefaultImports);
+    }
+
+    [Fact]
+    public void Does_not_treat_property_reads_as_mutations()
+    {
+        Assert.Empty(ScriptPolicy.Validate(
+            "var scale = view.Attributes.Scale;\n" +
+            "var autoFetch = ModelObjectEnumerator.AutoFetch;\n" +
+            "new { scale, autoFetch }",
+            allowMutations: false));
+    }
+
+    [Fact]
+    public void Code_hash_is_stable_sha256()
+    {
+        Assert.Equal(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            ScriptEngine.ComputeCodeSha256("abc"));
     }
 
     [Fact]

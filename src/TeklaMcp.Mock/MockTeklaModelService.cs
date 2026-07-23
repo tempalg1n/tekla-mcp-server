@@ -34,13 +34,47 @@ public sealed class MockTeklaModelService : ITeklaModelService
     private readonly List<ModelObjectInfo> _objects = BuildSampleModel();
     private readonly Dictionary<string, Dictionary<string, string>> _udasByGuid =
         new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+    private readonly List<ComponentInfo> _components = new List<ComponentInfo>();
+    private readonly List<DrawingInfo> _drawings = BuildSampleDrawings();
+    private readonly Dictionary<string, List<DrawingViewInfo>> _drawingViewsByDrawing =
+        new Dictionary<string, List<DrawingViewInfo>>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<DrawingObjectInfo>> _drawingObjectsByDrawing =
+        new Dictionary<string, List<DrawingObjectInfo>>(StringComparer.OrdinalIgnoreCase);
     private List<ModelObjectInfo> _selectedObjects;
+    private string? _activeDrawingKey;
     private int _nextId = 100000;
 
     public MockTeklaModelService()
     {
         _selectedObjects = _objects.Take(3).ToList();
+        _activeDrawingKey = _drawings.FirstOrDefault()?.Key;
+        foreach (var drawing in _drawings)
+        {
+            _drawingViewsByDrawing[drawing.Key] = new List<DrawingViewInfo>();
+            _drawingObjectsByDrawing[drawing.Key] = new List<DrawingObjectInfo>();
+        }
+        if (!string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            _drawingViewsByDrawing[_activeDrawingKey!] = BuildSampleDrawingViews();
+            _drawingObjectsByDrawing[_activeDrawingKey!] = BuildSampleDrawingObjects();
+        }
         SeedUdas();
+        if (_objects.Count >= 2)
+        {
+            _components.Add(new ComponentInfo
+            {
+                Guid = "cccccccc-0000-0000-0000-000000000001",
+                Id = 80001,
+                Type = "Connection",
+                Name = "Mock end plate",
+                Number = -1,
+                PrimaryGuid = _objects[0].Guid,
+                SecondaryGuids = new List<string> { _objects[1].Guid },
+                UpVector = new Point3D(0, 0, 1),
+                AutoDirection = "AUTODIR_NA",
+                Status = "OK",
+            });
+        }
     }
 
     public ConnectionInfo GetConnectionInfo() => new()
@@ -153,6 +187,93 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     /// <summary>Pretend the user has selected objects in the UI.</summary>
     public IReadOnlyList<ModelObjectInfo> GetSelectedObjects() => _selectedObjects;
+
+    public IReadOnlyList<ReferenceGeometryInfo> GetReferenceGeometry(
+        IReadOnlyList<int> ids,
+        bool useSelection = false,
+        int maxObjects = 20,
+        int maxFacesPerObject = 100,
+        int maxTotalFaces = 1000,
+        int maxTotalPoints = 20000,
+        IReadOnlyList<string>? externalGuids = null)
+    {
+        var requested = ids ?? new List<int>();
+        if (externalGuids != null && externalGuids.Count > 0)
+            // The mock knows exactly one IFC window; resolve its canonical GUID, reject others.
+            requested = externalGuids
+                .Select((g, i) => string.Equals(g, "2X_m0ckWindowGuid", StringComparison.Ordinal) ? 901 + i : -1)
+                .Where(id => id > 0)
+                .ToList();
+        else if (useSelection)
+            requested = _selectedObjects
+                .Where(o => Eq(o.Type, "ReferenceModelObject"))
+                .Select(o => o.Id)
+                .ToList();
+
+        var rows = new List<ReferenceGeometryInfo>();
+        var facesLeft = Math.Max(0, maxTotalFaces);
+        var pointsLeft = Math.Max(0, maxTotalPoints);
+        foreach (var id in requested.Distinct().Take(Math.Max(0, Math.Min(maxObjects, 100))))
+        {
+            var includeFace =
+                maxFacesPerObject > 0 && facesLeft > 0 && pointsLeft >= 4;
+            var row = new ReferenceGeometryInfo
+            {
+                Id = id,
+                Guid = "",
+                ExternalGuid = "2X_m0ckWindowGuid",
+                Entity = "IFCWINDOW",
+                Name = "Mock window",
+                ObjectType = "Window",
+                ReferenceModelTitle = "Mock architectural IFC",
+                ReferenceModelFile = "mock-architecture.ifc",
+                OverallWidth = 1200,
+                OverallHeight = 1500,
+                MinX = 5400,
+                MinY = 0,
+                MinZ = 900,
+                MaxX = 6600,
+                MaxY = 200,
+                MaxZ = 2400,
+                AabbSource = "tekla-faces",
+                PlacementOrigin = new Point3D(5400, 0, 900),
+                PlacementXAxis = new Point3D(1, 0, 0),
+                PlacementYAxis = new Point3D(0, 1, 0),
+                PlacementZAxis = new Point3D(0, 0, 1),
+                PlacementSource = "ifc-file",
+                Truncated = maxFacesPerObject > 0 && !includeFace,
+                Faces = includeFace
+                    ? new List<ReferenceFaceInfo>
+                    {
+                        new ReferenceFaceInfo
+                        {
+                            Points = new List<Point3D>
+                            {
+                                new Point3D(5400, 0, 900),
+                                new Point3D(6600, 0, 900),
+                                new Point3D(6600, 0, 2400),
+                                new Point3D(5400, 0, 2400),
+                            },
+                        },
+                    }
+                    : new List<ReferenceFaceInfo>(),
+                Attributes = new Dictionary<string, string>
+                {
+                    ["GlobalId"] = "2X_m0ckWindowGuid",
+                    ["Entity"] = "IFCWINDOW",
+                    ["OverallWidth"] = "1200",
+                    ["OverallHeight"] = "1500",
+                },
+            };
+            if (includeFace)
+            {
+                facesLeft--;
+                pointsLeft -= 4;
+            }
+            rows.Add(row);
+        }
+        return rows;
+    }
 
     public SelectionResult SelectObjects(ObjectQuery query, int? limit = null)
     {
@@ -390,8 +511,8 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
         foreach (var spec in specs)
         {
-            var guid = Guid.NewGuid().ToString();
-            var info = MakeInfoFromSpec(spec, guid, _nextId++);
+            var guid = apply ? Guid.NewGuid().ToString() : "(preview)";
+            var info = MakeInfoFromSpec(spec, guid, apply ? _nextId++ : 0);
             result.PlannedCount++;
             if (result.Preview.Count < 20) result.Preview.Add(info);
 
@@ -425,12 +546,78 @@ public sealed class MockTeklaModelService : ITeklaModelService
             if (mod.Material != null) obj.Material = mod.Material;
             if (mod.Class != null) obj.Class = mod.Class;
             if (mod.Name != null) obj.Name = mod.Name;
+            var position = ResolveMockPosition(mod.MatchPositionGuid, mod.Position, obj.Position);
+            if (position != null) obj.Position = position;
             if (mod.SwapHandles) SwapEnds(obj);
             if (mod.NewStart != null) { obj.StartX = mod.NewStart.X; obj.StartY = mod.NewStart.Y; obj.StartZ = mod.NewStart.Z; }
             if (mod.NewEnd != null) { obj.EndX = mod.NewEnd.X; obj.EndY = mod.NewEnd.Y; obj.EndZ = mod.NewEnd.Z; }
             Recenter(obj);
             StampOrigin(obj.Guid, "mcp:modify");
             result.ModifiedCount++;
+        }
+        return result;
+    }
+
+    public IReadOnlyList<ComponentInfo> GetConnections(string partGuid) =>
+        _components
+            .Where(c => Eq(c.PrimaryGuid, partGuid) ||
+                        c.SecondaryGuids.Any(g => Eq(g, partGuid)))
+            .ToList();
+
+    public WriteResult CreateConnections(IReadOnlyList<ConnectionSpec> specs, bool apply)
+    {
+        var result = new WriteResult
+        {
+            Operation = "create_connections",
+            Applied = apply,
+            Backend = BackendName,
+        };
+        if (specs == null || specs.Count == 0)
+        {
+            result.Message = "No connection specs provided.";
+            return result;
+        }
+
+        foreach (var spec in specs)
+        {
+            result.PlannedCount++;
+            var primary = GetObjectByGuid(spec.PrimaryGuid);
+            var secondaries = spec.SecondaryGuids
+                .Select(GetObjectByGuid)
+                .Where(o => o != null)
+                .ToList();
+            if (primary == null)
+            {
+                result.Errors.Add("Primary not found: " + spec.PrimaryGuid);
+                continue;
+            }
+            if (secondaries.Count != spec.SecondaryGuids.Count)
+            {
+                result.Errors.Add("One or more secondary objects were not found.");
+                continue;
+            }
+            var id = apply ? _nextId++ : 0;
+            var guid = apply ? Guid.NewGuid().ToString() : "(preview)";
+            var component = new ComponentInfo
+            {
+                Guid = guid,
+                Id = id,
+                Type = "Connection",
+                Name = spec.Name ?? "",
+                Number = spec.Number,
+                PrimaryGuid = spec.PrimaryGuid,
+                SecondaryGuids = spec.SecondaryGuids.ToList(),
+                UpVector = spec.UpVector,
+                AutoDirection = spec.AutoDirection ?? "NA",
+                Status = "OK",
+            };
+            if (result.ComponentPreview.Count < 20) result.ComponentPreview.Add(component);
+            if (!apply) continue;
+
+            _components.Add(component);
+            result.CreatedCount++;
+            result.CreatedGuids.Add(guid);
+            result.CreatedIds.Add(id);
         }
         return result;
     }
@@ -459,15 +646,769 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     // -- Script escape hatch --------------------------------------------------------------
 
-    public ScriptResult ExecuteScript(string code, bool allowMutations = false, int timeoutSeconds = 60)
+    // ---------------------------------------------------------------- drawings ----
+
+    public DrawingStatusInfo GetDrawingStatus()
+    {
+        var active = _drawings.FirstOrDefault(d =>
+            string.Equals(d.Key, _activeDrawingKey, StringComparison.OrdinalIgnoreCase));
+        foreach (var drawing in _drawings)
+            drawing.IsActive = ReferenceEquals(drawing, active);
+        return new DrawingStatusInfo
+        {
+            Connected = true,
+            AnyDrawingOpen = active != null,
+            ActiveDrawing = active,
+            Backend = BackendName,
+            Message = "Synthetic drawing data — no Tekla involved.",
+        };
+    }
+
+    public IReadOnlyList<DrawingInfo> FindDrawings(DrawingQuery query, int? limit = null)
+    {
+        query = query ?? new DrawingQuery();
+        IEnumerable<DrawingInfo> rows = _drawings;
+        if (query.SelectedOnly) rows = rows.Take(Math.Min(2, _drawings.Count));
+        if (query.KeyIn != null && query.KeyIn.Count > 0)
+        {
+            var keys = new HashSet<string>(query.KeyIn, StringComparer.OrdinalIgnoreCase);
+            rows = rows.Where(d => keys.Contains(d.Key));
+        }
+        if (!string.IsNullOrWhiteSpace(query.Type))
+            rows = rows.Where(d => DrawingTypeMatches(d.Type, query.Type!));
+        if (!string.IsNullOrWhiteSpace(query.MarkContains))
+            rows = rows.Where(d => Contains(d.Mark, query.MarkContains));
+        if (!string.IsNullOrWhiteSpace(query.NameContains))
+            rows = rows.Where(d => Contains(d.Name, query.NameContains));
+        if (!string.IsNullOrWhiteSpace(query.TitleContains))
+            rows = rows.Where(d => Contains(d.Title1 + "\n" + d.Title2 + "\n" + d.Title3, query.TitleContains));
+        if (!string.IsNullOrWhiteSpace(query.AssociatedModelGuid))
+            rows = rows.Where(d => Eq(d.AssociatedModelGuid, query.AssociatedModelGuid));
+        if (!string.IsNullOrWhiteSpace(query.UpToDateStatusContains))
+            rows = rows.Where(d => Contains(d.UpToDateStatus, query.UpToDateStatusContains));
+        if (query.IsIssued.HasValue) rows = rows.Where(d => d.IsIssued == query.IsIssued.Value);
+        if (query.IsLocked.HasValue) rows = rows.Where(d => d.IsLocked == query.IsLocked.Value);
+        if (query.IsReadyForIssue.HasValue)
+            rows = rows.Where(d => d.IsReadyForIssue == query.IsReadyForIssue.Value);
+
+        foreach (var drawing in _drawings)
+            drawing.IsActive = string.Equals(drawing.Key, _activeDrawingKey, StringComparison.OrdinalIgnoreCase);
+        return Limit(rows.ToList(), limit);
+    }
+
+    public DrawingModelObjectResult GetDrawingModelObjects(
+        string keyOrMark,
+        int offset = 0,
+        int limit = 500)
+    {
+        var result = new DrawingModelObjectResult
+        {
+            Backend = BackendName,
+            Offset = Math.Max(0, offset),
+        };
+        var drawing = ResolveMockDrawing(keyOrMark);
+        if (drawing == null)
+        {
+            result.Message = "Drawing not found or key/mark is ambiguous.";
+            return result;
+        }
+        List<TeklaIdentifierInfo> identifiers;
+        if (!string.IsNullOrWhiteSpace(drawing.AssociatedModelGuid))
+            identifiers = new List<TeklaIdentifierInfo>
+            {
+                new TeklaIdentifierInfo
+                {
+                    Id = _objects.FirstOrDefault(o => Eq(o.Guid, drawing.AssociatedModelGuid))?.Id ?? 0,
+                    Guid = drawing.AssociatedModelGuid,
+                    Key = (_objects.FirstOrDefault(o =>
+                        Eq(o.Guid, drawing.AssociatedModelGuid))?.Id ?? 0) + ":0",
+                },
+            };
+        else
+            identifiers = _objects.Take(8).Select(o => new TeklaIdentifierInfo
+            {
+                Id = o.Id,
+                Guid = o.Guid,
+                Key = o.Id + ":0",
+            }).ToList();
+        result.TotalCount = identifiers.Count;
+        var cap = Math.Max(0, Math.Min(limit, 5000));
+        result.Items = identifiers.Skip(result.Offset).Take(cap).ToList();
+        result.ReturnedCount = result.Items.Count;
+        result.Truncated = result.Offset + result.ReturnedCount < result.TotalCount;
+        return result;
+    }
+
+    public DrawingSheetInfo GetDrawingSheet()
+    {
+        var active = ResolveMockDrawing(_activeDrawingKey ?? "");
+        if (active == null)
+            return new DrawingSheetInfo
+            {
+                Backend = BackendName,
+                Message = "No active drawing.",
+            };
+
+        return new DrawingSheetInfo
+        {
+            Available = true,
+            DrawingKey = active.Key,
+            Origin = new Point3D(0, 0, 0),
+            FrameOrigin = new Point3D(0, 0, 0),
+            Width = 841,
+            Height = 594,
+            SizeDefinitionMode = "SpecifiedSize",
+            AutoSizeOptions = "CalculatedAndFixedSizes",
+            LayoutSheetWidth = 841,
+            LayoutSheetHeight = 594,
+            Backend = BackendName,
+        };
+    }
+
+    public IReadOnlyList<DrawingViewInfo> GetDrawingViews() =>
+        string.IsNullOrWhiteSpace(_activeDrawingKey)
+            ? new List<DrawingViewInfo>()
+            : GetActiveMockDrawingViews().ToList();
+
+    public IReadOnlyList<DrawingObjectInfo> FindDrawingObjects(
+        DrawingObjectQuery query,
+        int? limit = null)
+    {
+        if (string.IsNullOrWhiteSpace(_activeDrawingKey))
+            return new List<DrawingObjectInfo>();
+
+        query = query ?? new DrawingObjectQuery();
+        var activeObjects = GetActiveMockDrawingObjects();
+        IEnumerable<DrawingObjectInfo> rows = query.UseSelection
+            ? activeObjects.Take(Math.Min(2, activeObjects.Count))
+            : activeObjects;
+        if (query.IndexIn != null && query.IndexIn.Count > 0)
+        {
+            var indices = new HashSet<int>(query.IndexIn);
+            rows = rows.Where(o => indices.Contains(o.Index));
+        }
+        if (query.ObjectIds != null && query.ObjectIds.Count > 0)
+            rows = rows.Where(o => query.ObjectIds.Any(id =>
+                id.Id == o.ObjectId && id.Id2 == o.ObjectId2));
+        if (query.TypeIn != null && query.TypeIn.Count > 0)
+        {
+            var types = new HashSet<string>(query.TypeIn, StringComparer.OrdinalIgnoreCase);
+            rows = rows.Where(o => types.Contains(o.Type));
+        }
+        if (query.ViewIndex.HasValue) rows = rows.Where(o => o.ViewIndex == query.ViewIndex.Value);
+        if (query.ViewId.HasValue)
+            rows = rows.Where(o => o.ViewId == query.ViewId.Value &&
+                                   (!query.ViewId2.HasValue || o.ViewId2 == query.ViewId2.Value));
+        if (!string.IsNullOrWhiteSpace(query.ModelGuid))
+            rows = rows.Where(o => Eq(o.ModelGuid, query.ModelGuid));
+        if (!string.IsNullOrWhiteSpace(query.TextContains))
+            rows = rows.Where(o => Contains(o.Text, query.TextContains));
+        return Limit(rows.ToList(), limit);
+    }
+
+    public DrawingSelectionResult SelectDrawingObjects(DrawingObjectQuery query, int? limit = null)
+    {
+        var selected = FindDrawingObjects(query, limit).ToList();
+        return new DrawingSelectionResult
+        {
+            SelectedCount = selected.Count,
+            Preview = selected.Take(20).ToList(),
+            Backend = BackendName,
+        };
+    }
+
+    public DrawingWriteResult OpenDrawing(string keyOrMark, bool showDrawing, bool apply)
+    {
+        var drawing = ResolveMockDrawing(keyOrMark);
+        var result = NewDrawingResult("open_drawing", apply);
+        if (drawing == null)
+        {
+            result.Message = "Drawing not found or exact mark is ambiguous.";
+            return result;
+        }
+        result.PlannedCount = 1;
+        result.DrawingPreview.Add(drawing);
+        if (!apply) return result;
+        var active = ResolveMockDrawing(_activeDrawingKey ?? "");
+        if (active != null && !Eq(active.Key, drawing.Key))
+        {
+            result.Message =
+                "Another drawing is active. Close it explicitly before opening a different drawing.";
+            return result;
+        }
+        if (active != null)
+        {
+            result.Message = "The requested drawing is already active.";
+            return result;
+        }
+        _activeDrawingKey = drawing.Key;
+        result.ModifiedCount = 1;
+        return result;
+    }
+
+    public DrawingWriteResult CloseActiveDrawing(bool save, bool apply)
+    {
+        var result = NewDrawingResult("close_drawing", apply);
+        var active = ResolveMockDrawing(_activeDrawingKey ?? "");
+        if (active == null)
+        {
+            result.Message = "No active drawing.";
+            return result;
+        }
+        result.PlannedCount = 1;
+        result.DrawingPreview.Add(active);
+        if (apply)
+        {
+            _activeDrawingKey = null;
+            result.ModifiedCount = 1;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult SaveActiveDrawing(bool apply)
+    {
+        var result = NewDrawingResult("save_drawing", apply);
+        var active = ResolveMockDrawing(_activeDrawingKey ?? "");
+        if (active == null)
+        {
+            result.Message = "No active drawing.";
+            return result;
+        }
+        result.PlannedCount = 1;
+        result.DrawingPreview.Add(active);
+        if (apply)
+        {
+            active.ModificationDate = DateTime.UtcNow;
+            result.ModifiedCount = 1;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult CreateDrawings(IReadOnlyList<DrawingSpec> specs, bool apply)
+    {
+        var result = NewDrawingResult("create_drawings", apply);
+        var safe = (specs ?? new List<DrawingSpec>()).Take(200).ToList();
+        result.PlannedCount = safe.Count;
+        var firstDrawingId = _drawings.Select(d => d.DrawingId).DefaultIfEmpty(10000).Max() + 1;
+        for (var i = 0; i < safe.Count; i++)
+        {
+            var spec = safe[i];
+            var index = _drawings.Count + i + 1;
+            var drawingId = firstDrawingId + i;
+            var type = NormalizeDrawingType(spec.Type);
+            var drawing = new DrawingInfo
+            {
+                Key = "drawing:" + drawingId + ":0",
+                DrawingId = drawingId,
+                Type = type,
+                Mark = type == "GeneralArrangementDrawing" ? "G-" + index : "A-" + index,
+                Name = string.IsNullOrWhiteSpace(spec.Name) ? "MCP drawing " + index : spec.Name,
+                AssociatedModelGuid = spec.ModelGuid ?? "",
+                SheetNumber = spec.SheetNumber,
+                UpToDateStatus = "DrawingIsUpToDate",
+                CreationDate = DateTime.UtcNow,
+                ModificationDate = DateTime.UtcNow,
+            };
+            result.DrawingPreview.Add(drawing);
+        }
+        if (!apply) return result;
+        if (!string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            result.Message =
+                "Drawing creation requires the drawing editor to be closed. " +
+                "Close the active drawing explicitly.";
+            return result;
+        }
+        foreach (var drawing in result.DrawingPreview)
+        {
+            _drawings.Add(drawing);
+            _drawingViewsByDrawing[drawing.Key] = new List<DrawingViewInfo>();
+            _drawingObjectsByDrawing[drawing.Key] = new List<DrawingObjectInfo>();
+            result.CreatedCount++;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult CreateDrawingsFromRule(
+        string ruleFile,
+        IReadOnlyList<string> modelGuids,
+        bool apply)
+    {
+        var result = NewDrawingResult("create_drawings_from_rule", apply);
+        var guids = (modelGuids ?? new List<string>()).Take(50).ToList();
+        result.PlannedCount = guids.Count;
+        foreach (var guid in guids)
+            result.DrawingPreview.Add(new DrawingInfo
+            {
+                Key = "(preview)",
+                Type = "AutoDrawingRule",
+                Name = ruleFile ?? "",
+                AssociatedModelGuid = guid,
+            });
+        if (!apply) return result;
+        if (!string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            result.Message =
+                "AutoDrawing creation requires the drawing editor to be closed.";
+            return result;
+        }
+        if (string.IsNullOrWhiteSpace(ruleFile))
+        {
+            result.Message = "ruleFile is required.";
+            return result;
+        }
+        var created = CreateDrawings(guids.Select((guid, i) => new DrawingSpec
+        {
+            Type = "assembly",
+            ModelGuid = guid,
+            Name = "Rule " + ruleFile + " " + (i + 1),
+        }).ToList(), true);
+        result.CreatedCount = created.CreatedCount;
+        result.DrawingPreview = created.DrawingPreview;
+        result.Errors.AddRange(created.Errors);
+        result.Warnings.AddRange(created.Warnings);
+        result.Message = created.Message;
+        return result;
+    }
+
+    public DrawingWriteResult ModifyDrawings(
+        DrawingQuery query,
+        DrawingModification modification,
+        bool apply,
+        int? limit = null)
+    {
+        var result = NewDrawingResult("modify_drawings", apply);
+        modification = modification ?? new DrawingModification();
+        if (modification.Name == null &&
+            modification.Title1 == null &&
+            modification.Title2 == null &&
+            modification.Title3 == null &&
+            !modification.IsFrozen.HasValue &&
+            !modification.IsLocked.HasValue &&
+            !modification.IsMasterDrawing.HasValue &&
+            !modification.IsReadyForIssue.HasValue)
+        {
+            result.Message = "No drawing fields were supplied to modify.";
+            return result;
+        }
+        var targets = FindDrawings(query, limit ?? 200).ToList();
+        result.PlannedCount = targets.Count;
+        result.DrawingPreview.AddRange(targets.Take(20));
+        if (!apply) return result;
+        foreach (var d in targets)
+        {
+            if (modification.Name != null) d.Name = modification.Name;
+            if (modification.Title1 != null) d.Title1 = modification.Title1;
+            if (modification.Title2 != null) d.Title2 = modification.Title2;
+            if (modification.Title3 != null) d.Title3 = modification.Title3;
+            if (modification.IsFrozen.HasValue) d.IsFrozen = modification.IsFrozen.Value;
+            if (modification.IsLocked.HasValue) d.IsLocked = modification.IsLocked.Value;
+            if (modification.IsMasterDrawing.HasValue) d.IsMasterDrawing = modification.IsMasterDrawing.Value;
+            if (modification.IsReadyForIssue.HasValue) d.IsReadyForIssue = modification.IsReadyForIssue.Value;
+            d.ModificationDate = DateTime.UtcNow;
+            result.ModifiedCount++;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult OperateDrawings(
+        DrawingQuery query,
+        string operation,
+        DrawingPrintOptions? printOptions,
+        bool apply,
+        int? limit = null)
+    {
+        var op = (operation ?? "").Trim().ToLowerInvariant();
+        var result = NewDrawingResult(op + "_drawings", apply);
+        var targets = FindDrawings(query, limit ?? 200).ToList();
+        result.PlannedCount = targets.Count;
+        result.DrawingPreview.AddRange(targets.Take(20));
+        if (op == "print")
+        {
+            var options = printOptions ?? new DrawingPrintOptions();
+            if (string.Equals(options.OutputType, "PDF", StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(options.OutputFile))
+            {
+                result.Message =
+                    "PDF export requires an explicit absolute outputFile. Use {mark}/{name} " +
+                    "in a batch template.";
+                return result;
+            }
+            foreach (var drawing in targets)
+            {
+                var path = ResolveMockPrintOutput(drawing, options);
+                if (!string.IsNullOrWhiteSpace(path)) result.OutputFiles.Add(path);
+            }
+            if (result.OutputFiles.Any(path => !System.IO.Path.IsPathRooted(path)))
+            {
+                result.Message = "Every print output path must be absolute.";
+                return result;
+            }
+            if (result.OutputFiles.Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
+                result.OutputFiles.Count)
+            {
+                result.Message =
+                    "The output template resolves multiple drawings to the same file.";
+                return result;
+            }
+            if (!options.Overwrite)
+            {
+                var existing = result.OutputFiles.Where(System.IO.File.Exists).ToList();
+                if (existing.Count > 0)
+                {
+                    result.Message =
+                        "Export was not started because output file(s) already exist and overwrite=false.";
+                    result.Errors.AddRange(existing);
+                    return result;
+                }
+            }
+        }
+        if (!apply) return result;
+        if (op == "print" && !string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            result.Message =
+                "Printing requires the drawing editor to be closed. Save and close it explicitly first.";
+            return result;
+        }
+
+        foreach (var drawing in targets.ToList())
+        {
+            switch (op)
+            {
+                case "delete":
+                    if (Eq(drawing.Key, _activeDrawingKey))
+                    {
+                        result.Errors.Add("Cannot delete active drawing " + drawing.Key + ".");
+                        continue;
+                    }
+                    _drawings.Remove(drawing);
+                    _drawingViewsByDrawing.Remove(drawing.Key);
+                    _drawingObjectsByDrawing.Remove(drawing.Key);
+                    result.DeletedCount++;
+                    break;
+                case "issue":
+                    drawing.IsIssued = true;
+                    drawing.IsIssuedButModified = false;
+                    drawing.IssuingDate = DateTime.UtcNow;
+                    result.ModifiedCount++;
+                    break;
+                case "unissue":
+                    drawing.IsIssued = false;
+                    result.ModifiedCount++;
+                    break;
+                case "update":
+                    if (Eq(drawing.Key, _activeDrawingKey))
+                    {
+                        result.Errors.Add("Cannot update active drawing " + drawing.Key + ".");
+                        continue;
+                    }
+                    drawing.UpToDateStatus = "DrawingIsUpToDate";
+                    drawing.ModificationDate = DateTime.UtcNow;
+                    result.ModifiedCount++;
+                    break;
+                case "place_views":
+                    if (!Eq(drawing.Key, _activeDrawingKey))
+                    {
+                        result.Errors.Add("PlaceViews requires drawing " + drawing.Key + " to be active.");
+                        continue;
+                    }
+                    result.ModifiedCount++;
+                    break;
+                case "print":
+                    var options = printOptions ?? new DrawingPrintOptions();
+                    var output = ResolveMockPrintOutput(drawing, options);
+                    if (!options.Overwrite && !string.IsNullOrWhiteSpace(output) &&
+                        System.IO.File.Exists(output))
+                    {
+                        result.Errors.Add(
+                            "Output file already exists and overwrite=false: " + output);
+                        continue;
+                    }
+                    drawing.OutputDate = DateTime.UtcNow;
+                    result.ModifiedCount++;
+                    break;
+                default:
+                    result.Errors.Add("Unknown drawing operation: " + op + ".");
+                    break;
+            }
+        }
+        return result;
+    }
+
+    public DrawingWriteResult CreateDrawingViews(IReadOnlyList<DrawingViewSpec> specs, bool apply)
+    {
+        var result = NewDrawingResult("create_drawing_views", apply);
+        if (string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            result.Message = "No active drawing.";
+            return result;
+        }
+        var safe = (specs ?? new List<DrawingViewSpec>()).Take(50).ToList();
+        result.PlannedCount = safe.Count;
+        var views = GetActiveMockDrawingViews();
+        var firstViewId = NextMockViewId();
+        var baseViewCount = views.Count;
+        var validSequence = 0;
+        var activeDrawing = ResolveMockDrawing(_activeDrawingKey!);
+        for (var i = 0; i < safe.Count; i++)
+        {
+            var spec = safe[i];
+            var kind = (spec.Type ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+            var activeIsGa = activeDrawing != null &&
+                Eq(activeDrawing.Type, "GeneralArrangementDrawing");
+            if (kind == "ga_model")
+            {
+                if (!activeIsGa)
+                {
+                    result.Errors.Add(
+                        "ga_model views require an active general-arrangement drawing.");
+                    continue;
+                }
+                if (spec.ViewCoordinateSystem == null ||
+                    spec.DisplayCoordinateSystem == null ||
+                    spec.RestrictionMin == null ||
+                    spec.RestrictionMax == null)
+                {
+                    result.Errors.Add(
+                        "ga_model requires view/display coordinate systems and restriction bounds.");
+                    continue;
+                }
+            }
+            else if (activeIsGa &&
+                     (kind == "front" || kind == "top" || kind == "back" ||
+                      kind == "bottom" || kind == "3d" || kind == "_3d"))
+            {
+                result.Errors.Add(
+                    "Front/top/back/bottom/3D helpers do not support GA drawings; use ga_model.");
+                continue;
+            }
+            var view = new DrawingViewInfo
+            {
+                Index = baseViewCount + validSequence,
+                ViewId = firstViewId + validSequence,
+                Type = NormalizeViewType(spec.Type),
+                Name = string.IsNullOrWhiteSpace(spec.Name) ? NormalizeViewType(spec.Type) : spec.Name,
+                Origin = spec.InsertionPoint,
+                FrameOrigin = new Point3D(),
+                Width = 180,
+                Height = 120,
+                Scale = spec.Scale ?? 10,
+                ModelObjectCount = 12,
+            };
+            validSequence++;
+            result.ViewPreview.Add(view);
+            if (!apply) continue;
+            views.Add(view);
+            result.CreatedCount++;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult ModifyDrawingViews(
+        IReadOnlyList<DrawingViewModification> modifications,
+        bool apply)
+    {
+        var result = NewDrawingResult("modify_drawing_views", apply);
+        var views = GetActiveMockDrawingViews();
+        var objects = GetActiveMockDrawingObjects();
+        foreach (var mod in (modifications ?? new List<DrawingViewModification>()).Take(50))
+        {
+            var view = views.FirstOrDefault(v => v.Index == mod.ViewIndex);
+            if (mod.ViewId.HasValue)
+                view = mod.ViewId.Value == 0 &&
+                       (!mod.ViewId2.HasValue || mod.ViewId2.Value == 0)
+                    ? null
+                    : views.FirstOrDefault(v =>
+                    v.ViewId == mod.ViewId.Value &&
+                    (!mod.ViewId2.HasValue || v.ViewId2 == mod.ViewId2.Value));
+            if (view == null)
+            {
+                result.Errors.Add("View index not found: " + mod.ViewIndex + ".");
+                continue;
+            }
+            result.PlannedCount++;
+            result.ViewPreview.Add(view);
+            if (!apply) continue;
+            if (mod.Delete)
+            {
+                views.Remove(view);
+                objects.RemoveAll(obj =>
+                    obj.ViewId == view.ViewId && obj.ViewId2 == view.ViewId2);
+                ReindexMockDrawingViews();
+                ReindexMockDrawingObjects();
+                result.DeletedCount++;
+                continue;
+            }
+            if (mod.Name != null) view.Name = mod.Name;
+            if (mod.Origin != null) view.Origin = mod.Origin;
+            if (mod.Width.HasValue) view.Width = mod.Width.Value;
+            if (mod.Height.HasValue) view.Height = mod.Height.Value;
+            if (mod.Scale.HasValue) view.Scale = mod.Scale.Value;
+            result.ModifiedCount++;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult CreateDrawingObjects(
+        IReadOnlyList<DrawingObjectSpec> specs,
+        bool apply)
+    {
+        var result = NewDrawingResult("create_drawing_objects", apply);
+        if (string.IsNullOrWhiteSpace(_activeDrawingKey))
+        {
+            result.Message = "No active drawing.";
+            return result;
+        }
+        var safe = (specs ?? new List<DrawingObjectSpec>()).Take(200).ToList();
+        result.PlannedCount = safe.Count;
+        var views = GetActiveMockDrawingViews();
+        var objects = GetActiveMockDrawingObjects();
+        var firstObjectId = NextMockDrawingObjectId();
+        var baseObjectCount = objects.Count;
+        var validSequence = 0;
+        foreach (var spec in safe)
+        {
+            var isSheet = spec.ViewIndex == -1 && !spec.ViewId.HasValue;
+            DrawingViewInfo? view = null;
+            if (!isSheet)
+                view = spec.ViewId.HasValue
+                    ? views.FirstOrDefault(v =>
+                        v.ViewId == spec.ViewId.Value &&
+                        (!spec.ViewId2.HasValue || v.ViewId2 == spec.ViewId2.Value))
+                    : views.FirstOrDefault(v => v.Index == spec.ViewIndex);
+            if (!isSheet && view == null)
+            {
+                result.Errors.Add("View index not found: " + spec.ViewIndex + ".");
+                continue;
+            }
+            if (isSheet && !Eq(spec.CoordinateSpace, "sheet"))
+            {
+                result.Errors.Add(
+                    "The sheet target requires coordinateSpace=sheet (paper millimetres).");
+                continue;
+            }
+            if (!isSheet && Eq(spec.CoordinateSpace, "sheet"))
+            {
+                result.Errors.Add("sheet coordinates require viewIndex=-1 (the drawing sheet).");
+                continue;
+            }
+            var info = new DrawingObjectInfo
+            {
+                Index = baseObjectCount + validSequence,
+                ObjectId = firstObjectId + validSequence,
+                ViewIndex = isSheet ? -1 : view!.Index,
+                ViewId = isSheet ? 0 : view!.ViewId,
+                ViewId2 = isSheet ? 0 : view!.ViewId2,
+                ViewName = isSheet ? "(sheet)" : view!.Name,
+                CoordinateSpace = isSheet ? "sheet" : "view",
+                Type = NormalizeDrawingObjectType(spec.Kind),
+                ModelGuid = spec.ModelGuid ?? "",
+                Text = spec.Text ?? "",
+                Points = (spec.Points ?? new List<Point3D>()).ToList(),
+                Radius = spec.Radius,
+                Bulge = spec.Bulge,
+                Udas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["MCP_ORIGIN"] = "mcp:create_drawing_object",
+                },
+            };
+            validSequence++;
+            result.ObjectPreview.Add(info);
+            if (!apply) continue;
+            objects.Add(info);
+            result.CreatedCount++;
+        }
+        return result;
+    }
+
+    public DrawingWriteResult ModifyDrawingObjects(
+        DrawingObjectQuery query,
+        DrawingObjectModification modification,
+        bool apply,
+        int? limit = null)
+    {
+        modification = modification ?? new DrawingObjectModification();
+        var result = NewDrawingResult(
+            modification.Delete ? "delete_drawing_objects" : "modify_drawing_objects", apply);
+        if (!modification.Delete &&
+            modification.Text == null &&
+            modification.MoveBy == null &&
+            string.IsNullOrWhiteSpace(modification.Visibility) &&
+            string.IsNullOrWhiteSpace(modification.AttributeFile))
+        {
+            result.Message = "No drawing-object changes were supplied.";
+            return result;
+        }
+        var objects = GetActiveMockDrawingObjects();
+        var targets = FindDrawingObjects(query, limit ?? 200).ToList();
+        result.PlannedCount = targets.Count;
+        result.ObjectPreview.AddRange(targets.Take(20));
+        if (!apply) return result;
+
+        foreach (var obj in targets.ToList())
+        {
+            if (modification.Delete)
+            {
+                objects.Remove(obj);
+                result.DeletedCount++;
+                continue;
+            }
+            if (modification.Text != null && obj.Type == "Text") obj.Text = modification.Text;
+            if (modification.MoveBy != null)
+            {
+                foreach (var p in obj.Points)
+                {
+                    p.X += modification.MoveBy.X;
+                    p.Y += modification.MoveBy.Y;
+                    p.Z += modification.MoveBy.Z;
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(modification.Visibility))
+                obj.IsHidden = modification.Visibility == "drawing" || modification.Visibility == "view";
+            obj.Udas["MCP_ORIGIN"] = "mcp:modify_drawing_object";
+            result.ModifiedCount++;
+        }
+        ReindexMockDrawingObjects();
+        return result;
+    }
+
+    public DrawingWriteResult OperateDrawingMarks(
+        DrawingObjectQuery query,
+        string operation,
+        bool apply,
+        int? limit = null)
+    {
+        var result = NewDrawingResult((operation ?? "") + "_drawing_marks", apply);
+        var targets = FindDrawingObjects(query, limit ?? 200)
+            .Where(o => o.Type == "Mark" || o.Type == "MarkBase" || o.Type == "MarkSet")
+            .ToList();
+        result.PlannedCount = targets.Count;
+        result.ObjectPreview.AddRange(targets.Take(20));
+        if (apply) result.ModifiedCount = targets.Count;
+        return result;
+    }
+
+    // ---------------------------------------------------------------- scripts ----
+
+    public ScriptResult ExecuteScript(
+        string code,
+        bool allowMutations = false,
+        int timeoutSeconds = 60,
+        bool compileOnly = false)
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var result = new ScriptResult { Backend = BackendName, Stage = "policy" };
-
-        var violations = Scripting.ScriptPolicy.Validate(code, allowMutations);
-        if (violations.Count > 0)
+        var result = new ScriptResult
         {
-            result.PolicyViolations.AddRange(violations);
+            Backend = BackendName,
+            Stage = "policy",
+            CodeSha256 = Scripting.ScriptEngine.ComputeCodeSha256(code),
+        };
+
+        var policy = Scripting.ScriptPolicy.Analyze(code, allowMutations);
+        result.DetectedMutatingMembers.AddRange(policy.MutatingMembers);
+        if (policy.Violations.Count > 0)
+        {
+            result.PolicyViolations.AddRange(policy.Violations);
             result.Guidance = "Fix the policy violations and retry.";
             result.DurationMs = watch.ElapsedMilliseconds;
             return result;
@@ -475,10 +1416,13 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
         // Compile-only validation: possible on any OS when the Tekla DLLs are available
         // (e.g. extracted from the NuGet packages — see tools/TeklaApiDoc/README.md).
-        result.Stage = "compile";
+        var compilationSkipped = true;
         var dllDir = Environment.GetEnvironmentVariable("TEKLA_MCP_SCRIPT_REF_DIR");
         if (!string.IsNullOrWhiteSpace(dllDir) && System.IO.Directory.Exists(dllDir))
         {
+            compilationSkipped = false;
+            result.Stage = "compile";
+            result.CompilationAttempted = true;
             var dlls = System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll");
             var script = Scripting.ScriptEngine.Create(
                 code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: dlls));
@@ -489,6 +1433,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 result.DurationMs = watch.ElapsedMilliseconds;
                 return result;
             }
+            result.Compiled = true;
         }
         else
         {
@@ -496,12 +1441,154 @@ public sealed class MockTeklaModelService : ITeklaModelService
                               "TEKLA_MCP_SCRIPT_REF_DIR to a folder with Tekla.Structures*.dll to enable it). ";
         }
 
-        result.Success = true;
+        result.Success = !compileOnly || result.Compiled;
         result.Guidance = (result.Guidance ?? "") +
-                          "Mock backend: the script was validated but NOT executed — execution requires " +
-                          "the real Tekla backend on Windows. Do not fabricate results from this run.";
+                          (compileOnly
+                              ? compilationSkipped
+                                  ? "Compile-only policy check completed, but the source was NOT compiled. "
+                                  : "Compile-only validation succeeded; the source was NOT executed. "
+                              : "Mock backend: the script was validated but NOT executed — execution requires " +
+                                "the real Tekla backend on Windows. Do not fabricate results from this run.");
         result.DurationMs = watch.ElapsedMilliseconds;
         return result;
+    }
+
+    private DrawingInfo? ResolveMockDrawing(string keyOrMark)
+    {
+        if (string.IsNullOrWhiteSpace(keyOrMark)) return null;
+        var byKey = _drawings.Where(d => Eq(d.Key, keyOrMark)).Take(2).ToList();
+        if (byKey.Count > 0) return byKey.Count == 1 ? byKey[0] : null;
+        var byMark = _drawings.Where(d => Eq(d.Mark, keyOrMark)).Take(2).ToList();
+        return byMark.Count == 1 ? byMark[0] : null;
+    }
+
+    private List<DrawingViewInfo> GetActiveMockDrawingViews()
+    {
+        if (string.IsNullOrWhiteSpace(_activeDrawingKey))
+            return new List<DrawingViewInfo>();
+        if (!_drawingViewsByDrawing.TryGetValue(_activeDrawingKey!, out var views))
+        {
+            views = new List<DrawingViewInfo>();
+            _drawingViewsByDrawing[_activeDrawingKey!] = views;
+        }
+        return views;
+    }
+
+    private List<DrawingObjectInfo> GetActiveMockDrawingObjects()
+    {
+        if (string.IsNullOrWhiteSpace(_activeDrawingKey))
+            return new List<DrawingObjectInfo>();
+        if (!_drawingObjectsByDrawing.TryGetValue(_activeDrawingKey!, out var objects))
+        {
+            objects = new List<DrawingObjectInfo>();
+            _drawingObjectsByDrawing[_activeDrawingKey!] = objects;
+        }
+        return objects;
+    }
+
+    private int NextMockViewId() =>
+        _drawingViewsByDrawing.Values.SelectMany(rows => rows)
+            .Select(view => view.ViewId).DefaultIfEmpty(11000).Max() + 1;
+
+    private int NextMockDrawingObjectId() =>
+        _drawingObjectsByDrawing.Values.SelectMany(rows => rows)
+            .Select(obj => obj.ObjectId).DefaultIfEmpty(12000).Max() + 1;
+
+    private static string ResolveMockPrintOutput(
+        DrawingInfo drawing,
+        DrawingPrintOptions options)
+    {
+        var template = options.OutputFile ?? "";
+        if (string.IsNullOrWhiteSpace(template)) return drawing.PlotFileName ?? "";
+        return template
+            .Replace("{mark}", SafeMockFileToken(drawing.Mark))
+            .Replace("{name}", SafeMockFileToken(drawing.Name));
+    }
+
+    private static string SafeMockFileToken(string? value)
+    {
+        var invalid = System.IO.Path.GetInvalidFileNameChars();
+        return new string((value ?? "").Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+    }
+
+    private static DrawingWriteResult NewDrawingResult(string operation, bool apply) =>
+        new DrawingWriteResult { Operation = operation, Applied = apply, Backend = BackendName };
+
+    private static bool DrawingTypeMatches(string actual, string requested) =>
+        Eq(actual, NormalizeDrawingType(requested));
+
+    private static string NormalizeDrawingType(string? raw)
+    {
+        switch ((raw ?? "").Trim().Replace("-", "_").ToLowerInvariant())
+        {
+            case "assembly":
+            case "assemblydrawing": return "AssemblyDrawing";
+            case "single":
+            case "single_part":
+            case "singlepartdrawing": return "SinglePartDrawing";
+            case "cast":
+            case "cast_unit":
+            case "castunitdrawing": return "CastUnitDrawing";
+            case "ga":
+            case "general_arrangement":
+            case "gadrawing":
+            case "generalarrangementdrawing": return "GeneralArrangementDrawing";
+            default: return raw ?? "";
+        }
+    }
+
+    private static string NormalizeViewType(string? raw)
+    {
+        switch ((raw ?? "").Trim().ToLowerInvariant())
+        {
+            case "front": return "FrontView";
+            case "top": return "TopView";
+            case "back": return "BackView";
+            case "bottom": return "BottomView";
+            case "3d":
+            case "_3d": return "3DView";
+            case "ga_model": return "GeneralArrangementView";
+            case "section": return "SectionView";
+            case "curved_section": return "CurvedSectionView";
+            case "detail": return "DetailView";
+            default: return raw ?? "";
+        }
+    }
+
+    private static string NormalizeDrawingObjectType(string? raw)
+    {
+        var value = (raw ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        switch (value)
+        {
+            case "straight_dimension":
+            case "dimension": return "StraightDimensionSet";
+            case "angle_dimension": return "AngleDimension";
+            case "radius_dimension": return "RadiusDimension";
+            case "curved_radial": return "CurvedDimensionSetRadial";
+            case "curved_orthogonal": return "CurvedDimensionSetOrthogonal";
+            case "level_mark": return "LevelMark";
+        }
+        if (value.Length == 0) return "";
+        return char.ToUpperInvariant(value[0]) + value.Substring(1).ToLowerInvariant();
+    }
+
+    private void ReindexMockDrawingObjects()
+    {
+        var objects = GetActiveMockDrawingObjects();
+        for (var i = 0; i < objects.Count; i++) objects[i].Index = i;
+    }
+
+    private void ReindexMockDrawingViews()
+    {
+        var views = GetActiveMockDrawingViews();
+        var objects = GetActiveMockDrawingObjects();
+        for (var i = 0; i < views.Count; i++)
+        {
+            views[i].Index = i;
+            foreach (var obj in objects.Where(item =>
+                         item.ViewId == views[i].ViewId && item.ViewId2 == views[i].ViewId2))
+                obj.ViewIndex = i;
+        }
     }
 
     private void StampOrigin(string guid, string value)
@@ -528,7 +1615,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (o.StartZ.HasValue && o.EndZ.HasValue) o.CenterZ = (o.StartZ + o.EndZ) / 2.0;
     }
 
-    private static ModelObjectInfo MakeInfoFromSpec(PartSpec spec, string guid, int id)
+    private ModelObjectInfo MakeInfoFromSpec(PartSpec spec, string guid, int id)
     {
         var kind = (spec.Kind ?? "beam").Trim().ToLowerInvariant();
         var info = new ModelObjectInfo
@@ -541,6 +1628,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
             Profile = spec.Profile ?? "",
             Material = spec.Material ?? "",
             Finish = "PAINT",
+            Position = ResolveMockPosition(spec.MatchPositionGuid, spec.Position),
         };
 
         if (spec.Start != null && spec.End != null)
@@ -565,6 +1653,30 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
         return info;
     }
+
+    private PartPosition? ResolveMockPosition(
+        string? matchGuid,
+        PartPosition? explicitPosition,
+        PartPosition? current = null)
+    {
+        PartPosition? basis = current;
+        if (!string.IsNullOrWhiteSpace(matchGuid))
+            basis = GetObjectByGuid(matchGuid!)?.Position;
+
+        if (basis == null && explicitPosition == null) return null;
+        return MergePosition(basis, explicitPosition);
+    }
+
+    private static PartPosition MergePosition(PartPosition? basis, PartPosition? overlay) =>
+        new PartPosition
+        {
+            Plane = overlay?.Plane ?? basis?.Plane,
+            PlaneOffset = overlay?.PlaneOffset ?? basis?.PlaneOffset,
+            Rotation = overlay?.Rotation ?? basis?.Rotation,
+            RotationOffset = overlay?.RotationOffset ?? basis?.RotationOffset,
+            Depth = overlay?.Depth ?? basis?.Depth,
+            DepthOffset = overlay?.DepthOffset ?? basis?.DepthOffset,
+        };
 
     // ---------------------------------------------------------------- helpers ----
 
@@ -678,8 +1790,11 @@ public sealed class MockTeklaModelService : ITeklaModelService
         return (obj.Type ?? "") + ":" + profile;
     }
 
-    private static IReadOnlyList<ModelObjectInfo> Limit(List<ModelObjectInfo> src, int? limit) =>
-        limit is int n && n > 0 && n < src.Count ? src.GetRange(0, n) : src;
+    private static IReadOnlyList<T> Limit<T>(List<T> src, int? limit)
+    {
+        if (limit is int n && n <= 0) return new List<T>();
+        return limit is int cap && cap < src.Count ? src.GetRange(0, cap) : src;
+    }
 
     private void SeedUdas()
     {
@@ -695,6 +1810,156 @@ public sealed class MockTeklaModelService : ITeklaModelService
             };
         }
     }
+
+    private static List<DrawingInfo> BuildSampleDrawings() =>
+        new List<DrawingInfo>
+        {
+            new DrawingInfo
+            {
+                Key = "AssemblyDrawing|00000000-0000-0000-0000-000000001000|1|A-1",
+                DrawingId = 10001,
+                Type = "AssemblyDrawing",
+                Mark = "A-1",
+                Name = "COLUMN ASSEMBLY",
+                Title1 = "COLUMN C1",
+                AssociatedModelGuid = "00000000-0000-0000-0000-000000001000",
+                SheetNumber = 1,
+                IsReadyForIssue = true,
+                UpToDateStatus = "DrawingIsUpToDate",
+                CreationDate = new DateTime(2026, 1, 10),
+                ModificationDate = new DateTime(2026, 7, 20),
+                PlotFileName = "A-1.pdf",
+            },
+            new DrawingInfo
+            {
+                Key = "GeneralArrangementDrawing|||G-101",
+                DrawingId = 10002,
+                Type = "GeneralArrangementDrawing",
+                Mark = "G-101",
+                Name = "PLAN +4000",
+                Title1 = "STEEL FRAMING PLAN",
+                IsIssued = true,
+                IsIssuedButModified = true,
+                UpToDateStatus = "PartsWereModified",
+                CreationDate = new DateTime(2026, 2, 1),
+                ModificationDate = new DateTime(2026, 7, 22),
+                IssuingDate = new DateTime(2026, 7, 15),
+                PlotFileName = "G-101.pdf",
+            },
+            new DrawingInfo
+            {
+                Key = "SinglePartDrawing|00000000-0000-0000-0000-000000001004|1|B-1",
+                DrawingId = 10003,
+                Type = "SinglePartDrawing",
+                Mark = "B-1",
+                Name = "BEAM",
+                AssociatedModelGuid = "00000000-0000-0000-0000-000000001004",
+                SheetNumber = 1,
+                IsLocked = true,
+                IsLockedBy = "mock-user",
+                UpToDateStatus = "DrawingIsUpToDateButMayNeedChecking",
+                CreationDate = new DateTime(2026, 3, 5),
+                ModificationDate = new DateTime(2026, 7, 18),
+                PlotFileName = "B-1.pdf",
+            },
+        };
+
+    private static List<DrawingViewInfo> BuildSampleDrawingViews() =>
+        new List<DrawingViewInfo>
+        {
+            new DrawingViewInfo
+            {
+                Index = 0,
+                ViewId = 11001,
+                Type = "FrontView",
+                Name = "FRONT",
+                Origin = new Point3D(40, 80, 0),
+                FrameOrigin = new Point3D(0, 0, 0),
+                Width = 180,
+                Height = 120,
+                Scale = 10,
+                RestrictionMin = new Point3D(-1000, -500, -500),
+                RestrictionMax = new Point3D(1000, 4500, 500),
+                ModelObjectCount = 8,
+            },
+            new DrawingViewInfo
+            {
+                Index = 1,
+                ViewId = 11002,
+                Type = "TopView",
+                Name = "TOP",
+                Origin = new Point3D(240, 80, 0),
+                FrameOrigin = new Point3D(0, 0, 0),
+                Width = 160,
+                Height = 120,
+                Scale = 10,
+                RestrictionMin = new Point3D(-1000, -1000, -100),
+                RestrictionMax = new Point3D(7000, 7000, 4100),
+                ModelObjectCount = 18,
+            },
+        };
+
+    private static List<DrawingObjectInfo> BuildSampleDrawingObjects() =>
+        new List<DrawingObjectInfo>
+        {
+            new DrawingObjectInfo
+            {
+                Index = 0,
+                ObjectId = 12001,
+                ViewIndex = 0,
+                ViewId = 11001,
+                ViewName = "FRONT",
+                Type = "Part",
+                ModelGuid = "00000000-0000-0000-0000-000000001000",
+                ModelId = 1000,
+                IsHidden = false,
+            },
+            new DrawingObjectInfo
+            {
+                Index = 1,
+                ObjectId = 12002,
+                ViewIndex = 0,
+                ViewId = 11001,
+                ViewName = "FRONT",
+                Type = "Text",
+                Text = "TYP.",
+                Points = new List<Point3D> { new Point3D(120, 60, 0) },
+                BoundingMin = new Point3D(120, 60, 0),
+                BoundingMax = new Point3D(145, 66, 0),
+                IsHidden = false,
+            },
+            new DrawingObjectInfo
+            {
+                Index = 2,
+                ObjectId = 12003,
+                ViewIndex = 1,
+                ViewId = 11002,
+                ViewName = "TOP",
+                Type = "Line",
+                Points = new List<Point3D>
+                {
+                    new Point3D(0, 0, 0),
+                    new Point3D(6000, 0, 0),
+                },
+                Bulge = 0,
+                IsHidden = false,
+            },
+            new DrawingObjectInfo
+            {
+                Index = 3,
+                ObjectId = 12004,
+                ViewIndex = 0,
+                ViewId = 11001,
+                ViewName = "FRONT",
+                Type = "StraightDimensionSet",
+                Points = new List<Point3D>
+                {
+                    new Point3D(0, 0, 0),
+                    new Point3D(0, 4000, 0),
+                },
+                IsHidden = false,
+            },
+        };
 
     /// <summary>Build a small, deterministic synthetic steel frame (~42 objects).</summary>
     private static List<ModelObjectInfo> BuildSampleModel()
@@ -742,6 +2007,17 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 MaxX = maxX,
                 MaxY = maxY,
                 MaxZ = maxZ,
+                Position = type == "Beam" || type == "ContourPlate"
+                    ? new PartPosition
+                    {
+                        Plane = "MIDDLE",
+                        PlaneOffset = 0,
+                        Rotation = "FRONT",
+                        RotationOffset = 0,
+                        Depth = "MIDDLE",
+                        DepthOffset = 0,
+                    }
+                    : null,
             });
             id++;
         }

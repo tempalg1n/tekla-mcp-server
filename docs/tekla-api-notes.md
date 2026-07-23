@@ -15,6 +15,7 @@ into `reference/tekla-api/` (git-ignored; Trimble content, do not publish).
 # one-time: fetch the Tekla DLLs (see tools/TeklaApiDoc/README.md), then:
 dotnet run --project tools/TeklaApiDoc -c Release -- \
   --dll-dir /tmp/tekla.structures.model/lib/net40 \
+  --dll-dir /tmp/tekla.structures.drawing/lib/net40 \
   --dll-dir /tmp/tekla.structures/lib/net40 --out reference/tekla-api
 grep -rl "GetReportProperty" reference/tekla-api    # find declaring types
 ```
@@ -30,9 +31,10 @@ needs a live model.
 - **COM support removed** from Open API assemblies; assemblies are **no longer GAC-registered**.
 - Gradual migration from .NET Framework to modern .NET started in 2024; this project
   currently targets **`net48`** for live Tekla integration.
-- NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`, `Tekla.Structures.Plugins`,
-  etc., versions `2021.0.0` .. `2026.0.x`. Each release build compiles against ONE version
-  (`-p:TeklaVersion`) and only works with that Tekla — see "Tekla version compatibility".
+- NuGet packages: `Tekla.Structures`, `Tekla.Structures.Model`,
+  `Tekla.Structures.Drawing`, `Tekla.Structures.Plugins`, etc., versions `2021.0.0` ..
+  `2026.0.x`. Each release build compiles against ONE version (`-p:TeklaVersion`) and only
+  works with that Tekla — see "Tekla version compatibility".
 
 ## Connection model
 
@@ -78,13 +80,42 @@ between the 2021 API surface and newer Tekla DLLs — Trimble's own model is per
 over newer ones). If none is found at startup, the resolver re-probes whenever a `Tekla.*` bind
 occurs, so "start the server first, open Tekla later" recovers without a restart.
 
-**Remoting channel name.** The Open API client connects to a named pipe
-`Tekla.Structures.Model-{app}:{apiVersion}`; the baked-in default has an empty `{app}` suffix,
-but some Tekla setups publish e.g. `Tekla.Structures.Model-Console:2023.0.0.0` (issue #7).
-`TeklaRemotingChannel.Align()` (called before the first `Model()`) probes the machine's named
-pipes and patches the internal `Remoter.ChannelName` to the published name when they disagree.
-Override with the `TEKLA_MCP_CHANNEL` env var. "Not connected" errors now include the client
-channel, loaded API version/path, and the published `Tekla.Structures.Model-*` pipes.
+**Remoting channel names (SESSIONNAME).** Confirmed by decompiling the Tekla 2023
+assemblies: every Open API assembly computes its channel name as
+
+```
+{AssemblyName}-{SESSIONNAME}:{AssemblyVersion}
+```
+
+where `{SESSIONNAME}` is the `SESSIONNAME` environment variable of the process computing the
+name (`TeklaStructuresInternal.Remoter.GetSessionName()`). Tekla's own process has the
+Windows session variable (`Console`, `RDP-Tcp#47`, …); a server launched by an MCP client
+frequently has none — that is the real mechanism behind issue #7's mysterious `-Console`
+suffix. THREE assemblies each have their own Remoter + lazily-connected static
+`DelegateProxy`:
+
+- `Tekla.Structures.dll` (base) — hosts `ModuleManager`, whose static ctor connects over
+  this channel. **Every `Insert`/`Modify` calls `ModelModuleManager.CheckModules` →
+  `ModuleManager`**, so a misaligned base channel produces the deceptive "reads work,
+  `apply=true` fails with a ModuleManager type-initializer exception" pattern (v0.7.0 field
+  report). A static proxy whose type initializer failed once is dead until the process
+  restarts (the API's own doc: "Currently, there's no way to re-establish the connection").
+- `Tekla.Structures.Model.dll` — model reads/writes.
+- `Tekla.Structures.Drawing.dll` — drawing tools.
+
+`TeklaRemotingChannel.Align()` (called before the first `Model()`) probes the published
+`Tekla.Structures*` pipes, derives the session suffix, sets `SESSIONNAME` for this process
+(so every Remoter computes the right name itself) and belt-and-braces patches the three
+internal `Remoter.ChannelName` fields. `WarmUpWriteProxies()` then force-initializes
+`ModuleManager` right after the first successful connection — the only moment the channels
+are known-good. Override with the `TEKLA_MCP_CHANNEL` env var (model channel; its session
+suffix is applied to the others). "Not connected" errors include the model + base channels,
+`SESSIONNAME`, loaded API version/path, and the published Tekla pipes.
+
+Also: the Open API writes `Connection failed : …` to **stdout** when a channel connect
+fails (`GenericDelegateProxy` ctor). `Program.cs` routes `Console.Out` to stderr before any
+Tekla type loads — the MCP transport itself uses the raw `Console.OpenStandardOutput()`
+stream and is unaffected.
 
 **Build overrides**: `-p:TeklaVersion=<nuget version>` picks the Tekla version to compile for
 (see [docs/releasing.md](releasing.md) for the version-per-year table);
@@ -118,6 +149,84 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | Coordinate system | `Model.GetWorkPlaneHandler()` + `SetCurrentTransformationPlane(new TransformationPlane())` to force global before mutating, restore after | ✅ Signatures verified (`TransformationPlane()` ctor, `Get/SetCurrentTransformationPlane`); ⚠️ **runtime: confirm placement on model** |
 | Origin tag | `SetUserProperty("MCP_ORIGIN", …)` on created/modified objects | ✅ `SetUserProperty(String, String)` verified; confirm persistence after commit |
 | Grids | `GetAllObjectsWithType(GRID)` → `Grid.CoordinateX/CoordinateY` strings; labels GENERATED by convention (X=1,2,3; Y=А,Б,В) | ✅ `CoordinateX/Y` (String) verified; ⚠️ **runtime: coord string absolute vs relative + REAL labels (incl. Cyrillic)** |
+| Part position | `Part.Position` → `Plane/Rotation/Depth` + offsets; copied field-by-field or parsed from DTO strings | ✅ Signatures/enums verified; ⚠️ **runtime: verify LEFT/RIGHT and FRONT/BEHIND orientation on live beams** |
+| Control lines | `ControlLine.Line.Point1/Point2` | ✅ Signatures verified; ⚠️ live enumeration not yet verified |
+| List components | `Part.GetComponents()`; `Connection.GetPrimaryObject/GetSecondaryObjects`, `UpVector`, `AutoDirectionType`, `Status` | ✅ Signatures verified; ⚠️ custom connection runtime behavior not yet verified |
+| Create connection | `new Connection`, `Name`, `Number`, `SetPrimaryObject`, `SetSecondaryObjects`, `UpVector`, `LoadAttributesFromFile`, `Insert` | ✅ Signatures verified; ⚠️ **live write path unverified**; a geometry commit runs before insert |
+| Reference metadata | `ReferenceModelObject.GetReferenceModel()`, `ReferenceModelObjectAttributeEnumerator`, report-property fallbacks; newer custom-attribute API invoked reflectively | ✅ common signatures compile against Tekla 2021; ⚠️ exporter/version key names vary |
+| Reference custom attributes | Duplicate-tolerant replay of the internal sequence `DelegateProxy.Delegate.GetReferenceModelObjectCustomAttributes` → `ListExporter.ImportStringList` (all reflective; confirmed by decompiling Tekla 2023). Tekla's own public wrapper `Dictionary.Add`s `"key;value"` rows and THROWS on duplicate attribute names — the internal replay keeps every row; the public wrapper stays as fallback for other versions | ✅ verified live (Tekla 2023, 2026-07-23): 24 attributes for an IFC window that previously errored; ⚠️ internal surface must be re-checked per Tekla version |
+| Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB (`aabbSource: "tekla-faces"`) | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs**; v0.7.0 field report: throws for IFC overlay windows — see IFC fallback |
+| Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members). Reads `.ifczip`/`.zip` (Tekla's `DataStorage\ref` cache — often the ONLY on-disk copy; `ActiveFilePath` points there) and plain `.ifc`; tries every existing copy (cache first, then `Filename`) until the GlobalId resolves. Project length unit = the `LENGTHUNIT` referenced from `IFCUNITASSIGNMENT` — files carry auxiliary length units (Renga IFC4: project `MILLI METRE` + bare `METRE`) and last-wins scales ×1000 | ✅ verified live (Tekla 2023, 2026-07-23) against `3219-АР.ifc` window `0VZkpIecn7$9mG$7iL8u45`: `ifc-file` placement + estimate AABB match the exact `tekla-faces` AABB; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
+| Reference lookup by IFC GUID | `ReferenceModel.GetReferenceModelObjectByExternalGuid(String)` invoked reflectively over `GetAllObjectsWithType(REFERENCE_MODEL)` | ⚠️ API availability varies by Tekla version; falls back with a clear message |
+
+## Drawing API implementation notes
+
+`Tekla.Structures.Drawing.dll` is referenced only by the `net48` live backend and uses the same
+`$(TeklaVersion)` as the other Tekla packages. The calls below are signature-checked against the
+common 2021 reference surface. Unless explicitly stated otherwise, the v0.7 Drawing API path has
+**not** been exercised against a live Windows drawing editor.
+
+| Area | API | Status |
+|---|---|---|
+| Connection/editor state | `new DrawingHandler()`, `GetConnectionStatus()`, `GetActiveDrawing()` | ✅ 2021 signatures; ⚠️ live editor transitions unverified |
+| Drawing enumeration | `DrawingHandler.GetDrawings()`, `DrawingSelector.GetSelected()`, `DrawingEnumeratorBase.AutoFetch` | ✅ 2021 signatures; ⚠️ Drawing List selection behavior unverified |
+| Drawing identity | `DrawingInternal.DatabaseObjectExtensions.GetIdentifier(DatabaseObject)` → ID/ID2/GUID | ✅ 2021 signature; ⚠️ internal/version-sensitive and best-effort |
+| View identity | `DrawingInternal.DatabaseObjectExtensions.GetIdentifier(DatabaseObject)` (own ID); `GetViewIdentifier` means containing view | ✅ 2021 signatures; ⚠️ internal/version-sensitive and best-effort |
+| Drawing metadata | `Drawing.Mark/Name/Title*`, issue/lock/freeze/master/ready flags, dates, `UpToDateStatus`, `GetPlotFileName` | ✅ 2021 signatures; ⚠️ nullable/default semantics unverified |
+| Model links | assembly/part/cast-unit identifiers; `DrawingHandler.GetModelObjectIdentifiers(Drawing)` | ✅ 2021 signatures; ⚠️ GUID/ID coverage by drawing type unverified |
+| Open/save/close | `SetActiveDrawing`, `SaveActiveDrawing`, `CloseActiveDrawing(save)` | ✅ 2021 signatures; ⚠️ UI and unsaved-change behavior requires live validation |
+| Drawing creation | `AssemblyDrawing`, `SinglePartDrawing`, `CastUnitDrawing`, `GADrawing`, then `Insert()` / `CommitChanges()` | ✅ 2021 constructors/signatures; ⚠️ live numbering/editor preconditions unverified |
+| AutoDrawing | `Automation.AutoDrawingRule`, `Automation.DrawingCreator.CreateDrawings` | ✅ 2021 signatures; ⚠️ saved rule resolution/status is environment-dependent |
+| Metadata edit | assign drawing properties, `Modify()`, `CommitChanges(message)` | ✅ 2021 signatures; ⚠️ writable-field restrictions vary by drawing/status |
+| Lifecycle | `IssueDrawing`, `UnissueDrawing`, `UpdateDrawing`, `Drawing.Delete`, `Drawing.PlaceViews` | ✅ 2021 signatures; ⚠️ exact active-editor/numbering restrictions need live validation |
+| PDF output | `DPMPrinterAttributes`, `PrintDrawing` with output/color/orientation/paper/scaling enums | ✅ 2021 signatures; ⚠️ printers, paths, naming and enum behavior are environment-dependent |
+| View enumeration | `Drawing.GetSheet().GetViews()`, `View` frame/scale/restriction/coordinate systems | ✅ 2021 signatures; ⚠️ units and view-type behavior need live validation |
+| Sheet geometry/layout | `Drawing.GetSheet()` width/height/origin/frame + drawing `Layout.SheetSize`/size mode | ✅ 2021 signatures; ⚠️ auto-size semantics need live validation |
+| Basic view creation | `View.CreateFrontView/CreateTopView/CreateBackView/CreateBottomView/Create3dView` | ✅ 2021 signatures; ⚠️ sheet placement and default attributes unverified |
+| GA model-view creation | `new View(ContainerView, ViewCoordinateSystem, DisplayCoordinateSystem, AABB[, attributes])`, `Insert()` | ✅ 2021 signatures; ⚠️ axes/restriction/paper placement need live validation |
+| Section/detail views | `CreateSectionView`, `CreateCurvedSectionView`, `CreateDetailView` plus mark attributes | ✅ 2021 signatures; ⚠️ cut-point/depth/mark semantics unverified |
+| View edit | `View.Modify/Delete`, width/height/origin/scale, `RotateViewOnAxis*`, `RotateViewOnDrawingPlane` | ✅ 2021 signatures; ⚠️ rotations and frame effects unverified |
+| Object enumeration | placed `View.GetObjects/GetAllObjects`, sheet `ContainerView.GetObjects`, `DrawingObjectSelector.GetSelected/SelectObjects` | ✅ 2021 signatures; ⚠️ selection and recursive ordering unverified |
+| Object identity | DrawingInternal identifier plus enumeration-index fallback | ✅ 2021 signature; ⚠️ ID may be zero and index is intentionally ephemeral |
+| Object metadata | drawing `ModelObject.ModelIdentifier`, `IHideable`, type-specific geometry, optional database-object UDAs | ✅ 2021 signatures; ⚠️ geometry/visibility/UDA availability varies by type |
+| Coordinate transform | `MatrixFactory.ToCoordinateSystem(view.DisplayCoordinateSystem).Transform(point)` | ✅ common signature; ⚠️ global-to-view orientation must be checked on rotated/mirrored views |
+| Graphics/annotations | `Text`, `Line`, `Rectangle`, `Circle`, `Arc`, `Polyline`, `Polygon`, `Cloud`, `Symbol`, `LevelMark` | ✅ 2021 constructors/signatures; ⚠️ insertion/attributes/bulge behavior unverified |
+| Dimensions | straight and curved dimension-set handlers, `AngleDimension`, `RadiusDimension` | ✅ 2021 signatures; ⚠️ point order, paper distance and attributes need live validation |
+| Object marks | `View.GetModelObjects(Identifier)`, `new Mark(ModelObject)`, optional insertion/attributes | ✅ 2021 signatures; ⚠️ represented-object and duplicate-mark behavior unverified |
+| Mark merge/split | `Drawing.Operations.Operation.MergeMarks` / `SplitMarks` | ✅ 2021 signatures; ⚠️ mark compatibility/result identity unverified |
+| Object edit | `IMovableRelative.MoveObjectRelative`, `IHideable.Hideable`, `Attributes.LoadAttributes`, `Modify/Delete` | ✅ 2021 signatures; ⚠️ capability varies by concrete object type |
+| Drawing origin tag | drawing `DatabaseObject.SetUserProperty("MCP_ORIGIN", ...)` + `Modify()` | ✅ common database signature; ⚠️ support/persistence varies by object/environment |
+
+### Drawing addresses and coordinate spaces
+
+The public Drawing API has no single durable ID property across drawings, views, and child
+objects. v0.7 tries the DrawingInternal extension methods inside `try/catch`. If a drawing ID is
+unavailable, its MCP key falls back to an escaped composite of type, associated model GUID,
+sheet number, mark, and name. That fallback can change when public properties change. View and
+object indices are only enumeration positions; re-list after inserts/deletes and prefer non-zero
+ID/ID2 pairs.
+
+Drawing content uses:
+
+- `view`: target-view local/display-coordinate-system coordinates;
+- `model`: global model coordinates transformed through `View.DisplayCoordinateSystem`;
+- `sheet`: drawing-paper millimetres on `Drawing.GetSheet()`.
+
+View placement/frame and dimension-line distances use paper millimetres; section/detail points
+are source-view-local and section depths are model millimetres. Read-side object geometry is
+returned in the coordinate system Tekla exposes for that object; callers should use the
+coordinate systems returned by `tekla_list_drawing_views` instead of assuming global values.
+
+### Drawing editor preconditions
+
+- Drawing status/list/QA can run without an active drawing.
+- View/object/content calls require an active drawing.
+- Creating drawings and AutoDrawing require the drawing editor to be closed.
+- A drawing cannot be deleted, updated, or printed while active; update also requires current
+  numbering.
+- `PlaceViews()` is intended for the matched active drawing.
+- `CloseActiveDrawing(save: false)` discards unsaved changes and remains preview-by-default in
+  the MCP tool.
 
 ### Useful report properties
 
@@ -129,8 +238,8 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 
 - Windows x64; Tekla Structures installed and running with a model open.
 - .NET SDK 8+ and .NET Framework 4.8 Developer Pack.
-- `Tekla.Structures.*` NuGet versions should match the installed Tekla version, or use
-  local `<Reference>` with `<HintPath>` to Tekla installation DLLs.
+- `Tekla.Structures`, `.Model`, and `.Drawing` NuGet versions should match the installed Tekla
+  version, or use local `<Reference>` entries with `<HintPath>` to Tekla installation DLLs.
 
 ## MCP SDK on .NET Framework 4.8
 
@@ -158,7 +267,8 @@ the 2023 NuGet DLLs: policy → compile pipeline, all default imports resolve (m
 `TeklaAssemblyResolver` now simply `Assembly.LoadFrom`s the matching per-version install's
 DLLs — plain and policy-free. `Assembly.Location` is real again, and script metadata
 references use the DLL files in `TeklaAssemblyResolver.BinDir` (which also covers
-Datatype/Plugins) — see `TeklaModelService.BuildScriptReferences`. Two hard-won constraints
+every installed managed `Tekla.Structures*.dll`, including Drawing/Dialog/Datatype/Plugins) —
+see `TeklaModelService.BuildScriptReferences`. Two hard-won constraints
 from the universal-build era (the PR #10 failure matrix) still apply to ANY future change here:
 
 - **Never combine an `AssemblyResolve`-based resolver with anti-GAC bindingRedirects.** On
@@ -181,9 +291,29 @@ this Tekla version" message instead of failing cryptically on the remoting chann
 - Timeout abort uses `Thread.Abort` (supported on net48, no-op catch on net8) — verify an
   aborted script doesn't wedge the Tekla remoting channel.
 - The mutation path (`allowMutations=true`) has not been run against a live model.
+- v0.7 hardening adds the remoting-free `tekla_check_csharp` compile-only path, source SHA-256,
+  conservative model+drawing mutation detection, explicit execution-attempt semantics and
+  partial-mutation warnings. Verify the check works with Drawing/Dialog types on each supported
+  Tekla version. `Tekla.Structures.Drawing` is intentionally not a global script import because
+  `Part` and `View` collide with Model/UI names; scripts should alias it explicitly.
+- v0.7 drawing tools: validate DrawingInternal IDs/fallback keys, drawing-list/editor selection,
+  lifecycle/create/AutoDrawing/print, view coordinate conversion and all supported content
+  object types across the 2021–2026 release builds.
 - "Server started before Tekla" flow: `Align()` retries until Tekla publishes its pipes, and
   the resolver re-probes for the Tekla bin on demand — verify a connection succeeds without
-  restarting the server.
+  restarting the server. NOTE: if a Tekla tool call ran while Tekla was down, the Model
+  DelegateProxy's failed type-init is cached by the CLR — only a server restart recovers.
+- SESSIONNAME channel alignment (v0.7.0 field-report fix): on the live machine verify that
+  (a) `tekla_create_beam` with `apply=true` creates the beam (stderr shows
+  "write-path proxies initialized (ModuleManager configuration: …)"), and (b) the drawing
+  tools connect. If several Tekla sessions run under different Windows sessions, verify the
+  suffix choice or force `TEKLA_MCP_CHANNEL`.
+- IFC placement fallback: ✅ verified live 2026-07-23 (Tekla 2023, `3219_Model_playground`)
+  against the 3219-АР reference window `0VZkpIecn7$9mG$7iL8u45` — `placementSource:
+  "ifc-file"` origin (-496, 5795.82, 9200) and the `ifc-placement-estimate` AABB match the
+  exact `tekla-faces` AABB; resolved from the `DataStorage\ref\*.ifczip` cache (the original
+  `.\INCOMING\*.ifc` did not exist on disk). Still TODO: a rotated (`Rotation ≠ 0`) and a
+  scaled overlay, and a base-point model.
 - Per-version fail-fast (issue #11): on a machine whose GAC holds a DIFFERENT Tekla version
   than the build (e.g. tekla2023 build, 2021 in the GAC), verify the dedicated tools work and
   that a deliberately wrong zip (e.g. tekla2021 on running Tekla 2023) produces the

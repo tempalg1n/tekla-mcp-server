@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Scripting;
@@ -17,7 +19,8 @@ namespace TeklaMcp.Scripting;
 /// Tekla-agnostic by design: the caller supplies the Tekla assemblies either as loaded
 /// <see cref="Assembly"/> instances (net48 backend — resolved from the running Tekla) or as
 /// DLL file paths (mock backend — compile-only validation on any OS). Execution runs on a
-/// dedicated thread with a hard timeout; on .NET Framework a timed-out script is aborted.
+/// dedicated thread with an execution deadline; on .NET Framework a timed-out script receives
+/// a best-effort <see cref="Thread.Abort()"/> request.
 /// </summary>
 public static class ScriptEngine
 {
@@ -37,6 +40,19 @@ public static class ScriptEngine
 
     public const int DefaultTimeoutSeconds = 60;
     public const int MaxTimeoutSeconds = 600;
+
+    /// <summary>Stable SHA-256 of the exact UTF-8 source text, rendered as lowercase hex.</summary>
+    public static string ComputeCodeSha256(string code)
+    {
+        using (var sha = SHA256.Create())
+        {
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(code ?? ""));
+            var hex = new StringBuilder(bytes.Length * 2);
+            foreach (var b in bytes)
+                hex.Append(b.ToString("x2"));
+            return hex.ToString();
+        }
+    }
 
     /// <summary>
     /// Build the metadata references for a script compilation: the core runtime assemblies of
@@ -139,7 +155,7 @@ public static class ScriptEngine
     }
 
     /// <summary>
-    /// Run a compiled script with a hard timeout, filling <paramref name="result"/> in place.
+    /// Run a compiled script with an execution deadline, filling <paramref name="result"/> in place.
     /// Only call this on a backend that can actually reach Tekla (net48) — the mock validates
     /// and compiles but never executes.
     /// </summary>
@@ -147,7 +163,7 @@ public static class ScriptEngine
     {
         var timeout = TimeSpan.FromSeconds(Math.Min(Math.Max(timeoutSeconds, 1), MaxTimeoutSeconds));
 
-        object? returnValue = null;
+        string? returnValueJson = null;
         Exception? failure = null;
         var completed = false;
 
@@ -156,7 +172,10 @@ public static class ScriptEngine
             try
             {
                 var state = script.RunAsync(globals).GetAwaiter().GetResult();
-                returnValue = state.ReturnValue;
+                // Serialization is intentionally INSIDE the timeout worker. Tekla return
+                // objects can expose remoting properties or ToString() implementations that
+                // hang; those must be governed by the same deadline as script execution.
+                returnValueJson = SafeJson.ToJson(state.ReturnValue);
                 completed = true;
             }
             catch (Exception ex)
@@ -169,30 +188,76 @@ public static class ScriptEngine
             Name = "tekla-mcp-script",
         };
 
-        thread.Start();
         result.Stage = "execute";
+        try
+        {
+            thread.Start();
+            result.ExecutionAttempted = true;
+            result.Executed = true;
+        }
+        catch (Exception ex)
+        {
+            result.Error = "Could not start the script execution worker: " + ex.Message;
+            return;
+        }
+
+        if (result.DetectedMutatingMembers.Count > 0)
+        {
+            result.Warnings.Add(
+                "Scripted mutations are not transactional. If execution fails or times out, " +
+                "some changes may already be applied or committed; inspect Tekla and use Ctrl+Z if needed.");
+        }
 
         if (!thread.Join(timeout))
         {
             // Hard abort works on .NET Framework (the only runtime that executes scripts);
             // on .NET Core it throws PlatformNotSupportedException and the background thread
             // is simply left to finish on its own.
-            try { thread.Abort(); } catch { }
-            result.Error = $"Script exceeded the {timeout.TotalSeconds:0}s timeout and was aborted. " +
-                           "If the script had already mutated the model, those changes may have been committed. " +
-                           "Narrow the scan (filter by object type, cap counts) or raise timeoutSeconds.";
+            var abortRequested = false;
+            try
+            {
+                thread.Abort();
+                abortRequested = true;
+            }
+            catch { }
+
+            // Thread.Abort is best-effort around unmanaged/Tekla remoting calls. Wait briefly
+            // and state honestly whether worker termination was observed before returning.
+            var terminationConfirmed = false;
+            try { terminationConfirmed = thread.Join(TimeSpan.FromSeconds(1)); } catch { }
+
+            result.Error =
+                $"Script exceeded the {timeout.TotalSeconds:0}s execution deadline. " +
+                (abortRequested ? "A worker-abort request was sent. " : "The runtime could not request worker abort. ") +
+                (terminationConfirmed
+                    ? "Worker termination was confirmed. "
+                    : "Worker termination was NOT confirmed; do not blindly retry while it may still be running. ") +
+                "If the script had already mutated the model, those changes may have been committed. " +
+                "Narrow the scan (filter by object type, cap counts) or raise timeoutSeconds.";
+            if (!terminationConfirmed)
+                result.Warnings.Add(
+                    "The timed-out script worker may still be running inside a Tekla remoting call. " +
+                    "Inspect Tekla/server health before starting another script.");
+            AddPartialMutationWarning(result, "The timed-out script may have left a partial mutation.");
             return;
         }
 
         if (!completed)
         {
             result.Error = Describe(failure);
+            AddPartialMutationWarning(result, "The failed script may have left a partial mutation.");
             return;
         }
 
-        result.Executed = true;
         result.Success = true;
-        result.ReturnValueJson = SafeJson.ToJson(returnValue);
+        result.ReturnValueJson = returnValueJson;
+    }
+
+    private static void AddPartialMutationWarning(ScriptResult result, string prefix)
+    {
+        if (result.DetectedMutatingMembers.Count == 0)
+            return;
+        result.Warnings.Add(prefix + " Script changes are not rolled back automatically.");
     }
 
     private static string Describe(Exception? ex)

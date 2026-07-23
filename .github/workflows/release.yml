@@ -9,6 +9,27 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Test + MCP stdio smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build mock server
+        run: dotnet build src/TeklaMcp.Server/TeklaMcp.Server.csproj -c Release
+
+      - name: Unit tests
+        run: dotnet test tests/TeklaMcp.Tests -c Release
+
+      - name: MCP initialize, tools/list and query smoke
+        run: >-
+          dotnet run --project tests/TeklaMcp.Smoke -c Release --
+          src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 100
+
   build-tekla:
     name: Build Tekla ${{ matrix.tekla.year }} (net48)
     runs-on: windows-latest
@@ -34,7 +55,11 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build solution (TeklaVersion=${{ matrix.tekla.nuget }})
-        run: dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=${{ matrix.tekla.nuget }}
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          dotnet build TeklaMcp.sln -c Release `
+            -p:TeklaVersion=${{ matrix.tekla.nuget }} -p:Version=$version
 
       - name: Pack Tekla ${{ matrix.tekla.year }} artifact
         shell: pwsh
@@ -68,7 +93,7 @@ jobs:
         run: |
           $version = "$env:GITHUB_REF_NAME".TrimStart('v')
           dotnet publish src/TeklaMcp.Server/TeklaMcp.Server.csproj `
-            -f net8.0 -c Release -o publish/net8.0
+            -f net8.0 -c Release -p:Version=$version -o publish/net8.0
           $zip = "TeklaMcp.Server-$version-net8.0-mock.zip"
           Compress-Archive -Path "publish/net8.0/*" -DestinationPath $zip -Force
           Write-Host "Created $zip"
@@ -81,7 +106,7 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [build-tekla, build-mock]
+    needs: [test, build-tekla, build-mock]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

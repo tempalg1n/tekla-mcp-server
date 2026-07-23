@@ -14,7 +14,9 @@ public class MockExecuteScriptTests
 
         Assert.True(result.Success);
         Assert.False(result.Executed);
+        Assert.False(result.ExecutionAttempted);
         Assert.Equal("Mock", result.Backend);
+        Assert.Equal(64, result.CodeSha256.Length);
         Assert.Empty(result.PolicyViolations);
         Assert.Contains("NOT executed", result.Guidance);
     }
@@ -37,5 +39,30 @@ public class MockExecuteScriptTests
 
         Assert.False(result.Success);
         Assert.Contains(result.PolicyViolations, v => v.Contains("allowMutations"));
+        Assert.Contains("Insert", result.DetectedMutatingMembers);
+    }
+
+    [Fact]
+    public void Compile_only_check_accepts_but_reports_mutations_without_execution()
+    {
+        var result = _service.ExecuteScript(
+            "new Beam().Insert();",
+            allowMutations: true,
+            compileOnly: true);
+
+        Assert.False(result.Executed);
+        Assert.False(result.ExecutionAttempted);
+        Assert.Contains("Insert", result.DetectedMutatingMembers);
+        if (result.CompilationAttempted)
+        {
+            Assert.Equal(result.CompileErrors.Count == 0, result.Compiled);
+            Assert.Equal(result.Compiled, result.Success);
+        }
+        else
+        {
+            Assert.False(result.Compiled);
+            Assert.False(result.Success);
+            Assert.Contains("TEKLA_MCP_SCRIPT_REF_DIR", result.Guidance);
+        }
     }
 }

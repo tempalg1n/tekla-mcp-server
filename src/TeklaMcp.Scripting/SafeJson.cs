@@ -21,6 +21,7 @@ public static class SafeJson
     private const int MaxProperties = 25;
     private const int MaxStringLength = 4_000;
     private const int MaxTotalLength = 64_000;
+    private const int MaxTruncatedPreviewLength = 16_000;
 
     public static string ToJson(object? value)
     {
@@ -35,8 +36,23 @@ public static class SafeJson
         }
 
         if (sb.Length > MaxTotalLength)
-            return sb.ToString(0, MaxTotalLength) + " …(truncated — return a smaller/aggregated value)";
+            return TruncatedEnvelope(sb);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Never return a raw JSON prefix: cutting inside a string/object produced invalid JSON
+    /// and forced clients to special-case large results. Preserve a bounded preview as a JSON
+    /// string inside a small, always-valid envelope instead.
+    /// </summary>
+    private static string TruncatedEnvelope(StringBuilder captured)
+    {
+        var previewLength = Math.Min(captured.Length, MaxTruncatedPreviewLength);
+        var preview = captured.ToString(0, previewLength);
+        return "{\"truncated\":true,\"capturedLength\":" +
+               captured.Length.ToString(CultureInfo.InvariantCulture) +
+               ",\"preview\":\"" + Escape(preview) +
+               "\",\"guidance\":\"Return a smaller or aggregated value.\"}";
     }
 
     private static void Write(StringBuilder sb, object? value, int depth)

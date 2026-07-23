@@ -7,6 +7,21 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace TeklaMcp.Scripting;
 
+/// <summary>One syntax-policy pass: violations plus conservative mutation detection.</summary>
+public sealed class ScriptPolicyAnalysis
+{
+    internal ScriptPolicyAnalysis(
+        IReadOnlyList<string> violations,
+        IReadOnlyList<string> mutatingMembers)
+    {
+        Violations = violations;
+        MutatingMembers = mutatingMembers;
+    }
+
+    public IReadOnlyList<string> Violations { get; }
+    public IReadOnlyList<string> MutatingMembers { get; }
+}
+
 /// <summary>
 /// Static (syntax-tree) safety policy for agent-authored scripts, applied BEFORE compilation.
 ///
@@ -46,9 +61,15 @@ public static class ScriptPolicy
         "WebClient", "HttpClient", "WebRequest", "HttpWebRequest", "Socket",
         "TcpClient", "UdpClient", "Dns",
         // reflection / dynamic code
-        "Assembly", "Activator", "Marshal", "DynamicMethod", "ILGenerator",
+        // Do not ban the bare names Assembly or Task: Tekla has legitimate model types with
+        // those names. System.Reflection/System.Threading namespaces remain banned, and the
+        // reflection entry points below close the string-based Type.GetType route.
+        "Activator", "Marshal", "DynamicMethod", "ILGenerator", "Delegate",
+        "GetType", "GetTypes", "GetMethod", "GetMethods", "GetProperty", "GetProperties",
+        "GetField", "GetFields", "GetConstructor", "GetConstructors", "Invoke",
+        "InvokeMember", "CreateDelegate", "MakeGenericType", "dynamic",
         // threading (scripts are synchronous; the host owns the timeout)
-        "Thread", "ThreadPool", "Task", "TaskFactory", "Timer", "CancellationTokenSource",
+        "Thread", "ThreadPool", "Timer", "CancellationTokenSource",
         // other host state
         "Registry", "GC",
     };
@@ -60,37 +81,79 @@ public static class ScriptPolicy
         "InteropServices", "Win32", "Threading", "Timers",
     };
 
-    // Member names that mutate the Tekla model (or run arbitrary macros). Rejected unless the
-    // caller passed allowMutations=true — which the agent may only do after the user explicitly
-    // confirmed the change (the confirmation contract lives in the tool description).
+    // Member names that mutate the model/drawing, change shared Tekla state, export/print, or
+    // run arbitrary macros. Rejected unless the caller passed allowMutations=true — which the
+    // agent may only do for LIVE execution after the user explicitly confirmed the change.
+    // Compile-only checks intentionally opt in so a proposed write can be verified safely
+    // before approval. Detection is syntax-only and therefore deliberately conservative.
     private static readonly HashSet<string> MutatingMembers = new HashSet<string>(StringComparer.Ordinal)
     {
+        // Common database-object writes.
         "Insert", "Delete", "Modify", "CommitChanges",
-        "SetUserProperty", "SetAttribute", "SetCurrentTransformationPlane",
-        "Operation", "RunMacro", "RunMacroAndWait", "PlaceComponents",
+        "SetUserProperty", "SetUserProperties", "SetDynamicStringProperty", "SetAttribute",
+
+        // Model state and relationships that are not always followed by an obvious Modify().
+        "Save", "AutoFetch", "SetCurrentTransformationPlane", "SetPhase", "SetLabel", "SetMainPart",
+        "SetMainObject", "SetOperativePart", "SetPrimaryObject", "SetSecondaryObject",
+        "SetSecondaryObjects", "SetComponentInput", "AddToPourUnit", "RemoveFromPourUnit",
+        "AddObjectsToTask", "RemoveObjectsFromTask",
+
+        // Operations/macros/export helpers. Qualified Operation.* calls are caught by the
+        // "Operation" token; explicit names also cover `using static` and wrapper helpers.
+        "Operation", "RunMacro", "RunMacroAndWait", "RunCommand", "PlaceComponents",
+        "MoveObject", "CopyObject", "Split", "SplitSlab",
+        "CreateIFC4ExportFromAll", "CreateIFC4ExportFromSelected",
+        "CreateReportFromAll", "CreateReportFromSelected",
+        "CreateNCFilesFromAll", "CreateNCFilesFromSelected", "CreateNCFilesByPartId",
+        "InsertView", "InsertViewByStandardFile", "UpdateModificationStampToLatest",
+        "SetAsCurrentRevision", "RemoveRevision",
+
+        // Drawing lifecycle / output.
+        "SaveActiveDrawing", "CloseActiveDrawing", "IssueDrawing", "UnissueDrawing",
+        "UpdateDrawing", "PrintDrawing", "PrintDrawings", "CreateDrawings",
+        "SetActiveDrawing",
+
+        // Drawing content and placement. Many of these ultimately call Insert/Modify, but some
+        // handlers create database objects immediately and must be gated in their own right.
+        "PlaceViews", "CopyTo", "AddToDimensionSet", "MoveObjectRelative",
+        "MergeMarks", "SplitMarks", "Resize", "Scale", "Group", "Clone",
+        "HideFromDrawing", "HideFromDrawingView", "ShowInDrawing", "ShowInDrawingView",
+        "RotateViewOnAxisX", "RotateViewOnAxisY", "RotateViewOnAxisZ",
+        "RotateViewOnDrawingPlane",
+        "CreateDimensionSet", "CreateCurvedDimensionSetOrthogonal",
+        "CreateCurvedDimensionSetRadial", "CreateSectionView", "CreateCurvedSectionView",
+        "CreateDetailView", "CreateFrontView", "CreateBackView", "CreateTopView",
+        "CreateBottomView", "Create3dView",
     };
 
     /// <summary>Validate <paramref name="code"/>; empty violation list = allowed to compile.</summary>
     public static IReadOnlyList<string> Validate(string code, bool allowMutations)
+        => Analyze(code, allowMutations).Violations;
+
+    /// <summary>
+    /// Validate and report every detected mutating member in one syntax-tree pass. Mutation
+    /// names are returned even when <paramref name="allowMutations"/> is true.
+    /// </summary>
+    public static ScriptPolicyAnalysis Analyze(string code, bool allowMutations)
     {
         var violations = new List<string>();
+        var mutations = new SortedSet<string>(StringComparer.Ordinal);
 
         if (string.IsNullOrWhiteSpace(code))
         {
             violations.Add("Script is empty.");
-            return violations;
+            return new ScriptPolicyAnalysis(violations, mutations.ToList());
         }
 
         if (code.Length > MaxCodeLength)
         {
             violations.Add($"Script is too long ({code.Length} chars, max {MaxCodeLength}). Split the work into smaller scripts.");
-            return violations;
+            return new ScriptPolicyAnalysis(violations, mutations.ToList());
         }
 
         var tree = CSharpSyntaxTree.ParseText(code, new CSharpParseOptions(kind: SourceCodeKind.Script));
         var root = tree.GetRoot();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var mutations = new SortedSet<string>(StringComparer.Ordinal);
 
         void Add(string message)
         {
@@ -129,10 +192,10 @@ public static class ScriptPolicy
                     string.Join(", ", AllowedUsings.OrderBy(n => n)) + ".");
         }
 
-        foreach (var name in root.DescendantTokens()
-                     .Where(t => t.IsKind(SyntaxKind.IdentifierToken))
-                     .Select(t => t.ValueText))
+        foreach (var token in root.DescendantTokens()
+                     .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
         {
+            var name = token.ValueText;
             if (BannedIdentifiers.Contains(name))
                 Add($"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
                     "Use Print(...) for output and return a value as the last expression. " +
@@ -140,16 +203,47 @@ public static class ScriptPolicy
             else if (BannedNamespaceSegments.Contains(name))
                 Add($"'{name}' looks like a banned namespace (System.{name}.*) — not allowed in scripts. " +
                     "(If this is just your variable name, rename it.)");
-            else if (!allowMutations && MutatingMembers.Contains(name))
+            else if (MutatingMembers.Contains(name) && IsMutatingUse(token))
                 mutations.Add(name);
         }
 
-        if (mutations.Count > 0)
+        if (!allowMutations && mutations.Count > 0)
             Add($"Script uses mutating members ({string.Join(", ", mutations)}) but allowMutations=false. " +
                 "Scripts are READ-ONLY by default. First check whether a dedicated tekla_create_* / tekla_modify_* / " +
                 "tekla_delete_* tool covers this (preview-by-default, reversible). If a scripted mutation is really " +
                 "needed: show the script to the user, get their explicit go-ahead, then retry with allowMutations=true.");
 
-        return violations;
+        return new ScriptPolicyAnalysis(violations, mutations.ToList());
+    }
+
+    /// <summary>
+    /// Avoid flagging innocent property reads/local names such as Drawing attributes'
+    /// <c>Scale</c>. Almost every entry is a method and therefore only counts when used as an
+    /// invocation target. AutoFetch is the one static property assignment we gate explicitly.
+    /// Operation remains conservative because its mutating surface is too broad and versioned.
+    /// </summary>
+    private static bool IsMutatingUse(SyntaxToken token)
+    {
+        var name = token.ValueText;
+        if (name == "Operation")
+            return true;
+
+        var identifier = token.Parent as IdentifierNameSyntax;
+        if (identifier == null)
+            return false;
+
+        SyntaxNode expression = identifier;
+        var memberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+        if (memberAccess != null && ReferenceEquals(memberAccess.Name, identifier))
+            expression = memberAccess;
+
+        if (name == "AutoFetch")
+        {
+            var assignment = expression.Parent as AssignmentExpressionSyntax;
+            return assignment != null && ReferenceEquals(assignment.Left, expression);
+        }
+
+        var invocation = expression.Parent as InvocationExpressionSyntax;
+        return invocation != null && ReferenceEquals(invocation.Expression, expression);
     }
 }

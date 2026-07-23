@@ -30,8 +30,16 @@ public sealed class WriteResult
     /// <summary>GUIDs of created objects (when applied).</summary>
     public List<string> CreatedGuids { get; set; } = new List<string>();
 
+    /// <summary>
+    /// Integer Tekla identifiers of created objects. Useful for components whose GUID can be empty.
+    /// </summary>
+    public List<int> CreatedIds { get; set; } = new List<int>();
+
     /// <summary>A lightweight preview of the planned/affected objects (capped).</summary>
     public List<ModelObjectInfo> Preview { get; set; } = new List<ModelObjectInfo>();
+
+    /// <summary>Connection/component preview for component write operations (capped).</summary>
+    public List<ComponentInfo> ComponentPreview { get; set; } = new List<ComponentInfo>();
 
     /// <summary>Per-item errors, if any.</summary>
     public List<string> Errors { get; set; } = new List<string>();
