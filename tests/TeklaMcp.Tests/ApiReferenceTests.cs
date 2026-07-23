@@ -26,6 +26,10 @@ public class ApiReferenceTests : IDisposable
         File.WriteAllText(Path.Combine(_dir, "Tekla.Structures.Model.ContourPlate.md"),
             "# Tekla.Structures.Model.ContourPlate  *(class)*\n\n## Methods\n\n" +
             "- `void AddContourPoint(ContourPoint point)` — Adds a contour point.\n");
+        File.WriteAllText(Path.Combine(_dir, "Tekla.Structures.Model.Part.md"),
+            "# Tekla.Structures.Model.Part  *(class)*\n");
+        File.WriteAllText(Path.Combine(_dir, "Tekla.Structures.Drawing.Part.md"),
+            "# Tekla.Structures.Drawing.Part  *(class)*\n");
         File.WriteAllText(Path.Combine(_dir, "INDEX.md"), "# index\n");
         Environment.SetEnvironmentVariable(ApiReference.DirEnvVar, _dir);
     }
@@ -73,5 +77,27 @@ public class ApiReferenceTests : IDisposable
         Assert.True(result.ReferenceAvailable);
         Assert.Empty(result.Hits);
         Assert.NotNull(result.Guidance);
+    }
+
+    [Fact]
+    public void Status_reports_resolved_reference_directory()
+    {
+        var status = ApiReference.GetStatus();
+        Assert.True(status.Available);
+        Assert.Equal(_dir, status.Directory);
+        Assert.True(status.TypeCount >= 4);
+        Assert.Contains("Model", status.Modules);
+        Assert.Contains("Drawing", status.Modules);
+        Assert.Empty(status.Warnings);
+    }
+
+    [Fact]
+    public void Ambiguous_short_name_requires_fully_qualified_type()
+    {
+        var result = ApiReference.GetTypeDoc("Part");
+        Assert.False(result.Found);
+        Assert.Contains("Tekla.Structures.Model.Part", result.Suggestions);
+        Assert.Contains("Tekla.Structures.Drawing.Part", result.Suggestions);
+        Assert.Contains("ambiguous", result.Guidance!, StringComparison.OrdinalIgnoreCase);
     }
 }

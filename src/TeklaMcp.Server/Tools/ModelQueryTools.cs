@@ -71,4 +71,36 @@ public static class ModelQueryTools
                  "returns a few sample objects.)")]
     public static IReadOnlyList<ModelObjectInfo> GetSelectedObjects(ITeklaModelService model)
         => model.GetSelectedObjects();
+
+    [McpServerTool(Name = "tekla_get_solid_bbox")]
+    [Description("Return geometry snapshots with solid world AABB (min/max) for explicit part " +
+                 "GUIDs or the current UI selection. GetSolid is expensive, so the result is capped.")]
+    public static IReadOnlyList<ModelObjectInfo> GetSolidBoundingBoxes(
+        ITeklaModelService model,
+        [Description("Part GUIDs, comma/semicolon/newline separated. Ignored with useSelection=true.")]
+        string? guids = null,
+        [Description("Scope to the current UI selection. Default false.")] bool useSelection = false,
+        [Description("Safety cap. Default 100, max 500.")] int limit = 100)
+    {
+        var parsed = ToolHelpers.ParseList(guids);
+        if (!useSelection && parsed.Count == 0) return new List<ModelObjectInfo>();
+        return model.FindObjects(
+            new ObjectQuery
+            {
+                GuidIn = useSelection ? new List<string>() : parsed,
+                UseSelection = useSelection,
+            },
+            limit < 1 ? 1 : (limit > 500 ? 500 : limit));
+    }
+
+    [McpServerTool(Name = "tekla_list_control_lines")]
+    [Description("List ControlLine objects with global start/end coordinates. Supports current " +
+                 "selection scope and a result cap.")]
+    public static IReadOnlyList<ModelObjectInfo> ListControlLines(
+        ITeklaModelService model,
+        [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
+        [Description("Maximum lines. Default 200.")] int limit = 200)
+        => model.FindObjects(
+            new ObjectQuery { Type = "ControlLine", UseSelection = useSelection },
+            limit);
 }

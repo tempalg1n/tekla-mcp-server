@@ -29,6 +29,13 @@ public static class ModelWriteTools
         [Description("Material grade, e.g. 'S355J2'. Empty = model default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = default.")] string name = "",
+        [Description("Plane position: MIDDLE, LEFT, RIGHT. Empty = default/matched.")] string? plane = null,
+        [Description("Plane offset (mm).")] double? planeOffset = null,
+        [Description("Rotation: FRONT, TOP, BACK, BELOW. Empty = default/matched.")] string? rotation = null,
+        [Description("Additional rotation offset (degrees).")] double? rotationOffset = null,
+        [Description("Depth: MIDDLE, FRONT, BEHIND. Empty = default/matched.")] string? depth = null,
+        [Description("Depth offset (mm).")] double? depthOffset = null,
+        [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
         => model.CreateParts(new[]
         {
@@ -38,8 +45,28 @@ public static class ModelWriteTools
                 Start = new Point3D(startX, startY, startZ),
                 End = new Point3D(endX, endY, endZ),
                 Profile = profile, Material = material, Class = @class, Name = name,
+                Position = ToolHelpers.BuildPosition(
+                    plane, planeOffset, rotation, rotationOffset, depth, depthOffset),
+                MatchPositionGuid = matchPositionGuid,
             }
         }, apply);
+
+    [McpServerTool(Name = "tekla_create_beams")]
+    [Description("Create up to 200 beams in ONE batch. Each item uses PartSpec Start/End/Profile " +
+                 "and optional material/class/name/position/matchPositionGuid. Kind is forced to " +
+                 "'beam'. Preview unless apply=true.")]
+    public static WriteResult CreateBeams(
+        ITeklaModelService model,
+        [Description("Beam specifications (maximum 200).")] IReadOnlyList<PartSpec> beams,
+        [Description("Set true to commit the whole batch. Default false = preview.")] bool apply = false)
+    {
+        var specs = (beams ?? new List<PartSpec>()).Take(200).ToList();
+        foreach (var spec in specs) spec.Kind = "beam";
+        var result = model.CreateParts(specs, apply);
+        if (beams != null && beams.Count > 200)
+            result.Message = "Batch capped at 200 of " + beams.Count + " beam specs.";
+        return result;
+    }
 
     [McpServerTool(Name = "tekla_create_column")]
     [Description("Create a vertical column at (x,y) from bottomZ to topZ (mm). Preview unless apply=true.")]
@@ -98,6 +125,13 @@ public static class ModelWriteTools
         [Description("New name, or empty to keep.")] string? name = null,
         [Description("New start point 'x,y,z' (optional).")] string? newStart = null,
         [Description("New end point 'x,y,z' (optional).")] string? newEnd = null,
+        [Description("Plane position: MIDDLE, LEFT, RIGHT. Empty = keep/matched.")] string? plane = null,
+        [Description("Plane offset (mm), or omitted to keep/match.")] double? planeOffset = null,
+        [Description("Rotation: FRONT, TOP, BACK, BELOW. Empty = keep/matched.")] string? rotation = null,
+        [Description("Additional rotation offset (degrees).")] double? rotationOffset = null,
+        [Description("Depth: MIDDLE, FRONT, BEHIND. Empty = keep/matched.")] string? depth = null,
+        [Description("Depth offset (mm), or omitted to keep/match.")] double? depthOffset = null,
+        [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
         [Description("Set true to commit. Default false = preview.")] bool apply = false)
         => model.ModifyParts(new[]
         {
@@ -110,6 +144,9 @@ public static class ModelWriteTools
                 Name = string.IsNullOrWhiteSpace(name) ? null : name,
                 NewStart = ToolHelpers.ParsePoint(newStart),
                 NewEnd = ToolHelpers.ParsePoint(newEnd),
+                Position = ToolHelpers.BuildPosition(
+                    plane, planeOffset, rotation, rotationOffset, depth, depthOffset),
+                MatchPositionGuid = matchPositionGuid,
             }
         }, apply);
 

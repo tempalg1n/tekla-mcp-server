@@ -23,16 +23,19 @@ public static class ModelScriptTools
         "If you use this for something recurring, ALSO call tekla_report_gap so it becomes a first-class tool.\n" +
         "\n" +
         "RECOMMENDED WORKFLOW: (1) verify type/member signatures with tekla_search_api / tekla_get_api_doc — do not " +
-        "guess them; (2) run the script; (3) if compilation fails, fix using the reported errors and retry.\n" +
+        "guess them; (2) validate the exact source with tekla_check_csharp; (3) run it. For a mutation, include the " +
+        "check result's codeSha256 when showing the exact script to the user for approval.\n" +
         "\n" +
         "SCRIPT ENVIRONMENT:\n" +
         "- C# top-level statements (no class/Main needed). Pre-imported namespaces: System, System.Collections.Generic, " +
         "System.Linq, System.Text, Tekla.Structures, Tekla.Structures.Model, Tekla.Structures.Model.UI, " +
         "Tekla.Structures.Geometry3d, Tekla.Structures.Filtering.\n" +
+        "- Drawing is available but NOT globally imported because Drawing.Part/View conflict with Model.Part/UI.View. " +
+        "Use an explicit alias such as `using TSD = Tekla.Structures.Drawing;`.\n" +
         "- Connect yourself: `var model = new Model();` (attaches to the running Tekla).\n" +
         "- RETURN a value as the LAST EXPRESSION of the script — it is serialized to JSON (returnValueJson). Return " +
         "small aggregated values (numbers, strings, anonymous objects, lists, dictionaries), never raw model objects.\n" +
-        "- `Print(...)` for intermediate output (capped at 500 lines). Console does NOT exist here.\n" +
+        "- `Print(...)` for intermediate output (capped at 500 lines / 64000 characters). Console does NOT exist here.\n" +
         "- Units are mm; coordinates are whatever work plane is current (dedicated tools use the GLOBAL plane).\n" +
         "- Enumerators: `var e = model.GetModelObjectSelector().GetAllObjectsWithType(...); while (e.MoveNext()) ...` " +
         "(AutoFetch is already enabled process-wide). Filter by type early — models can hold 400k+ objects.\n" +
@@ -54,7 +57,8 @@ public static class ModelScriptTools
         "Tekla's Ctrl+Z.\n" +
         "\n" +
         "LIMITS (enforced): no file/network/process/reflection/thread/Console access, no #r/#load, no await. " +
-        "Hard timeout (default 60 s). On the Mock backend the script is validated/compiled but NEVER executed — " +
+        "Execution deadline (default 60 s) with best-effort worker abort. On the Mock backend the script is " +
+        "policy-checked, compiled only when TEKLA_MCP_SCRIPT_REF_DIR is configured, and NEVER executed — " +
         "do not fabricate results from it.")]
     public static ScriptResult RunCsharp(
         ITeklaModelService model,
@@ -63,8 +67,24 @@ public static class ModelScriptTools
                      "specific change in this conversation (show them the script first). Prefer the dedicated " +
                      "write tools (preview-by-default).")]
         bool allowMutations = false,
-        [Description("Hard timeout in seconds (default 60, max 600).")] int timeoutSeconds = 60)
+        [Description("Execution deadline in seconds (default 60, max 600). Abort is best-effort around Tekla remoting.")]
+        int timeoutSeconds = 60)
         => model.ExecuteScript(code ?? "", allowMutations, timeoutSeconds);
+
+    [McpServerTool(Name = "tekla_check_csharp")]
+    [Description(
+        "COMPILE-ONLY safety check for the exact C# source intended for tekla_run_csharp. Applies the same banned-API " +
+        "policy, resolves all installed Tekla.Structures*.dll references (including Drawing/Dialog when present), and " +
+        "returns compiler diagnostics, a SHA-256 code hash, and detected mutating member names. It NEVER executes the " +
+        "script, never connects to the model, and never changes a model or drawing. Mutating members are therefore " +
+        "allowed during this check so a proposed write can be verified BEFORE asking the user to approve it. A " +
+        "successful check is not approval to execute: show the user this exact script plus codeSha256 and only then " +
+        "call tekla_run_csharp with allowMutations=true after explicit approval. Inspect compiled=true; on a Mock " +
+        "backend without TEKLA_MCP_SCRIPT_REF_DIR, compilation is unavailable and success=false.")]
+    public static ScriptResult CheckCsharp(
+        ITeklaModelService model,
+        [Description("The exact C# script to policy-check and compile without executing.")] string code)
+        => model.ExecuteScript(code ?? "", allowMutations: true, timeoutSeconds: 60, compileOnly: true);
 
     [McpServerTool(Name = "tekla_search_api")]
     [Description(
@@ -87,4 +107,10 @@ public static class ModelScriptTools
         [Description("Type name, short or fully qualified.")] string typeName,
         [Description("Truncate the page to this many characters (default 24000).")] int maxChars = 24_000)
         => ApiReference.GetTypeDoc(typeName ?? "", maxChars);
+
+    [McpServerTool(Name = "tekla_get_api_reference_status")]
+    [Description("Check whether the offline Tekla Open API reference is available and return its " +
+                 "resolved directory or exact setup guidance. Call this before a scripting session.")]
+    public static ApiReferenceStatus GetApiReferenceStatus()
+        => ApiReference.GetStatus();
 }

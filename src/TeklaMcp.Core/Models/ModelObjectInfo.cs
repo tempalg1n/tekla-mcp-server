@@ -84,4 +84,15 @@ public sealed class ModelObjectInfo
 
     /// <summary>Solid bounding box maximum Z coordinate (mm), when available.</summary>
     public double? MaxZ { get; set; }
+
+    /// <summary>Tekla Plane/Rotation/Depth positioning for parts, when available.</summary>
+    public PartPosition? Position { get; set; }
+
+    /// <summary>
+    /// External/IFC GUID for a reference-model object. Its Tekla <see cref="Guid"/> may be empty.
+    /// </summary>
+    public string? ExternalGuid { get; set; }
+
+    /// <summary>External entity type such as IFCWINDOW, when available.</summary>
+    public string? ExternalEntity { get; set; }
 }

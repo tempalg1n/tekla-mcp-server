@@ -15,6 +15,8 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>TeklaMcp.Server</RootNamespace>
     <AssemblyName>TeklaMcp.Server</AssemblyName>
+    <!-- Permit the mock/net8 host to run on a machine with only a newer .NET runtime. -->
+    <RollForward>Major</RollForward>
 
     <TargetFrameworks Condition="'$(OS)' == 'Windows_NT'">net8.0;net48</TargetFrameworks>
     <TargetFrameworks Condition="'$(OS)' != 'Windows_NT'">net8.0</TargetFrameworks>

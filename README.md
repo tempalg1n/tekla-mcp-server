@@ -31,6 +31,9 @@ This server provides that bridge through the **Model Context Protocol**: a stand
 - Read the current UI selection in Tekla
 - Select objects in the Tekla UI by filter
 - Read and write user-defined attributes (UDAs) with safe preview-by-default writes
+- Search and QA the drawing list without opening drawings
+- Create, update, issue, print, and manage assembly/single-part/cast-unit/GA drawings
+- Inspect and edit drawing views, annotations, graphics, dimensions, marks, and symbols
 
 ---
 
@@ -74,7 +77,8 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix.
+All tools use the `tekla_` prefix. v0.7.0 exposes **100 tools** in total, including **51
+drawing-specific tools**.
 
 | Tool | Description |
 |---|---|
@@ -86,6 +90,9 @@ All tools use the `tekla_` prefix.
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
 | `tekla_get_properties` | Read any named properties (report props, UDAs, built-ins) for an object by GUID. |
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
+| `tekla_get_reference_geometry` | Inspect selected/ID-addressed IFC objects: external GUID/entity, dimensions, world AABB and capped face polygons. |
+| `tekla_get_solid_bbox` | Read explicit native-part solid bounding boxes (or current selection). |
+| `tekla_list_control_lines` | List ControlLine start/end coordinates. |
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
 | `tekla_count_objects` | Count objects matching filters (fast: no per-object data is materialized; an unfiltered count is instant). |
@@ -98,6 +105,7 @@ All tools use the `tekla_` prefix.
 | `tekla_find_modeling_issues` | QA battery: missing material/profile/class, zero weight, not-numbered; grouped with sample GUIDs. |
 | `tekla_export_objects` | Export filtered objects as a CSV/Markdown table (bill-of-materials). |
 | `tekla_analyze_profile_connections` | Estimate unique connection/node types for members of a profile. |
+| `tekla_list_connections` | List actual Connection/component objects attached to a part. |
 | `tekla_select_objects` | Select matching objects in the Tekla UI; supports UDA/attribute filters and `guidIn`; returns `selectedCount` + preview. |
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
@@ -111,10 +119,13 @@ All tools use the `tekla_` prefix.
 |---|---|
 | `tekla_list_grids` | List grid lines (axis, label, coordinate). |
 | `tekla_resolve_point` | Resolve a point from axis labels + elevation (e.g. `1` × `Д` × `6000`). |
-| `tekla_create_beam` | Create a beam between two points. |
+| `tekla_create_beam` | Create a beam between two points, with optional Plane/Rotation/Depth or Position copied from an exemplar. |
+| `tekla_create_beams` | Create up to 200 beams in one structured batch. |
 | `tekla_create_column` | Create a vertical column at (x,y) from bottomZ to topZ. |
 | `tekla_create_plate` | Create a contour plate from 3+ points. |
-| `tekla_modify_part` | Edit one part: profile/material/class/name and/or endpoints. |
+| `tekla_modify_part` | Edit properties/endpoints/Position, or copy Position from an exemplar. |
+| `tekla_create_connection` | Create a system/custom Connection (primary, secondaries, UpVector, attributes file). |
+| `tekla_copy_connection` | Copy a Connection's exact name/number/orientation to new parts. |
 | `tekla_swap_handles` | Swap start/end handles of matching parts. |
 | `tekla_delete_objects` | Delete objects by filter or GUID list. |
 | `tekla_create_beam_between_grids` | Create a beam between two grid intersections at an elevation. |
@@ -122,6 +133,115 @@ All tools use the `tekla_` prefix.
 | `tekla_generate_frame` | Generate a full bayed frame (columns + per-story beams). |
 | `tekla_straighten_columns` | Re-plumb crooked columns (align top over bottom). |
 | `tekla_fix_column_handles` | Re-orient flipped columns (swap inverted handles). |
+
+### Drawing tools
+
+Drawing tools use Tekla's separate Drawing API and its editor state. Drawing-list queries work
+with the editor open or closed. View/object inspection and content editing require an **active
+drawing**; creating drawings, updating them from the model, deleting them, and PDF export have
+stricter closed-editor/closed-drawing preconditions noted below.
+
+Drawing, view, and object addresses should be obtained from the corresponding list tool.
+`DrawingInternal` ID/ID2 values are exposed when Tekla provides them; they are a best-effort,
+version-sensitive API. Drawing keys fall back to a composite of public properties when IDs are
+unavailable. View/object indices are explicitly ephemeral — re-list after insert/delete or other
+structural edits, and prefer non-zero `ID:ID2` pairs.
+
+Persistent drawing changes are preview-by-default. The backend attempts to stamp
+`MCP_ORIGIN`, but drawing-side UDA support varies by object and environment; do not rely on the
+tag as the only rollback mechanism. Pay particular attention to
+`tekla_close_drawing(save=false)`, which discards unsaved editor changes when applied.
+
+#### Drawing discovery and editor selection
+
+| Tool | Description |
+|---|---|
+| `tekla_get_drawing_status` | Check Drawing API connectivity and active-editor state. |
+| `tekla_get_active_drawing` | Return the currently open drawing, or `null` when the editor is closed. |
+| `tekla_list_drawings` | Search drawing-list rows by key/type/mark/name/title/model GUID/status/flags/selection. |
+| `tekla_get_selected_drawings` | Return rows selected in Tekla's Drawing List dialog. |
+| `tekla_get_drawing_summary` | Aggregate counts by type/status and issued/locked/ready/stale state, with explicit scan truncation. |
+| `tekla_find_drawing_issues` | QA heuristics for stale, issued-but-modified, ready-but-stale, and missing mark/name rows. |
+| `tekla_get_drawing_model_objects` | Return a bounded/paginated page of full model identifiers represented by a drawing. |
+| `tekla_get_drawing_sheet` | Read active-sheet width, height, origin and configured layout size/mode in paper millimetres. |
+| `tekla_list_drawing_views` | List active-drawing views with best-effort ID/ID2, paper frame, scale, restriction box, and coordinate systems. |
+| `tekla_list_drawing_objects` | Filter active-drawing objects by ID/index/type/view/model GUID/text/selection, with optional geometry and UDAs. |
+| `tekla_get_selected_drawing_objects` | Return the current drawing-editor selection. |
+| `tekla_select_drawing_objects` | Select/highlight matching active-drawing objects (an immediate UI side effect, not a model mutation). |
+
+#### Drawing lifecycle and output
+
+All state-changing tools in this table are **preview-by-default** (`apply=false`).
+
+| Tool | Description |
+|---|---|
+| `tekla_open_drawing` | Open one drawing by opaque key or an unambiguous exact mark; refuses to replace an active drawing. |
+| `tekla_save_drawing` | Save the active drawing. |
+| `tekla_close_drawing` | Close the active drawing; `save=false` explicitly discards unsaved editor changes. |
+| `tekla_create_drawing` | Create one assembly, single-part, cast-unit, or GA drawing; editor must be closed. |
+| `tekla_create_drawings` | Batch-create up to 50 drawings; editor must be closed. |
+| `tekla_create_drawings_from_rule` | Run a saved Tekla AutoDrawing rule for up to 50 model GUIDs; editor must be closed. |
+| `tekla_modify_drawings` | Batch-edit name, titles, frozen/locked/master/ready flags. |
+| `tekla_delete_drawings` | Delete matched drawings; an active drawing cannot be deleted. |
+| `tekla_issue_drawings` | Issue matched drawings. |
+| `tekla_unissue_drawings` | Remove issued state from matched drawings. |
+| `tekla_update_drawings` | Update matched closed drawings from the model; numbering must be up to date. |
+| `tekla_place_drawing_views` | Ask Tekla to auto-place views on the matched active drawing. |
+| `tekla_export_drawings_pdf` | Print matched closed drawings to PDF with color/orientation/paper/scale options. |
+
+#### Views and drawing content
+
+These tools operate on the **active drawing** and are also preview-by-default. Saved attribute
+file names are passed to Tekla and resolved by the running environment.
+
+| Tool | Description |
+|---|---|
+| `tekla_create_drawing_view` | Create a front/top/back/bottom/3D view on a non-GA drawing. |
+| `tekla_create_ga_drawing_view` | Create a GA model view from explicit global view/display coordinate systems and a restriction box. |
+| `tekla_create_section_view` | Create a straight or curved section view and section mark from a source view. |
+| `tekla_create_detail_view` | Create a detail view and detail mark from a source view. |
+| `tekla_modify_drawing_view` | Edit a view's name, sheet origin/frame, scale, and rotations. |
+| `tekla_delete_drawing_view` | Delete a view and its children. |
+| `tekla_create_drawing_objects` | Batch-create up to 200 structured annotations/graphics/dimensions/marks. |
+| `tekla_create_drawing_text` | Create text in a view or on the sheet. |
+| `tekla_create_drawing_line` | Create a line. |
+| `tekla_create_drawing_rectangle` | Create a rectangle. |
+| `tekla_create_drawing_circle` | Create a circle. |
+| `tekla_create_drawing_arc` | Create an arc from three points or two points plus radius. |
+| `tekla_create_drawing_polyline` | Create a polyline. |
+| `tekla_create_drawing_polygon` | Create a closed polygon. |
+| `tekla_create_revision_cloud` | Create a revision cloud graphic. |
+| `tekla_create_straight_dimension` | Create a straight dimension set. |
+| `tekla_create_angle_dimension` | Create an angle dimension. |
+| `tekla_create_radius_dimension` | Create a radius dimension. |
+| `tekla_create_curved_dimension` | Create a radial or orthogonal curved dimension set. |
+| `tekla_create_drawing_mark` | Create a mark for a model object represented in a target view. |
+| `tekla_create_level_mark` | Create a level mark. |
+| `tekla_create_drawing_symbol` | Create a symbol from a Tekla `.sym` library. |
+| `tekla_modify_drawing_objects` | Batch-change text, relative position, visibility, or loaded attributes. |
+| `tekla_delete_drawing_objects` | Delete objects by best-effort ID/type/current editor selection. |
+| `tekla_merge_drawing_marks` | Merge compatible marks by best-effort IDs/current selection. |
+| `tekla_split_drawing_marks` | Split merged mark sets by best-effort IDs/current selection. |
+
+Drawing inputs use three explicit coordinate spaces:
+
+- `view` — coordinates local to the target view/display coordinate system (model millimetres
+  before drawing scale);
+- `model` — global model coordinates, transformed into the target view through its
+  `DisplayCoordinateSystem`;
+- `sheet` — paper coordinates in millimetres; target the sheet with `viewIndex=-1` and no
+  `viewId`.
+
+View insertion/origin/frame values and dimension-line distances are paper millimetres. Section
+cut/detail points are source-view-local; section depths are model millimetres. Geometry returned
+by `tekla_list_drawing_objects` is in the object's Tekla view/sheet coordinate system, not
+silently converted to global model coordinates. Use the coordinate systems returned by
+`tekla_list_drawing_views` when transforming values.
+
+Geometry extraction is richest for graphics, text, marks and angle dimensions. Some complex
+dimension sets, level marks, symbols and model-linked drawing objects currently expose only
+their available bounding box/identity; use `tekla_run_csharp` for a one-off deeper read and
+report recurring gaps.
 
 ### C# scripting escape hatch
 
@@ -131,14 +251,18 @@ The Tekla Open API is far larger than this tool set. When no dedicated tool cove
 |---|---|
 | `tekla_search_api` | Keyword search over the locally generated Tekla Open API reference (types + member signatures). |
 | `tekla_get_api_doc` | Full reference page for one type: every constructor/property/method signature with summaries. |
+| `tekla_get_api_reference_status` | Report whether the local offline reference is ready and how to set it up. |
+| `tekla_check_csharp` | Policy-check and compile the exact source without executing it; returns SHA-256 + detected mutations for approval. |
 | `tekla_run_csharp` | Run a C# script (top-level statements, Tekla namespaces pre-imported, `Print(...)` for output, last expression = JSON return value). |
 
 Safety model:
 
 - **Read-only by default, writes by consent.** Mutating members (`Insert`/`Modify`/`Delete`/`CommitChanges`/`SetUserProperty`/`Operation.*`) are rejected unless the call sets `allowMutations=true` — and the tool contract obliges the agent to show you the script and get your explicit go-ahead before setting it. Scripted changes should be tagged with the `MCP_ORIGIN` UDA where practical; committed changes are undoable with Tekla's **Ctrl+Z**.
 - **No host access.** A syntax-level policy bans file system, network, processes, reflection, threads and `Console` (stdout belongs to the MCP protocol). `#r`/`#load` and `await` are rejected too.
-- **Hard timeout** (default 60 s, max 600 s) on a dedicated thread.
-- **Bounded output.** `Print` is capped at 500 lines; the return value is rendered to JSON defensively (depth/size caps, per-property try/catch).
+- **Execution deadline** (default 60 s, max 600 s) on a dedicated thread. Abort is best-effort
+  around Tekla remoting; the result warns when worker termination cannot be confirmed.
+- **Compile before consent.** `tekla_check_csharp` never connects to or executes against the model, so a proposed mutation can be verified before approval; use its `codeSha256` to identify the exact reviewed source. The live backend compiles against every installed managed `Tekla.Structures*.dll` (including Drawing/Dialog when present). Drawing is not a global import because its `Part`/`View` types are ambiguous — use `using TSD = Tekla.Structures.Drawing;`.
+- **Bounded output.** `Print` uses private host-owned storage capped at 500 lines / 64,000 characters; the return value is rendered inside the timeout worker as capped, always-valid JSON.
 - On the **mock backend** scripts are validated and compiled but never executed (compilation needs Tekla DLLs — point `TEKLA_MCP_SCRIPT_REF_DIR` at a folder with `Tekla.Structures*.dll`, e.g. extracted from the NuGet packages).
 
 This is a pragmatic barrier for well-behaved agents, not a security sandbox — the script runs with the server's privileges. Prefer the dedicated write tools (preview-by-default) for changes; the scripted-write path is for cases they don't cover.
@@ -181,6 +305,12 @@ Most query and analytics tools accept:
 - “Run modeling-issue checks and show what’s missing material or not numbered.”
 - “Read `VOLUME`, `AREA` and `PHASE` for this GUID (`tekla_get_properties`).”
 - “Export all class-20 beams as a CSV bill-of-materials.”
+- “Show all assembly drawings that are issued but modified, without opening them.”
+- “Preview updating the drawings selected in the Drawing List; do not apply.”
+- “Open drawing `A-12`, list its views, and show the represented model GUIDs.”
+- “In the active view, preview a straight dimension through these global model points.”
+- “Create a red revision cloud and note on the active drawing, preview first.”
+- “Preview exporting the selected closed drawings to A3 black-and-white PDFs.”
 
 ### UDA write safety
 
@@ -309,9 +439,11 @@ Example for Claude Desktop, Claude Code, or Cursor (`mcpServers`):
 - [x] Analytics: count, weight sum, grouping, material breakdown
 - [x] UI selection via `tekla_select_objects`
 - [x] UDA read/write with preview-by-default safety
+- [x] Drawing-list queries, lifecycle, QA, creation, update, issue, and PDF output
+- [x] Drawing views, graphics, annotations, dimensions, marks, and editor selection
 - [ ] Broader object coverage: bolts, assemblies, rebar, geometry
-- [ ] Automated tests for Core and Mock layers
-- [ ] Compatibility matrix for Tekla 2023–2026
+- [x] Automated tests for Core and Mock layers
+- [x] Per-version build matrix for Tekla 2021–2026
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

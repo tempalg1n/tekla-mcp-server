@@ -66,6 +66,20 @@ public interface ITeklaModelService
     IReadOnlyList<ModelObjectInfo> GetSelectedObjects();
 
     /// <summary>
+    /// Read semantic metadata and world geometry for reference-model objects. Reference objects
+    /// are addressed by integer Tekla IDs because their Tekla GUID is commonly empty. When
+    /// <paramref name="useSelection"/> is true, <paramref name="ids"/> may be empty.
+    /// Face data is best-effort and capped per object; failures are returned in each DTO.
+    /// </summary>
+    IReadOnlyList<ReferenceGeometryInfo> GetReferenceGeometry(
+        IReadOnlyList<int> ids,
+        bool useSelection = false,
+        int maxObjects = 20,
+        int maxFacesPerObject = 100,
+        int maxTotalFaces = 1000,
+        int maxTotalPoints = 20000);
+
+    /// <summary>
     /// Select objects in the Tekla UI by query and return a lightweight result snapshot.
     /// Implementations should be best-effort and return an empty selection on failure.
     /// </summary>
@@ -142,6 +156,105 @@ public interface ITeklaModelService
     /// <summary>Delete objects matching a query. Preview unless apply. Capped by <paramref name="limit"/>.</summary>
     WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null);
 
+    /// <summary>List connections/components attached to a part. Empty if the part is not found.</summary>
+    IReadOnlyList<ComponentInfo> GetConnections(string partGuid);
+
+    /// <summary>
+    /// Create one or more connections. Preview unless apply; implementations commit geometry
+    /// once before inserting components so newly-created parts can be addressed reliably.
+    /// </summary>
+    WriteResult CreateConnections(IReadOnlyList<ConnectionSpec> specs, bool apply);
+
+    // -- Drawings ---------------------------------------------------------------------------
+
+    /// <summary>Probe the Drawing API and return the currently active drawing, if any.</summary>
+    DrawingStatusInfo GetDrawingStatus();
+
+    /// <summary>List/filter drawing-list rows. Empty result means no matches.</summary>
+    IReadOnlyList<DrawingInfo> FindDrawings(DrawingQuery query, int? limit = null);
+
+    /// <summary>Return a bounded page of model identifiers represented by one drawing.</summary>
+    DrawingModelObjectResult GetDrawingModelObjects(
+        string keyOrMark,
+        int offset = 0,
+        int limit = 500);
+
+    /// <summary>
+    /// Return active sheet geometry and configured layout size in paper millimetres.
+    /// When no drawing is active, <see cref="DrawingSheetInfo.Available"/> is false.
+    /// </summary>
+    DrawingSheetInfo GetDrawingSheet();
+
+    /// <summary>List views on the active drawing sheet. Requires an active drawing.</summary>
+    IReadOnlyList<DrawingViewInfo> GetDrawingViews();
+
+    /// <summary>List/filter objects in the active drawing or current drawing selection.</summary>
+    IReadOnlyList<DrawingObjectInfo> FindDrawingObjects(DrawingObjectQuery query, int? limit = null);
+
+    /// <summary>Select matching objects in the active drawing editor.</summary>
+    DrawingSelectionResult SelectDrawingObjects(DrawingObjectQuery query, int? limit = null);
+
+    /// <summary>Open a drawing by exact MCP key or unambiguous exact mark. Preview unless apply.</summary>
+    DrawingWriteResult OpenDrawing(string keyOrMark, bool showDrawing, bool apply);
+
+    /// <summary>Close the active drawing, optionally saving it. Preview unless apply.</summary>
+    DrawingWriteResult CloseActiveDrawing(bool save, bool apply);
+
+    /// <summary>Save the active drawing. Preview unless apply.</summary>
+    DrawingWriteResult SaveActiveDrawing(bool apply);
+
+    /// <summary>Create assembly/single-part/cast-unit/GA drawings. Preview unless apply.</summary>
+    DrawingWriteResult CreateDrawings(IReadOnlyList<DrawingSpec> specs, bool apply);
+
+    /// <summary>Create drawings using a saved Tekla AutoDrawing rule. Preview unless apply.</summary>
+    DrawingWriteResult CreateDrawingsFromRule(
+        string ruleFile,
+        IReadOnlyList<string> modelGuids,
+        bool apply);
+
+    /// <summary>Modify drawing-list metadata/flags for matched drawings. Preview unless apply.</summary>
+    DrawingWriteResult ModifyDrawings(
+        DrawingQuery query,
+        DrawingModification modification,
+        bool apply,
+        int? limit = null);
+
+    /// <summary>
+    /// Run a drawing-list operation: delete, issue, unissue, update, place_views, or print.
+    /// Preview unless apply.
+    /// </summary>
+    DrawingWriteResult OperateDrawings(
+        DrawingQuery query,
+        string operation,
+        DrawingPrintOptions? printOptions,
+        bool apply,
+        int? limit = null);
+
+    /// <summary>Create orthogonal/3D views on the active drawing. Preview unless apply.</summary>
+    DrawingWriteResult CreateDrawingViews(IReadOnlyList<DrawingViewSpec> specs, bool apply);
+
+    /// <summary>Modify active-drawing views by their current zero-based indices. Preview unless apply.</summary>
+    DrawingWriteResult ModifyDrawingViews(
+        IReadOnlyList<DrawingViewModification> modifications,
+        bool apply);
+
+    /// <summary>Create annotations/graphics/dimensions/marks in the active drawing. Preview unless apply.</summary>
+    DrawingWriteResult CreateDrawingObjects(IReadOnlyList<DrawingObjectSpec> specs, bool apply);
+
+    /// <summary>Modify/move/hide/show/delete active-drawing objects. Preview unless apply.</summary>
+    DrawingWriteResult ModifyDrawingObjects(
+        DrawingObjectQuery query,
+        DrawingObjectModification modification,
+        bool apply,
+        int? limit = null);
+
+    /// <summary>Merge or split matched drawing marks. Preview unless apply.</summary>
+    DrawingWriteResult OperateDrawingMarks(
+        DrawingObjectQuery query,
+        string operation,
+        bool apply,
+        int? limit = null);
+
     // -- Script escape hatch ----------------------------------------------------------------
 
     /// <summary>
@@ -149,9 +262,16 @@ public interface ITeklaModelService
     /// the model, for capabilities no dedicated tool covers yet. Never throws — every failure
     /// (policy violation, compile error, runtime exception, timeout) is reported inside
     /// <see cref="ScriptResult"/>. The safety policy (read-only unless
-    /// <paramref name="allowMutations"/>, no file/network/process/reflection access, hard
-    /// timeout) is enforced by the implementation; the mock backend validates and compiles
+    /// <paramref name="allowMutations"/>, no file/network/process/reflection access, bounded
+    /// execution deadline with best-effort abort) is enforced by the implementation; the mock backend validates and compiles
     /// but never executes (<see cref="ScriptResult.Executed"/> stays false).
+    /// <paramref name="compileOnly"/> runs policy + compilation on either backend without
+    /// connecting to or executing against the live model; mutation syntax may be allowed so
+    /// the exact source can be checked before user approval.
     /// </summary>
-    ScriptResult ExecuteScript(string code, bool allowMutations = false, int timeoutSeconds = 60);
+    ScriptResult ExecuteScript(
+        string code,
+        bool allowMutations = false,
+        int timeoutSeconds = 60,
+        bool compileOnly = false);
 }

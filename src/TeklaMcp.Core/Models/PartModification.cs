@@ -30,4 +30,13 @@ public sealed class PartModification
 
     /// <summary>If true, swap the start and end handles of a linear member.</summary>
     public bool SwapHandles { get; set; }
+
+    /// <summary>Position fields to change; null fields inside it are left unchanged.</summary>
+    public PartPosition? Position { get; set; }
+
+    /// <summary>
+    /// Optional source part GUID whose complete Position is copied before explicit
+    /// <see cref="Position"/> fields override it.
+    /// </summary>
+    public string? MatchPositionGuid { get; set; }
 }

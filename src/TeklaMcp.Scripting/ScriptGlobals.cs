@@ -15,9 +15,24 @@ public class ScriptGlobals
 {
     private const int MaxLines = 500;
     private const int MaxLineLength = 2000;
+    private const int MaxTotalCharacters = 64_000;
+    private const string CapMarker =
+        "…(output capped at 500 lines / 64000 characters — aggregate in the script and return a smaller value)";
 
-    /// <summary>Lines collected by <see cref="Print"/>, returned to the agent after the run.</summary>
-    public List<string> PrintedOutput { get; } = new List<string>();
+    private readonly object _gate = new object();
+    private readonly List<string> _printedOutput = new List<string>();
+    private int _printedCharacters;
+    private bool _outputCapped;
+
+    /// <summary>
+    /// Return a copy of the collected lines. The backing list is intentionally private so
+    /// script code cannot clear it, append unbounded data, or mutate host-owned output.
+    /// </summary>
+    public List<string> SnapshotOutput()
+    {
+        lock (_gate)
+            return new List<string>(_printedOutput);
+    }
 
     /// <summary>
     /// Script-facing logger: <c>Print(beam.Profile.ProfileString)</c>. Capped so a loop over a
@@ -25,17 +40,49 @@ public class ScriptGlobals
     /// </summary>
     public void Print(object? value)
     {
-        if (PrintedOutput.Count > MaxLines)
-            return;
-        if (PrintedOutput.Count == MaxLines)
+        string text;
+        try
         {
-            PrintedOutput.Add($"…(output capped at {MaxLines} lines — aggregate in the script and return a value instead)");
-            return;
+            text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null";
+        }
+        catch (Exception ex)
+        {
+            text = "<Print ToString threw: " + (ex.InnerException ?? ex).Message + ">";
         }
 
-        var text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? "null";
         if (text.Length > MaxLineLength)
             text = text.Substring(0, MaxLineLength) + "…";
-        PrintedOutput.Add(text);
+
+        lock (_gate)
+        {
+            if (_outputCapped)
+                return;
+
+            // Reserve the final line for a clear cap marker. A total-character cap protects
+            // the MCP response even when every Print call emits a maximum-length line.
+            if (_printedOutput.Count >= MaxLines - 1 ||
+                _printedCharacters + text.Length + CapMarker.Length > MaxTotalCharacters)
+            {
+                AppendCapMarker();
+                return;
+            }
+
+            _printedOutput.Add(text);
+            _printedCharacters += text.Length;
+        }
+    }
+
+    private void AppendCapMarker()
+    {
+        _outputCapped = true;
+        if (_printedOutput.Count >= MaxLines || _printedCharacters >= MaxTotalCharacters)
+            return;
+
+        var marker = CapMarker;
+        var remaining = MaxTotalCharacters - _printedCharacters;
+        if (marker.Length > remaining)
+            marker = marker.Substring(0, remaining);
+        _printedOutput.Add(marker);
+        _printedCharacters += marker.Length;
     }
 }

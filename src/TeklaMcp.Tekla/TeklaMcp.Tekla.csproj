@@ -35,6 +35,7 @@
   <ItemGroup Condition="'$(TeklaBinDir)' == ''">
     <PackageReference Include="Tekla.Structures" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
     <PackageReference Include="Tekla.Structures.Model" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
+    <PackageReference Include="Tekla.Structures.Drawing" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <!-- Alternative compile source: a local Tekla install's DLLs (also NOT copied to output). -->
@@ -45,6 +46,10 @@
     </Reference>
     <Reference Include="Tekla.Structures.Model">
       <HintPath>$(TeklaBinDir)\Tekla.Structures.Model.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Tekla.Structures.Drawing">
+      <HintPath>$(TeklaBinDir)\Tekla.Structures.Drawing.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>

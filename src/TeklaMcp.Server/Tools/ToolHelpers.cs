@@ -79,6 +79,30 @@ internal static class ToolHelpers
             UseSelection = useSelection,
         };
 
+    public static PartPosition? BuildPosition(
+        string? plane,
+        double? planeOffset,
+        string? rotation,
+        double? rotationOffset,
+        string? depth,
+        double? depthOffset)
+    {
+        if (string.IsNullOrWhiteSpace(plane) && !planeOffset.HasValue &&
+            string.IsNullOrWhiteSpace(rotation) && !rotationOffset.HasValue &&
+            string.IsNullOrWhiteSpace(depth) && !depthOffset.HasValue)
+            return null;
+
+        return new PartPosition
+        {
+            Plane = string.IsNullOrWhiteSpace(plane) ? null : plane,
+            PlaneOffset = planeOffset,
+            Rotation = string.IsNullOrWhiteSpace(rotation) ? null : rotation,
+            RotationOffset = rotationOffset,
+            Depth = string.IsNullOrWhiteSpace(depth) ? null : depth,
+            DepthOffset = depthOffset,
+        };
+    }
+
     /// <summary>True if the object has both endpoints (i.e. a linear member with geometry).</summary>
     public static bool HasEnds(ModelObjectInfo o) =>
         o.StartX.HasValue && o.StartY.HasValue && o.StartZ.HasValue &&

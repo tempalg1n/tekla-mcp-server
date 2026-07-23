@@ -124,17 +124,77 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
 - **Tag origin.** Backends stamp created/modified objects with the `MCP_ORIGIN` UDA so agent
   output is findable and reversible. Keep this behavior.
 - **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
-- **Small service surface.** The interface has only five write methods: `GetGrids`,
-  `ResolvePoint`, `CreateParts`, `ModifyParts`, `DeleteObjects`. **Generators and fixers
-  (`tekla_generate_frame`, `tekla_straighten_columns`, `tekla_fix_column_handles`, …) live in
-  the TOOL layer** and compose those five — do NOT add per-generator interface methods.
+- **Small service surface.** Keep backend write methods primitive and batch-oriented:
+  `CreateParts`, `ModifyParts`, `DeleteObjects`, and `CreateConnections`. **Generators, fixers
+  and replication workflows** (`tekla_generate_frame`, `tekla_straighten_columns`,
+  `tekla_fix_column_handles`, future `tekla_replicate_detail`, …) live in the TOOL layer and
+  compose those primitives — do NOT add per-generator interface methods.
 - **Global coordinates.** Tool inputs are global model coordinates (mm). The Tekla backend forces
   the global `TransformationPlane` around mutations (`WorkPlaneHandler`); preserve that.
+- **Position is a first-class DTO.** `PartPosition` carries Plane/Rotation/Depth + offsets.
+  Creation/modification may set fields explicitly or copy the complete Position from
+  `MatchPositionGuid`; explicit fields override the copied values.
+- **Connections are committed after geometry.** `CreateConnections` performs one
+  `CommitChanges()` before resolving primary/secondary GUIDs, preventing the common
+  freshly-created-part race. Negative `ConnectionSpec.Number` maps to
+  `BaseComponent.CUSTOM_OBJECT_NUMBER`. Arbitrary custom-component attributes cannot be
+  enumerated reliably; use `AttributesFile`.
 - Shared parsing/query helpers for write tools live in `ToolHelpers.cs`.
 
-New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTools.cs`.
-The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`, grid parsing) is the
-most under-verified code in the repo — see `docs/tekla-api-notes.md`.
+New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTools.cs`,
+`ModelReferenceTools.cs`.
+The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`/`CreateConnections`,
+grid parsing) is the most under-verified code in the repo — see `docs/tekla-api-notes.md`.
+
+### Conventions for reference-model / IFC geometry
+
+- Reference objects often have `Identifier.GUID == Guid.Empty`; use their integer `Id` as the
+  session-local address for `GetReferenceGeometry`.
+- Metadata and faces are best-effort. Keep every optional reference API call inside
+  `try/catch`; return partial DTOs with `Message` instead of failing the whole tool.
+- `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` is used because the public
+  `ReferenceModelObject` surface has no geometry. It is version-sensitive and must keep a
+  `// TODO(windows):` marker plus notes in `docs/tekla-api-notes.md`.
+- Cap faces and custom attributes. Never return an unbounded IFC mesh through MCP.
+
+### Conventions for DRAWING tools
+
+Drawing tools use `Tekla.Structures.Drawing` but follow the same boundary rules as model tools:
+no Tekla types outside `src/TeklaMcp.Tekla/`, flat Core DTOs, and believable stateful Mock
+behavior.
+
+- **Keep the package version-locked.** `Tekla.Structures.Drawing` uses the same
+  `$(TeklaVersion)` as Model/Core in every per-version build. New drawing calls must compile
+  against the common 2021 baseline and remain wrapped with graceful errors/TODO(windows) notes
+  until live-verified.
+- **Respect editor preconditions.** List/status operations may run with no drawing open;
+  view/object/content operations require an active drawing; creation/AutoDrawing require the
+  editor closed; update/delete/print cannot target the active drawing. Never close or replace an
+  active drawing implicitly.
+- **Preview every persistent mutation.** Drawing/view/object creates, edits, lifecycle changes,
+  issue/update/delete/place/print operations take `apply=false` by default, cap batches, and
+  return `DrawingWriteResult`. `save=false` on close is destructive and must stay explicit.
+  `tekla_select_drawing_objects` is an immediate UI-only side effect, like model selection.
+- **Commit on the correct side.** Active-drawing content uses `Drawing.CommitChanges`, not
+  `Model.CommitChanges`. Attempt `MCP_ORIGIN` on created/modified drawing database objects, but
+  tolerate UDA support varying by object/environment.
+- **Treat DrawingInternal IDs as best-effort.**
+  `DatabaseObjectExtensions.GetIdentifier` may fail or yield zero on some versions/objects.
+  It supplies an object's own ID; `GetViewIdentifier` means the containing view and must not be
+  used as a placed View's own identity. Drawing keys therefore need a public-property fallback;
+  object/view indices are ephemeral and must never be described as durable. Prefer non-zero
+  ID/ID2, and re-list after structural edits.
+- **Keep coordinate spaces explicit.** `view` is target-view local, `model` is global model
+  coordinates transformed through `DisplayCoordinateSystem`, and `sheet` is paper millimetres
+  with the sheet target (`viewIndex=-1`, no view ID). View insertion/frame and dimension-line
+  distances are paper millimetres; section depths are model millimetres. Never silently mix or
+  relabel these spaces.
+- **Saved settings stay declarative.** Attribute, AutoDrawing-rule, symbol-library, printer, and
+  output names are passed to Tekla for environment-specific resolution; MCP code does not
+  search arbitrary files to guess them.
+- Keep the drawing surface split between `DrawingQueryTools.cs`, `DrawingWriteTools.cs`,
+  `DrawingContentTools.cs` and the live partials `TeklaDrawingService.cs`,
+  `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs`.
 
 ### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
 
@@ -142,13 +202,17 @@ most under-verified code in the repo — see `docs/tekla-api-notes.md`.
 dedicated tool exists. Rules for maintaining it:
 
 - **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
-  the caller: the net48 backend passes DLL *file paths* from `TeklaAssemblyResolver.BinDir`
-  (preferred over `typeof(...).Assembly` — the file set covers the whole closure, e.g.
-  Datatype/Plugins, regardless of how the assemblies were bound); the mock passes DLL paths
-  from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line (last to target
-  netstandard2.0).
-- **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). The mock NEVER executes
-  (`Executed=false`); only the net48 backend runs scripts. Never throw — report failures in the DTO.
+  the caller: the net48 backend dynamically passes every managed `Tekla.Structures*.dll` file
+  from `TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins included when installed);
+  the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line
+  (last to target netstandard2.0). Do not globally import `Tekla.Structures.Drawing`: its
+  `Part`/`View` names collide with Model/UI types; scripts use an explicit alias instead.
+- **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). `tekla_check_csharp`
+  runs the identical policy + compiler path with `compileOnly=true`, permits mutation syntax
+  because it never executes, and returns the source SHA-256 + detected mutating members for
+  approval. The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
+  `ExecutionAttempted` become true as soon as the live worker starts, including failure/timeout.
+  Never throw — report failures and partial-mutation warnings in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
   If you extend the script surface (new imports, new globals), extend the policy AND the tests in
   `tests/TeklaMcp.Tests/ScriptPolicyTests.cs` in the same change. Mutations require
@@ -156,10 +220,13 @@ dedicated tool exists. Rules for maintaining it:
   get explicit approval first, and to keep changes traceable (`MCP_ORIGIN` UDA) — keep that
   contract wording intact.
 - **Never let scripts touch stdout** — `Console` is banned by policy; script output goes through
-  `ScriptGlobals.Print` (capped) and `SafeJson` (capped, defensive).
+  private host-owned `ScriptGlobals.Print` storage (line + total-character caps, snapshot only)
+  and `SafeJson` (capped, defensive, always valid JSON). Return-value serialization stays inside
+  the timeout worker because Tekla proxy property access can block.
 - **`tekla_search_api`/`tekla_get_api_doc`** read the `tools/TeklaApiDoc` output (git-ignored) found
-  via `TEKLA_MCP_API_REF_DIR` or by probing for `reference/tekla-api`. They must degrade to a
-  "how to generate" hint, never an error.
+  via `TEKLA_MCP_API_REF_DIR` or by probing for `reference/tekla-api`.
+  `tekla_get_api_reference_status` exposes availability/setup explicitly. They must degrade to
+  a "how to generate" hint, never an error.
 - **A recurring script is a roadmap signal**: promote it to a first-class tool (interface + both
   backends + dedicated tool) and keep `tekla_report_gap` pointing that way.
 
