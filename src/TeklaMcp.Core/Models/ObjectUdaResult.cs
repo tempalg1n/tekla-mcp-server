@@ -19,6 +19,12 @@ public sealed class ObjectUdaResult
     /// <summary>UDA key/value pairs that were found.</summary>
     public Dictionary<string, string> Udas { get; set; } = new Dictionary<string, string>();
 
+    /// <summary>
+    /// Requested names that resolved to nothing on this object. Without this an agent cannot
+    /// tell "the property is empty" from "the property name is wrong".
+    /// </summary>
+    public List<string> NotFound { get; set; } = new List<string>();
+
     /// <summary>Which backend produced this answer: "Mock" or "Tekla".</summary>
     public string Backend { get; set; } = "";
 

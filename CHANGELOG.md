@@ -11,7 +11,58 @@ Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply wit
 `Tekla.Structures.ModuleManager` type-initializer exception, and
 `tekla_get_reference_geometry` unable to deliver world geometry for IFC overlay objects.
 
+Plus a connection/orientation pass answering a second field report (axis А/Д fachwerk session):
+mass edits needed 66 single-object calls, connection `UpVector` writes silently did nothing, and
+`Position` round-trips appeared to lose data. All three causes were reproduced on live Tekla 2023
+and are now handled by the tools and documented under
+"Known model-layer quirks" in [docs/tekla-api-notes.md](docs/tekla-api-notes.md).
+
+### Added
+
+- **`tekla_modify_parts`** — batch form of `tekla_modify_part` (up to 200 parts per call).
+  Re-orienting a whole axis was 66 separate MCP round-trips; the backend was already
+  batch-capable, only the tool was single-object.
+- **`tekla_modify_connections`** — change `UpVector`, auto-direction and/or attributes file on
+  existing connections without deleting them, for one GUID or a whole list. Handles the
+  auto-direction quirk below, so a mass re-orientation is one call.
+- **`tekla_find_connections`** — find connections across many parts at once (part filters,
+  UI selection, or a bounding box), filter by component name/number, and get a `byName` count
+  breakdown: the "what is attached along this axis besides the usual node?" query that
+  previously required enumerating every beam by hand.
+- **`replaceExisting` on `tekla_create_connection` / `tekla_copy_connection`** — deletes the
+  components occupying the target primary/secondary pair (and commits) before inserting, which
+  is the only way to swap a node type.
+- **`ObjectUdaResult.NotFound`** — `tekla_get_properties` now reports which requested names
+  resolved to nothing, instead of silently dropping them, with guidance when none matched.
+- **IFC placement fallback in `tekla_get_reference_geometry`.** When the Tekla API cannot
+  deliver reference-object geometry (the reported case for IFC overlay windows), the server
+  now parses the reference IFC file itself: resolves the `IFCLOCALPLACEMENT` chain by IFC
+  GlobalId, applies the project length unit and the reference-model insertion
+  (Position/Scale/Rotation), and returns world placement `placementOrigin` +
+  `placementX/Y/ZAxis` (GLOBAL mm, `placementSource: "ifc-file"`), plus
+  `OverallWidth`/`OverallHeight`, entity and name when Tekla did not provide them. If no
+  exact face AABB is available, an estimated AABB is derived from placement + overall
+  dimensions and labeled `aabbSource: "ifc-placement-estimate"` (exact face AABBs are
+  labeled `"tekla-faces"`). Agents no longer need to parse IFC files manually.
+- `tekla_get_reference_geometry` accepts `externalGuids` — address reference objects
+  directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
+  `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
+  it.
+
 ### Fixed
+
+- **Write results echoed the in-memory object instead of the committed model.** `ModifyParts`
+  and `CreateConnections` mapped the object they had just written, so the tool answered with
+  values the model did not agree with — a `tekla_modify_part` preview showed
+  `rotation=TOP, rotationOffset=180` where the database held `BELOW/0`. Both now re-select every
+  committed object by GUID after `CommitChanges()` and map that. (The underlying behavior is
+  Tekla canonicalizing `Position` on commit — the orientation was always correct, but the
+  mismatch made agents retry writes that had in fact succeeded.)
+- **Connection `UpVector` writes were silently discarded.** Verified live: with
+  `AUTODIR_BASIC`, `Modify()` returns true and Tekla recomputes the vector from the members;
+  the identical write under `AUTODIR_NA` persists. `ModifyConnections` switches to `AUTODIR_NA`
+  whenever an explicit vector is supplied without a caller-named mode, and the connection tools
+  warn when a caller pins a non-NA mode *and* passes a vector.
 
 - **Drawing-object enumeration died on non-serializable objects (e.g. `DetailMark`).**
   After a detail view was created, every `tekla_select_drawing_objects` /
@@ -69,22 +120,16 @@ Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply wit
   unchanged. (The requested `tekla_create_beams_batch` already exists as
   `tekla_create_beams` — up to 200 beams in one commit.)
 
-### Added
+### Changed
 
-- **IFC placement fallback in `tekla_get_reference_geometry`.** When the Tekla API cannot
-  deliver reference-object geometry (the reported case for IFC overlay windows), the server
-  now parses the reference IFC file itself: resolves the `IFCLOCALPLACEMENT` chain by IFC
-  GlobalId, applies the project length unit and the reference-model insertion
-  (Position/Scale/Rotation), and returns world placement `placementOrigin` +
-  `placementX/Y/ZAxis` (GLOBAL mm, `placementSource: "ifc-file"`), plus
-  `OverallWidth`/`OverallHeight`, entity and name when Tekla did not provide them. If no
-  exact face AABB is available, an estimated AABB is derived from placement + overall
-  dimensions and labeled `aabbSource: "ifc-placement-estimate"` (exact face AABBs are
-  labeled `"tekla-faces"`). Agents no longer need to parse IFC files manually.
-- `tekla_get_reference_geometry` accepts `externalGuids` — address reference objects
-  directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
-  `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
-  it.
+- **Server instructions now list the known model-layer quirks** (up-vector auto-direction,
+  Position canonicalization, one connection per pair, UI-vs-API component names, prefer batch
+  tools). The drawing layer was already flagged experimental; the model layer had no equivalent
+  "here is what will surprise you" list, which the field report specifically asked for.
+- **Script policy explains how to replace banned reflection.** The `dynamic`/`GetType` violation
+  message now says to cast to the concrete Tekla type rather than only "rename it", and the
+  `tekla_run_csharp` description documents that `Connection.GetSecondaryObjects()` returns an
+  `ArrayList` (use `foreach`) while `Part.GetComponents()` is an enumerator (use `MoveNext`).
 
 ## [0.7.0] - 2026-07-23
 

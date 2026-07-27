@@ -20,4 +20,8 @@ public sealed class ConnectionSpec
     public string AttributesFile { get; set; } = "";
     [Description("Tekla AutoDirectionType enum name; normally NA.")]
     public string AutoDirection { get; set; } = "NA";
+    [Description("Delete components already attached to the same primary/secondary pair before " +
+                 "inserting. Tekla refuses a second connection on an existing pair, so swapping a " +
+                 "node type requires this.")]
+    public bool ReplaceExisting { get; set; }
 }

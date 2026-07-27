@@ -152,12 +152,80 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | Part position | `Part.Position` → `Plane/Rotation/Depth` + offsets; copied field-by-field or parsed from DTO strings | ✅ Signatures/enums verified; ⚠️ **runtime: verify LEFT/RIGHT and FRONT/BEHIND orientation on live beams** |
 | Control lines | `ControlLine.Line.Point1/Point2` | ✅ Signatures verified; ⚠️ live enumeration not yet verified |
 | List components | `Part.GetComponents()`; `Connection.GetPrimaryObject/GetSecondaryObjects`, `UpVector`, `AutoDirectionType`, `Status` | ✅ Signatures verified; ⚠️ custom connection runtime behavior not yet verified |
-| Create connection | `new Connection`, `Name`, `Number`, `SetPrimaryObject`, `SetSecondaryObjects`, `UpVector`, `LoadAttributesFromFile`, `Insert` | ✅ Signatures verified; ⚠️ **live write path unverified**; a geometry commit runs before insert |
+| Create connection | `new Connection`, `Name`, `Number`, `SetPrimaryObject`, `SetSecondaryObjects`, `UpVector`, `LoadAttributesFromFile`, `Insert` | ✅ verified live (Tekla 2023, 2026-07-27): system connection inserted, `MapComponent` round-trips name/number/pair/UpVector. A geometry commit runs before insert. One connection per pair — see "Known model-layer quirks" |
+| Modify connection | `Connection.UpVector`, `AutoDirectionType`, `BaseComponent.LoadAttributesFromFile`, `Modify` | ✅ verified live (2026-07-27): UpVector persists ONLY under `AUTODIR_NA`; `AUTODIR_BASIC` returns true and discards it |
+| Replace connection | `FindComponentsOnPair` → `Delete()` → `CommitChanges()` → `Insert()` | ✅ verified live (2026-07-27): insert on an occupied pair fails; succeeds once the delete is committed |
 | Reference metadata | `ReferenceModelObject.GetReferenceModel()`, `ReferenceModelObjectAttributeEnumerator`, report-property fallbacks; newer custom-attribute API invoked reflectively | ✅ common signatures compile against Tekla 2021; ⚠️ exporter/version key names vary |
 | Reference custom attributes | Duplicate-tolerant replay of the internal sequence `DelegateProxy.Delegate.GetReferenceModelObjectCustomAttributes` → `ListExporter.ImportStringList` (all reflective; confirmed by decompiling Tekla 2023). Tekla's own public wrapper `Dictionary.Add`s `"key;value"` rows and THROWS on duplicate attribute names — the internal replay keeps every row; the public wrapper stays as fallback for other versions | ✅ verified live (Tekla 2023, 2026-07-23): 24 attributes for an IFC window that previously errored; ⚠️ internal surface must be re-checked per Tekla version |
 | Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB (`aabbSource: "tekla-faces"`) | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs**; v0.7.0 field report: throws for IFC overlay windows — see IFC fallback |
 | Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members). Reads `.ifczip`/`.zip` (Tekla's `DataStorage\ref` cache — often the ONLY on-disk copy; `ActiveFilePath` points there) and plain `.ifc`; tries every existing copy (cache first, then `Filename`) until the GlobalId resolves. Project length unit = the `LENGTHUNIT` referenced from `IFCUNITASSIGNMENT` — files carry auxiliary length units (Renga IFC4: project `MILLI METRE` + bare `METRE`) and last-wins scales ×1000 | ✅ verified live (Tekla 2023, 2026-07-23) against `3219-АР.ifc` window `0VZkpIecn7$9mG$7iL8u45`: `ifc-file` placement + estimate AABB match the exact `tekla-faces` AABB; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
 | Reference lookup by IFC GUID | `ReferenceModel.GetReferenceModelObjectByExternalGuid(String)` invoked reflectively over `GetAllObjectsWithType(REFERENCE_MODEL)` | ⚠️ API availability varies by Tekla version; falls back with a clear message |
+
+## Known model-layer quirks (verified live)
+
+The drawing layer is labelled experimental, but the MODEL layer has its own sharp edges. These
+were reproduced on live Tekla 2023 (2026-07-27) after a field report; each one previously cost an
+agent a long debugging detour because the API reports success while doing something else.
+
+### 1. `Connection.UpVector` is only stored under `AUTODIR_NA`
+
+Setting `UpVector` and calling `Modify()` returns **true** under `AUTODIR_BASIC`, but the vector
+is silently recomputed from the members and the written value is lost. The identical write with
+`AutoDirectionType = AUTODIR_NA` persists.
+
+```
+BASIC: Modify()=true, CommitChanges()=true → re-read UpVector = (0,0,1000)   // the OLD value
+NA:    Modify()=true, CommitChanges()=true → re-read UpVector = (1000,0,0)   // as written
+```
+
+`ModifyConnections` therefore switches a component to `AUTODIR_NA` whenever an explicit
+`UpVector` is supplied and the caller did not name a mode; `tekla_modify_connections` /
+`tekla_create_connection` warn when a caller pins a non-NA mode *and* passes a vector.
+
+### 2. Tekla canonicalizes `Part.Position` on commit
+
+A written Position comes back in an equivalent-but-renamed form, so a naive read-back looks like
+the write was lost. Verified on a live beam:
+
+| Written | Stored and read back |
+|---|---|
+| `Rotation=TOP`, `RotationOffset=45` | `Rotation=BACK`, `RotationOffset=-45` |
+| `Rotation=TOP`, `RotationOffset=180`, `Plane=LEFT` | `Rotation=BELOW`, `RotationOffset=0`, `Plane=RIGHT` |
+
+The physical orientation is correct in every row — the offset is folded into the enum quadrant.
+**Do not treat `RotationOffset == 0` as proof the write failed.** This affects the Open API and
+the dedicated tools identically; there is no discrepancy between them.
+
+### 3. Write results must be read back from the database
+
+Because of (2), echoing the in-memory object after `Modify()` reports values the model does not
+agree with. `ModifyParts`, `ModifyConnections` and `CreateConnections` re-select every committed
+object by GUID after `CommitChanges()` and map *that*. Keep this when adding write paths — the
+alternative is a tool that confidently contradicts the next read.
+
+### 4. One connection per primary/secondary pair
+
+Tekla **rejects** `Connection.Insert()` when the pair already carries a connection (the failure
+surfaces as a plain "rejected connection insert"). Swapping a node type is therefore
+delete → `CommitChanges()` → insert, and the intermediate commit is required. This is what
+`ConnectionSpec.ReplaceExisting` does; verified live (insert on an occupied pair failed, the same
+insert succeeded after the delete was committed).
+
+### 5. Component names differ between the UI and the API
+
+The Tekla UI shows a component as `…ГК (1)` where the API's `Name` is `…ГК 1` (and custom
+components carry Cyrillic names in full). Filtering on a name copied from the UI silently matches
+nothing. Read names from `tekla_list_connections` / `tekla_find_connections` and copy identity
+from an existing detail rather than retyping it.
+
+### 6. Custom-component insertion is attribute-file sensitive
+
+Field report: `LoadAttributesFromFile("standard")` followed by `Insert()` failed for custom
+components that inserted fine without the attributes call, or when copied from an existing
+detail. Arbitrary custom-component attributes cannot be enumerated through the API, so the
+reliable path is **copy from a working source detail** (`tekla_copy_connection`) and only pass
+`attributesFile` when a specific saved set is genuinely required. Not yet reduced to a minimal
+repro — treat as environment/component dependent.
 
 ## Drawing API implementation notes
 

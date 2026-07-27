@@ -266,7 +266,14 @@ public sealed partial class TeklaModelService : ITeklaModelService
             {
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 if (TryGetAttributeValue(mo, name, out var value)) result.Udas[name] = value;
+                else result.NotFound.Add(name);
             }
+
+            if (result.NotFound.Count > 0 && result.Udas.Count == 0)
+                result.Message =
+                    "None of the requested names resolved on this " + result.Type +
+                    ". Report-property names are template names (VOLUME, AREA, ASSEMBLY_POS); " +
+                    "use tekla_find_attributes_by_value to discover where a known value lives.";
         }
         catch (Exception ex)
         {
@@ -866,6 +873,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             wph.SetCurrentTransformationPlane(new TSM.TransformationPlane()); // global
             try
             {
+                var writtenGuids = new List<string>();
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
@@ -896,12 +904,25 @@ public sealed partial class TeklaModelService : ITeklaModelService
                         mo.SetUserProperty("MCP_ORIGIN", "mcp:modify");
                         mo.Modify();
                         result.ModifiedCount++;
-                        var info = Map(mo);
-                        if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
+                        var writtenGuid = ModelGuid(mo);
+                        if (!string.IsNullOrWhiteSpace(writtenGuid) && writtenGuids.Count < 20)
+                            writtenGuids.Add(writtenGuid);
                     }
                     catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
                 }
                 model.CommitChanges();
+
+                // Report what the DATABASE holds, not the object we just wrote to. Tekla
+                // canonicalizes Position on commit — TOP+180° comes back as BELOW+0°, LEFT
+                // flips to RIGHT (verified live, Tekla 2023) — so echoing the in-memory object
+                // would hand the caller values the model does not actually agree with, and a
+                // follow-up read looks like the write was lost.
+                foreach (var guid in writtenGuids)
+                {
+                    var fresh = TrySelectObjectByGuid(model, guid);
+                    var info = fresh is null ? null : Map(fresh);
+                    if (info != null) result.Preview.Add(info);
+                }
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
@@ -988,6 +1009,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             // race where freshly-created primary/secondary parts are not selectable yet.
             if (apply) model.CommitChanges();
 
+            var plannedReplacements = 0;
             foreach (var spec in specs)
             {
                 result.PlannedCount++;
@@ -1011,6 +1033,14 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     if (secondaries.Count == 0)
                         throw new InvalidOperationException("At least one secondary object is required.");
 
+                    // Tekla refuses a SECOND connection on a primary/secondary pair that already
+                    // carries one (verified live, Tekla 2023), so swapping a node type is a
+                    // delete + insert rather than an insert.
+                    var doomed = spec.ReplaceExisting
+                        ? FindComponentsOnPair(primary, secondaries)
+                        : new List<TSM.BaseComponent>();
+                    plannedReplacements += doomed.Count;
+
                     var preview = new ComponentInfo
                     {
                         Guid = "(preview)",
@@ -1026,6 +1056,16 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     if (result.ComponentPreview.Count < 20)
                         result.ComponentPreview.Add(preview);
                     if (!apply) continue;
+
+                    foreach (var existing in doomed)
+                    {
+                        if (existing.Delete()) result.DeletedCount++;
+                        else result.Errors.Add(
+                            "Could not delete existing component id " +
+                            existing.Identifier.ID + " occupying this pair.");
+                    }
+                    // The pair must be free in the DATABASE before the replacement is inserted.
+                    if (doomed.Count > 0) model.CommitChanges();
 
                     var connection = new TSM.Connection
                     {
@@ -1076,13 +1116,233 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
             }
 
-            if (apply) model.CommitChanges();
+            if (apply)
+            {
+                model.CommitChanges();
+                RefreshComponentPreview(model, result);
+            }
+
+            if (plannedReplacements > 0)
+                result.Message = apply
+                    ? "Replace mode: deleted " + result.DeletedCount +
+                      " existing component(s) on the targeted pair(s) before inserting."
+                    : "Replace mode: " + plannedReplacements +
+                      " existing component(s) on the targeted pair(s) would be deleted first.";
         }
         catch (Exception ex)
         {
             result.Message = ErrorText.Flatten(ex);
         }
         return result;
+    }
+
+    public WriteResult ModifyConnections(
+        IReadOnlyList<ConnectionModification> modifications, bool apply)
+    {
+        var result = new WriteResult
+        {
+            Operation = "modify_connections",
+            Applied = apply,
+            Backend = BackendName,
+        };
+        if (modifications == null || modifications.Count == 0)
+        {
+            result.Message = "No connection modifications provided.";
+            return result;
+        }
+
+        try
+        {
+            var model = GetConnectedModel();
+            var writtenGuids = new List<string>();
+
+            foreach (var mod in modifications)
+            {
+                result.PlannedCount++;
+                try
+                {
+                    var component = TrySelectComponent(model, mod.Guid, mod.Id);
+                    if (component == null)
+                    {
+                        result.Errors.Add(
+                            "Connection not found: " +
+                            (string.IsNullOrWhiteSpace(mod.Guid)
+                                ? "id " + (mod.Id ?? 0)
+                                : mod.Guid));
+                        continue;
+                    }
+
+                    if (!apply)
+                    {
+                        if (result.ComponentPreview.Count < 20)
+                            result.ComponentPreview.Add(PlanComponentChange(component, mod));
+                        continue;
+                    }
+
+                    ApplyConnectionModification(component, mod);
+                    component.SetUserProperty("MCP_ORIGIN", "mcp:modify_connection");
+                    if (!component.Modify())
+                        throw new InvalidOperationException(
+                            "Tekla rejected the connection modify.");
+
+                    result.ModifiedCount++;
+                    var guid = ModelGuid(component);
+                    if (!string.IsNullOrWhiteSpace(guid) && writtenGuids.Count < 20)
+                        writtenGuids.Add(guid);
+                }
+                catch (Exception exItem)
+                {
+                    result.Errors.Add(ErrorText.Flatten(exItem));
+                }
+            }
+
+            if (apply)
+            {
+                model.CommitChanges();
+                // Same reason as ModifyParts: read back the committed component so the caller
+                // sees the orientation Tekla actually stored, not the one we asked for.
+                foreach (var guid in writtenGuids)
+                {
+                    if (TrySelectObjectByGuid(model, guid) is TSM.BaseComponent fresh)
+                        result.ComponentPreview.Add(MapComponent(fresh));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Apply an orientation/attribute change to a live component.
+    ///
+    /// Tekla only PERSISTS an explicitly written <c>UpVector</c> when the component's
+    /// auto-direction is <c>AUTODIR_NA</c>. Verified live (Tekla 2023): under
+    /// <c>AUTODIR_BASIC</c> the write is silently discarded even though <c>Modify()</c>
+    /// returns true; the identical write under <c>AUTODIR_NA</c> sticks. So an explicit
+    /// vector switches the mode unless the caller named one.
+    /// </summary>
+    private static void ApplyConnectionModification(
+        TSM.BaseComponent component, ConnectionModification mod)
+    {
+        if (component is TSM.Connection connection)
+        {
+            if (!string.IsNullOrWhiteSpace(mod.AutoDirection))
+                connection.AutoDirectionType = ParseAutoDirection(mod.AutoDirection);
+            else if (mod.UpVector != null)
+                connection.AutoDirectionType = TS.AutoDirectionTypeEnum.AUTODIR_NA;
+
+            if (mod.UpVector != null)
+                connection.UpVector = new TSG.Vector(
+                    mod.UpVector.X, mod.UpVector.Y, mod.UpVector.Z);
+        }
+        else if (mod.UpVector != null || !string.IsNullOrWhiteSpace(mod.AutoDirection))
+        {
+            throw new InvalidOperationException(
+                "Up vector / auto direction can only be set on a Connection; this component is a " +
+                component.GetType().Name + ".");
+        }
+
+        if (!string.IsNullOrWhiteSpace(mod.AttributesFile) &&
+            !component.LoadAttributesFromFile(mod.AttributesFile))
+            throw new InvalidOperationException(
+                "Connection attributes file could not be loaded: " + mod.AttributesFile);
+    }
+
+    /// <summary>Preview DTO showing the intended post-change orientation, without writing.</summary>
+    private static ComponentInfo PlanComponentChange(
+        TSM.BaseComponent component, ConnectionModification mod)
+    {
+        var info = MapComponent(component);
+        if (mod.UpVector != null) info.UpVector = mod.UpVector;
+        if (!string.IsNullOrWhiteSpace(mod.AutoDirection))
+            info.AutoDirection = NormalizeAutoDirection(mod.AutoDirection);
+        else if (mod.UpVector != null)
+            info.AutoDirection = "AUTODIR_NA";
+        return info;
+    }
+
+    private static TSM.BaseComponent? TrySelectComponent(TSM.Model model, string? guid, int? id)
+    {
+        if (!string.IsNullOrWhiteSpace(guid) &&
+            TrySelectObjectByGuid(model, guid!) is TSM.BaseComponent byGuid)
+            return byGuid;
+
+        if (id.HasValue && id.Value != 0)
+        {
+            try
+            {
+                return model.SelectModelObject(
+                    new global::Tekla.Structures.Identifier(id.Value)) as TSM.BaseComponent;
+            }
+            catch
+            {
+                // Fall through to "not found" — the caller reports it per item.
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Components already attached to <paramref name="primary"/> that share at least one of
+    /// <paramref name="secondaries"/> — i.e. the ones occupying the pair we want to insert on.
+    /// </summary>
+    private static List<TSM.BaseComponent> FindComponentsOnPair(
+        TSM.ModelObject primary, ArrayList secondaries)
+    {
+        var hits = new List<TSM.BaseComponent>();
+        if (!(primary is TSM.Part part)) return hits;
+
+        var primaryGuid = ModelGuid(primary);
+        var secondaryGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in secondaries)
+        {
+            if (!(item is TSM.ModelObject secondary)) continue;
+            var guid = ModelGuid(secondary);
+            if (!string.IsNullOrWhiteSpace(guid)) secondaryGuids.Add(guid);
+        }
+        if (string.IsNullOrWhiteSpace(primaryGuid) || secondaryGuids.Count == 0) return hits;
+
+        try
+        {
+            var components = part.GetComponents();
+            while (components.MoveNext())
+            {
+                if (!(components.Current is TSM.BaseComponent component)) continue;
+                if (!(component is TSM.Connection connection)) continue;
+                if (!string.Equals(
+                        ModelGuid(connection.GetPrimaryObject()),
+                        primaryGuid,
+                        StringComparison.OrdinalIgnoreCase)) continue;
+
+                foreach (var item in connection.GetSecondaryObjects())
+                {
+                    if (!(item is TSM.ModelObject secondary)) continue;
+                    if (!secondaryGuids.Contains(ModelGuid(secondary))) continue;
+                    hits.Add(component);
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // A part that cannot enumerate its components simply has nothing to replace.
+        }
+        return hits;
+    }
+
+    /// <summary>Replace committed component previews with a fresh read from the database.</summary>
+    private static void RefreshComponentPreview(TSM.Model model, WriteResult result)
+    {
+        for (var i = 0; i < result.ComponentPreview.Count; i++)
+        {
+            var guid = result.ComponentPreview[i].Guid;
+            if (string.IsNullOrWhiteSpace(guid) || guid == "(preview)") continue;
+            if (TrySelectObjectByGuid(model, guid) is TSM.BaseComponent fresh)
+                result.ComponentPreview[i] = MapComponent(fresh);
+        }
     }
 
     // -- Script escape hatch --------------------------------------------------------------

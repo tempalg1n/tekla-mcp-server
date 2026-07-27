@@ -39,6 +39,11 @@ public static class ModelScriptTools
         "- Units are mm; coordinates are whatever work plane is current (dedicated tools use the GLOBAL plane).\n" +
         "- Enumerators: `var e = model.GetModelObjectSelector().GetAllObjectsWithType(...); while (e.MoveNext()) ...` " +
         "(AutoFetch is already enabled process-wide). Filter by type early — models can hold 400k+ objects.\n" +
+        "- Some APIs return a non-generic ArrayList, NOT an enumerator: `Connection.GetSecondaryObjects()` is read " +
+        "with `foreach (var o in conn.GetSecondaryObjects()) { var mo = o as ModelObject; ... }`. " +
+        "`Part.GetComponents()` IS an enumerator (use MoveNext).\n" +
+        "- Reflection and `dynamic` are banned; the API is fully typed, so cast to the concrete type " +
+        "(`if (e.Current is Beam b)`, `var c = mo as Connection;`) and confirm members with tekla_search_api.\n" +
         "\n" +
         "EXAMPLE (count beams longer than 12 m):\n" +
         "var model = new Model();\n" +
