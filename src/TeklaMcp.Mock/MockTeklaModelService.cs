@@ -90,6 +90,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var s = new ModelSummary { Backend = BackendName };
+        var totalWeight = 0.0;
         foreach (var o in _objects)
         {
             if (maxObjects is int cap && cap > 0 && s.TotalObjects >= cap)
@@ -106,14 +107,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
             Bump(s.CountByMaterial, o.Material);
             if (includeWeights && o.WeightKg is double w)
             {
-                s.TotalWeightKg += w;
+                totalWeight += w;
                 s.WeightByMaterialKg[o.Material] =
                     s.WeightByMaterialKg.TryGetValue(o.Material, out var cur) ? cur + w : w;
             }
         }
         if (!includeWeights)
             s.Message = (s.Message + " Weights skipped (includeWeights=false).").TrimStart();
-        s.TotalWeightKg = Math.Round(s.TotalWeightKg, 1);
+        // null (not 0) when weights were skipped — 0 kg would read as a real measurement.
+        s.TotalWeightKg = includeWeights ? Math.Round(totalWeight, 1) : (double?)null;
         return s;
     }
 
@@ -286,15 +288,28 @@ public sealed class MockTeklaModelService : ITeklaModelService
         };
     }
 
-    public IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    public AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50)
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false)
     {
+        var search = new AttributeSearchResult { Backend = BackendName };
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            search.Message = "Empty search value — nothing scanned.";
+            return search;
+        }
+
         var candidates = BuildAttributeCandidateList(candidateAttributeNames);
-        var objects = Limit(_objects, objectLimit);
+        search.CandidatesTried = candidates.Count;
+        var source = ScopedObjects(useSelection, partsOnly).ToList();
+        var objects = Limit(source, objectLimit);
+        search.ScannedObjects = objects.Count;
+        search.Truncated = objects.Count < source.Count;
         var matches = new Dictionary<string, AttributeValueMatch>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var obj in objects)
@@ -318,6 +333,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
             }
         }
 
+        var scope = useSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+        search.Message = search.Truncated
+            ? $"Scanned the first {search.ScannedObjects} {scope} (objectLimit) against {search.CandidatesTried} candidate names; " +
+              "an empty result means NOT FOUND IN THIS SAMPLE, not absent — raise objectLimit or narrow the query to be sure."
+            : $"Scanned all {search.ScannedObjects} {scope} against {search.CandidatesTried} candidate names.";
+        if (matches.Count == 0 && !search.Truncated)
+            search.Message += " The value is absent from the tried candidates in this scope — " +
+                              "tekla_discover_udas can enumerate the fields that actually exist.";
+
         var ordered = matches.Values
             .OrderByDescending(x => x.MatchCount)
             .ThenBy(x => x.AttributeName, StringComparer.OrdinalIgnoreCase)
@@ -326,7 +350,144 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (resultLimit is int n && n > 0 && ordered.Count > n)
             ordered = ordered.Take(n).ToList();
 
-        return ordered;
+        search.Matches = ordered;
+        return search;
+    }
+
+    public AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true)
+    {
+        var result = new AggregationResult { Backend = BackendName };
+        if (!Aggregation.TryParseGroupKey(groupBy, out var mode, out var keyName, out var normalized, out var error))
+        {
+            result.Message = error;
+            return result;
+        }
+        result.GroupBy = normalized;
+
+        if (!Aggregation.TryParseCursor(cursor, out var skip, out var cursorError))
+        {
+            result.Message = cursorError;
+            return result;
+        }
+
+        query ??= new ObjectQuery();
+        // Source mirrors the real backend: selection > explicit type > parts chain > all.
+        var source = query.UseSelection
+            ? (IEnumerable<ModelObjectInfo>)_selectedObjects
+            : partsOnly && string.IsNullOrWhiteSpace(query.Type)
+                ? _objects.Where(o => PartTypeNames.Contains(o.Type))
+                : _objects;
+
+        var agg = new Dictionary<string, double[]>(StringComparer.Ordinal);
+        long skipped = 0;
+        var stoppedEarly = false;
+
+        foreach (var obj in source)
+        {
+            if (skipped < skip) { skipped++; continue; }
+            if (maxObjects is int cap && cap > 0 && result.ScannedObjects >= cap)
+            {
+                stoppedEarly = true;
+                break;
+            }
+            result.ScannedObjects++;
+
+            if (!MatchesFilters(obj, query)) continue;
+            result.MatchedObjects++;
+
+            var key = Aggregation.NormalizeKey(ReadGroupKey(obj, mode, keyName));
+            Aggregation.Accumulate(agg, key, obj.WeightKg);
+            if (obj.WeightKg is double w)
+            {
+                result.ObjectsWithWeight++;
+                result.TotalWeightKg += w;
+            }
+        }
+
+        result.TotalWeightKg = Math.Round(result.TotalWeightKg, 2);
+        result.Rows = Aggregation.BuildRows(agg, limit, result);
+        result.Truncated = stoppedEarly;
+        if (stoppedEarly)
+        {
+            result.NextCursor = (skip + result.ScannedObjects).ToString();
+            result.Message = Aggregation.Append(result.Message,
+                $"Partial page: stopped after {result.ScannedObjects} source objects (maxObjects). " +
+                "Repeat the call with cursor=NextCursor and the SAME filters, then merge rows by key — pages cover disjoint slices.");
+        }
+        else if (skip > 0 && result.ScannedObjects == 0)
+        {
+            result.Message = Aggregation.Append(result.Message,
+                "Cursor points at or beyond the end of the source — nothing left to scan.");
+        }
+
+        return result;
+    }
+
+    public UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true)
+    {
+        var result = new UdaDiscoveryResult { Backend = BackendName };
+        if (sampleSize <= 0) sampleSize = 200;
+        if (topValuesPerField <= 0) topValuesPerField = 5;
+
+        query ??= new ObjectQuery();
+        var matching = ScopedObjects(query.UseSelection, partsOnly && string.IsNullOrWhiteSpace(query.Type))
+            .Where(o => MatchesFilters(o, query))
+            .ToList();
+        var sample = Limit(matching, sampleSize);
+        result.SampledObjects = sample.Count;
+        result.Truncated = sample.Count < matching.Count;
+
+        var valueCounts = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var obj in sample)
+        {
+            if (!_udasByGuid.TryGetValue(obj.Guid, out var udas)) continue;
+            foreach (var kv in udas)
+            {
+                var value = (kv.Value ?? "").Trim();
+                if (value.Length == 0) continue; // empty string = unset field
+
+                if (!valueCounts.TryGetValue(kv.Key, out var counts))
+                {
+                    counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                    valueCounts[kv.Key] = counts;
+                }
+                counts[value] = counts.TryGetValue(value, out var c) ? c + 1 : 1;
+            }
+        }
+
+        result.Fields = valueCounts
+            .Select(kv => new UdaFieldStat
+            {
+                Name = kv.Key,
+                ObjectCount = kv.Value.Values.Sum(),
+                DistinctValueCount = kv.Value.Count,
+                TopValues = kv.Value
+                    .OrderByDescending(v => v.Value)
+                    .ThenBy(v => v.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(topValuesPerField)
+                    .Select(v => new UdaValueCount { Value = v.Key, Count = v.Value })
+                    .ToList(),
+            })
+            .OrderByDescending(f => f.ObjectCount)
+            .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var scope = query.UseSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+        result.Message = $"Sampled {result.SampledObjects} objects ({scope}).";
+        if (result.Truncated)
+            result.Message += " SAMPLE ONLY — fields carried exclusively by unsampled objects are invisible here; " +
+                              "verify a specific field with a filtered count before concluding it is absent.";
+        return result;
     }
 
     public ProfileConnectionSummary AnalyzeConnectionsForProfile(string profile, double toleranceMm = 50, int? limit = 1000)
@@ -1691,6 +1852,75 @@ public sealed class MockTeklaModelService : ITeklaModelService
     private static bool Contains(string a, string? b) =>
         a.IndexOf(b ?? "", StringComparison.OrdinalIgnoreCase) >= 0;
 
+    /// <summary>
+    /// Type names that count as physical parts, mirroring the real backend's parts chain
+    /// (which enumerates BEAM/POLYBEAM/CONTOURPLATE/... instead of walking all objects).
+    /// </summary>
+    private static readonly HashSet<string> PartTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Beam", "Column", "PolyBeam", "ContourPlate", "BentPlate",
+        "LoftedPlate", "SpiralBeam", "Brep", "CustomPart", "Plate",
+    };
+
+    /// <summary>Selection > parts filter > all, mirroring the real backend's scan scopes.</summary>
+    private IEnumerable<ModelObjectInfo> ScopedObjects(bool useSelection, bool partsOnly)
+    {
+        IEnumerable<ModelObjectInfo> source = useSelection ? _selectedObjects : _objects;
+        return partsOnly && !useSelection ? source.Where(o => PartTypeNames.Contains(o.Type)) : source;
+    }
+
+    /// <summary>
+    /// Per-object equivalent of the <see cref="FindObjects"/> filter chain, for streaming
+    /// scans (aggregation/discovery) that need cursor semantics over the raw source order.
+    /// </summary>
+    private bool MatchesFilters(ModelObjectInfo o, ObjectQuery query)
+    {
+        if (query.GuidIn != null && query.GuidIn.Count > 0 &&
+            !query.GuidIn.Any(g => !string.IsNullOrWhiteSpace(g) && Eq(o.Guid, g)))
+            return false;
+        if (!string.IsNullOrWhiteSpace(query.Type) && !Eq(o.Type, query.Type)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Class) && !Eq(o.Class, query.Class)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Profile) && !Contains(o.Profile, query.Profile)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Material) && !Contains(o.Material, query.Material)) return false;
+        if (!string.IsNullOrWhiteSpace(query.NameContains) && !Contains(o.Name, query.NameContains)) return false;
+        if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
+        {
+            if (!_udasByGuid.TryGetValue(o.Guid, out var udas)) return false;
+            if (!udas.TryGetValue(query.UdaName!, out var value) ||
+                !string.Equals(value, query.UdaEquals, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        if (!string.IsNullOrWhiteSpace(query.AttributeName))
+        {
+            if (!TryGetAttributeValue(o, query.AttributeName!, out var value)) return false;
+            if (!string.IsNullOrWhiteSpace(query.AttributeEquals) && !Eq(value, query.AttributeEquals)) return false;
+            if (!string.IsNullOrWhiteSpace(query.AttributeContains) && !Contains(value, query.AttributeContains)) return false;
+        }
+        return true;
+    }
+
+    private string ReadGroupKey(ModelObjectInfo obj, GroupKeyMode mode, string keyName)
+    {
+        switch (mode)
+        {
+            case GroupKeyMode.All: return "(all)";
+            case GroupKeyMode.Type: return obj.Type;
+            case GroupKeyMode.Class: return obj.Class;
+            case GroupKeyMode.Profile: return obj.Profile;
+            case GroupKeyMode.Material: return obj.Material;
+            case GroupKeyMode.Name: return obj.Name;
+            case GroupKeyMode.Assembly: return obj.AssemblyPos ?? "";
+            case GroupKeyMode.Uda:
+                return _udasByGuid.TryGetValue(obj.Guid, out var udas) &&
+                       udas.TryGetValue(keyName, out var udaValue)
+                    ? udaValue
+                    : "";
+            case GroupKeyMode.Attribute:
+                return TryGetAttributeValue(obj, keyName, out var attrValue) ? attrValue : "";
+            default: return "";
+        }
+    }
+
     private bool TryGetAttributeValue(ModelObjectInfo obj, string attributeName, out string value)
     {
         value = "";
@@ -1808,6 +2038,16 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 ["RU_FN1_MRK"] = baseMark,
                 ["RU_OBJ_TYPE"] = obj.Name,
             };
+
+            // Approval-status fixture on USER_FIELD_1 — the most common real-world UDA
+            // (review workflows): columns approved, braces rejected, main beams partially,
+            // everything else unset. Gives uda-grouping/discovery something realistic.
+            var status = obj.Name == "COLUMN" ? "Approved"
+                : obj.Name == "BRACE" ? "Rejected"
+                : obj.Class == "3" ? "Partially approved"
+                : "";
+            if (status.Length > 0)
+                _udasByGuid[obj.Guid]["USER_FIELD_1"] = status;
         }
     }
 

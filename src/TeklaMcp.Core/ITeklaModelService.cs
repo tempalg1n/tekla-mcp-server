@@ -91,14 +91,54 @@ public interface ITeklaModelService
 
     /// <summary>
     /// Search candidate attributes by known value (for "which field stores X?" discovery).
-    /// Implementations should inspect common report properties and UDAs.
+    /// Implementations should inspect common report properties and UDAs, and must report the
+    /// scan scope honestly (<see cref="AttributeSearchResult.ScannedObjects"/> /
+    /// <see cref="AttributeSearchResult.Truncated"/>) so an empty match list is never mistaken
+    /// for "the value does not exist". <paramref name="partsOnly"/> (default) restricts the
+    /// scan to physical parts — attributes live on parts in almost every real workflow, and a
+    /// mixed scan burns the object budget on control points and welds.
     /// </summary>
-    IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50);
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false);
+
+    /// <summary>
+    /// Stream count + total weight per group over objects matching <paramref name="query"/>,
+    /// WITHOUT materializing DTOs and without reading solids. <paramref name="groupBy"/>:
+    /// 'type', 'class', 'profile', 'material', 'name', 'assembly' (ASSEMBLY_POS),
+    /// 'uda:NAME' (group by a user-defined attribute), 'attr:NAME' (any report/UDA/built-in
+    /// name), or null/'all' for a single overall bucket. Unknown keys are reported via
+    /// <see cref="AggregationResult.Message"/>, never thrown.
+    /// <paramref name="partsOnly"/> (default) pre-filters the scan to physical parts when the
+    /// query names no type. <paramref name="maxObjects"/> caps one call;
+    /// <paramref name="cursor"/> resumes a capped scan (see <see cref="AggregationResult"/>).
+    /// </summary>
+    AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true);
+
+    /// <summary>
+    /// Sample objects matching <paramref name="query"/> and report which UDA fields exist,
+    /// how filled they are, and their most frequent values. The expensive per-object
+    /// "read all UDAs" call limits this to <paramref name="sampleSize"/> objects;
+    /// implementations should spread the sample across part types when the query names no
+    /// type, and must set <see cref="UdaDiscoveryResult.Truncated"/> when the scope was larger
+    /// than the sample.
+    /// </summary>
+    UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true);
 
     /// <summary>
     /// Analyze how members of a profile connect to neighboring elements near beam ends.

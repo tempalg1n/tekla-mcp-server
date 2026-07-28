@@ -75,6 +75,15 @@ const string serverInstructions =
     "Never use EXTERNAL automation (files, macros outside this server) and never fabricate or " +
     "guess model data. On the Mock backend scripts are validated but not executed — say so " +
     "instead of inventing results.\n\n" +
+    "WHOLE-MODEL ANALYTICS: use the streaming tools (tekla_group_weight_by / tekla_sum_weight / " +
+    "tekla_list_distinct_values) — they support grouping by user fields ('uda:USER_FIELD_1') and " +
+    "never read solids. Unknown field layout? tekla_discover_udas first, then " +
+    "tekla_find_attributes_by_value — and always check its scannedObjects/truncated before " +
+    "declaring a value absent. Models can exceed 400k objects while MCP clients abort requests " +
+    "after ~60 s and the result is lost even if the server finishes: cap heavy scans with " +
+    "maxObjects and continue via cursor=nextCursor instead of raising timeouts. Before a " +
+    "scripting session, call tekla_get_api_reference_status once — it tells you whether " +
+    "tekla_search_api can verify signatures on this machine.\n\n" +
     "Model and drawing write/UI tools default to apply=false (preview). Drawing points explicitly " +
     "distinguish view-local, global model, and sheet/paper-mm coordinate spaces. Show the plan and " +
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +

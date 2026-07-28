@@ -56,10 +56,17 @@ public static class ModelScriptTools
         "(obj.SetUserProperty(\"MCP_ORIGIN\", \"mcp-script\")) and tell the user committed changes are undoable with " +
         "Tekla's Ctrl+Z.\n" +
         "\n" +
-        "LIMITS (enforced): no file/network/process/reflection/thread/Console access, no #r/#load, no await. " +
+        "LIMITS (enforced): no file/network/process/reflection/thread/Console access, no #r/#load, no await " +
+        "(fully-qualified System.Diagnostics.Stopwatch is allowed for timing). " +
         "Execution deadline (default 60 s) with best-effort worker abort. On the Mock backend the script is " +
         "policy-checked, compiled only when TEKLA_MCP_SCRIPT_REF_DIR is configured, and NEVER executed — " +
-        "do not fabricate results from it.")]
+        "do not fabricate results from it.\n" +
+        "\n" +
+        "TIMEOUT REALITY: timeoutSeconds only bounds the server-side worker. Most MCP clients abort the REQUEST " +
+        "after ~60 s regardless, and an aborted request loses the result even though the script keeps running. " +
+        "For big scans do NOT raise timeoutSeconds past ~55 — chunk the work instead (skip/take over a typed " +
+        "enumerator, return per-chunk aggregates) or prefer the paged analytics tools " +
+        "(tekla_group_weight_by / tekla_sum_weight with maxObjects + cursor).")]
     public static ScriptResult RunCsharp(
         ITeklaModelService model,
         [Description("The C# script (top-level statements; last expression = return value).")] string code,

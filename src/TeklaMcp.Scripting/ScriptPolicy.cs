@@ -200,9 +200,10 @@ public static class ScriptPolicy
                 Add($"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
                     "Use Print(...) for output and return a value as the last expression. " +
                     "(If this is just your variable name, rename it.)");
-            else if (BannedNamespaceSegments.Contains(name))
+            else if (BannedNamespaceSegments.Contains(name) && !IsStopwatchQualifier(token))
                 Add($"'{name}' looks like a banned namespace (System.{name}.*) — not allowed in scripts. " +
-                    "(If this is just your variable name, rename it.)");
+                    "(If this is just your variable name, rename it. Fully-qualified " +
+                    "System.Diagnostics.Stopwatch is allowed for timing.)");
             else if (MutatingMembers.Contains(name) && IsMutatingUse(token))
                 mutations.Add(name);
         }
@@ -214,6 +215,45 @@ public static class ScriptPolicy
                 "needed: show the script to the user, get their explicit go-ahead, then retry with allowMutations=true.");
 
         return new ScriptPolicyAnalysis(violations, mutations.ToList());
+    }
+
+    /// <summary>
+    /// The one sanctioned use of a banned namespace segment: fully-qualified
+    /// <c>System.Diagnostics.Stopwatch</c>. Timing a scan is a legitimate read-only need, and
+    /// the qualification requirement keeps the rest of System.Diagnostics (Process, ...)
+    /// unreachable — a bare <c>using System.Diagnostics;</c> is still rejected. True when the
+    /// "Diagnostics" token is the right-hand side of <c>System.Diagnostics</c> whose parent
+    /// member access / qualified name is <c>.Stopwatch</c>.
+    /// </summary>
+    private static bool IsStopwatchQualifier(SyntaxToken token)
+    {
+        if (token.ValueText != "Diagnostics")
+            return false;
+
+        var identifier = token.Parent as IdentifierNameSyntax;
+        if (identifier == null)
+            return false;
+
+        // "Diagnostics" must be the Name of a member access (expression context) or the Right
+        // of a qualified name (type context) — i.e. the "System.Diagnostics" node...
+        SyntaxNode node;
+        var memberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+        var qualifiedName = identifier.Parent as QualifiedNameSyntax;
+        if (memberAccess != null && ReferenceEquals(memberAccess.Name, identifier))
+            node = memberAccess;
+        else if (qualifiedName != null && ReferenceEquals(qualifiedName.Right, identifier))
+            node = qualifiedName;
+        else
+            return false;
+
+        // ...whose own parent selects exactly Stopwatch.
+        var parentAccess = node.Parent as MemberAccessExpressionSyntax;
+        if (parentAccess != null && ReferenceEquals(parentAccess.Expression, node))
+            return (parentAccess.Name as IdentifierNameSyntax)?.Identifier.ValueText == "Stopwatch";
+        var parentQualified = node.Parent as QualifiedNameSyntax;
+        if (parentQualified != null && ReferenceEquals(parentQualified.Left, node))
+            return (parentQualified.Right as IdentifierNameSyntax)?.Identifier.ValueText == "Stopwatch";
+        return false;
     }
 
     /// <summary>

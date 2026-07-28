@@ -77,8 +77,8 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. v0.7.0 exposes **100 tools** in total, including **51
-drawing-specific tools**.
+All tools use the `tekla_` prefix. The current build exposes **101 tools** in total, including
+**51 drawing-specific tools**.
 
 | Tool | Description |
 |---|---|
@@ -93,12 +93,13 @@ drawing-specific tools**.
 | `tekla_get_reference_geometry` | Inspect selected/ID-addressed IFC objects: external GUID/entity, dimensions, world AABB and capped face polygons. |
 | `tekla_get_solid_bbox` | Read explicit native-part solid bounding boxes (or current selection). |
 | `tekla_list_control_lines` | List ControlLine start/end coordinates. |
-| `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). |
+| `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). Reports scan coverage (`scannedObjects`/`truncated`) so "no match" is never mistaken for "absent". |
+| `tekla_discover_udas` | Sample objects and report which UDA fields actually exist: fill counts, distinct values, top values. The "which field holds X?" starting point. |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
 | `tekla_count_objects` | Count objects matching filters (fast: no per-object data is materialized; an unfiltered count is instant). |
-| `tekla_sum_weight` | Sum weight for objects matching filters. |
-| `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`, `assembly`). |
-| `tekla_list_distinct_values` | Distinct values for a field with count + weight. |
+| `tekla_sum_weight` | Sum weight for objects matching filters. Streams without materializing objects; pages huge models via `maxObjects` + `cursor`. |
+| `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`, `assembly`, `uda:NAME`, `attr:NAME`). Streams (no solids); pages via `maxObjects` + `cursor`; empty values land in `(none)`. |
+| `tekla_list_distinct_values` | Distinct values for a field with count + weight (same engine and paging as `tekla_group_weight_by`). |
 | `tekla_list_assemblies` | List assembly marks (ASSEMBLY_POS) with part count + total weight. |
 | `tekla_count_assemblies` | Count distinct assembly marks (unique assembly types). |
 | `tekla_get_assembly_parts` | List all parts sharing a given assembly mark. |

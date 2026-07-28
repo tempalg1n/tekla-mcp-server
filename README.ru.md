@@ -56,9 +56,10 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 | `tekla_get_model_summary` | Сводка по модели |
 | `tekla_list_objects` / `tekla_find_objects` | Список и поиск объектов |
 | `tekla_count_objects` / `tekla_sum_weight` | Подсчёт и суммарный вес |
-| `tekla_group_weight_by` / `tekla_list_distinct_values` | Группировки и уникальные значения |
+| `tekla_group_weight_by` / `tekla_list_distinct_values` | Группировки и уникальные значения — включая по UDA (`uda:USER_FIELD_1`), с постраничным обходом больших моделей (`maxObjects` + `cursor`) |
 | `tekla_analyze_by_material` | Разбивка по материалам |
-| `tekla_find_attributes_by_value` | Поиск имени атрибута по известному значению |
+| `tekla_discover_udas` | Какие UDA реально есть в модели: заполненность и частые значения (по выборке) |
+| `tekla_find_attributes_by_value` | Поиск имени атрибута по известному значению (с честной отметкой охвата скана) |
 | `tekla_analyze_profile_connections` | Анализ уникальных типов узлов для профиля |
 | `tekla_get_selected_objects` / `tekla_select_objects` | Чтение и установка выделения в UI |
 | `tekla_get_object_udas` / `tekla_set_object_udas` / `tekla_set_udas_by_filter` | Работа с UDA |

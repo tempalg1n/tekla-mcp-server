@@ -42,6 +42,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
         "PHASE",
         "USER_PHASE",
         "RU_FN1_MRK",
+        // The generic user fields are the most common UDAs in real models (approval status,
+        // checker names, ...) — their absence here made value searches return false negatives.
+        "USER_FIELD_1",
+        "USER_FIELD_2",
+        "USER_FIELD_3",
+        "USER_FIELD_4",
+        "COMMENT",
     };
 
     private static bool _oneTimeInitDone;
@@ -123,6 +130,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     {
         var model = GetConnectedModel();
         var summary = new ModelSummary { Backend = BackendName };
+        var totalWeight = 0.0;
 
         // Streaming aggregation over cheap reads only: type + direct Part properties and
         // (optionally) the WEIGHT report property. No Map(), no solids, no LENGTH/ASSEMBLY_POS —
@@ -155,7 +163,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     double weight = 0;
                     if (part.GetReportProperty("WEIGHT", ref weight))
                     {
-                        summary.TotalWeightKg += weight;
+                        totalWeight += weight;
                         summary.WeightByMaterialKg[Key(material)] =
                             summary.WeightByMaterialKg.TryGetValue(Key(material), out var cur) ? cur + weight : weight;
                     }
@@ -171,7 +179,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
         if (!includeWeights)
             summary.Message = (summary.Message + " Weights skipped (includeWeights=false).").TrimStart();
-        summary.TotalWeightKg = Math.Round(summary.TotalWeightKg, 1);
+        // null (not 0) when weights were skipped — 0 kg would read as a real measurement.
+        summary.TotalWeightKg = includeWeights ? Math.Round(totalWeight, 1) : (double?)null;
         return summary;
     }
 
@@ -452,30 +461,39 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
-    public IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    public AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50)
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false)
     {
+        var search = new AttributeSearchResult { Backend = BackendName };
         var result = new Dictionary<string, AttributeValueMatch>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(value)) return new List<AttributeValueMatch>();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            search.Message = "Empty search value — nothing scanned.";
+            return search;
+        }
 
         try
         {
             var model = GetConnectedModel();
             var candidates = BuildAttributeCandidateList(candidateAttributeNames);
-            var en = model.GetModelObjectSelector().GetAllObjects();
-            var scanned = 0;
+            search.CandidatesTried = candidates.Count;
+            var query = new ObjectQuery { UseSelection = useSelection };
+            var stoppedEarly = false;
 
-            while (en.MoveNext())
+            foreach (var mo in EnumerateSource(model, query, partsFallback: partsOnly))
             {
-                if (objectLimit is int maxObjects && maxObjects > 0 && scanned >= maxObjects) break;
-                scanned++;
-
-                var mo = en.Current;
-                if (mo is null) continue;
+                if (objectLimit is int maxObjects && maxObjects > 0 && search.ScannedObjects >= maxObjects)
+                {
+                    stoppedEarly = true;
+                    break;
+                }
+                search.ScannedObjects++;
 
                 foreach (var attrName in candidates)
                 {
@@ -496,10 +514,21 @@ public sealed partial class TeklaModelService : ITeklaModelService
                         row.SampleGuids.Add(mo.Identifier.GUID.ToString());
                 }
             }
+
+            search.Truncated = stoppedEarly;
+            var scope = useSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+            search.Message = search.Truncated
+                ? $"Scanned the first {search.ScannedObjects} {scope} (objectLimit) against {search.CandidatesTried} candidate names; " +
+                  "an empty result means NOT FOUND IN THIS SAMPLE, not absent — raise objectLimit or narrow the query to be sure."
+                : $"Scanned all {search.ScannedObjects} {scope} against {search.CandidatesTried} candidate names.";
+            if (result.Count == 0 && !search.Truncated)
+                search.Message += " The value is absent from the tried candidates in this scope — " +
+                                  "tekla_discover_udas can enumerate the fields that actually exist.";
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort tool: return accumulated results or empty on failure.
+            // A failed scan must never masquerade as "value not found".
+            search.Message = "Scan failed: " + ErrorText.Flatten(ex);
         }
 
         var ordered = new List<AttributeValueMatch>(result.Values);
@@ -512,7 +541,236 @@ public sealed partial class TeklaModelService : ITeklaModelService
         if (resultLimit is int maxRows && maxRows > 0 && ordered.Count > maxRows)
             ordered = ordered.GetRange(0, maxRows);
 
-        return ordered;
+        search.Matches = ordered;
+        return search;
+    }
+
+    public AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true)
+    {
+        var result = new AggregationResult { Backend = BackendName };
+        if (!Aggregation.TryParseGroupKey(groupBy, out var mode, out var keyName, out var normalized, out var error))
+        {
+            result.Message = error;
+            return result;
+        }
+        result.GroupBy = normalized;
+
+        if (!Aggregation.TryParseCursor(cursor, out var skip, out var cursorError))
+        {
+            result.Message = cursorError;
+            return result;
+        }
+
+        try
+        {
+            var model = GetConnectedModel();
+            query = query ?? new ObjectQuery();
+            // count, weightSum, withWeight per group key.
+            var agg = new Dictionary<string, double[]>(StringComparer.Ordinal);
+            long skipped = 0;
+            var stoppedEarly = false;
+
+            foreach (var mo in EnumerateSource(model, query, partsFallback: partsOnly))
+            {
+                // Cursor skip: consume the enumerator without touching any property — on live
+                // Tekla a bare MoveNext is ~50x cheaper than a property-reading iteration.
+                if (skipped < skip) { skipped++; continue; }
+
+                if (maxObjects is int cap && cap > 0 && result.ScannedObjects >= cap)
+                {
+                    stoppedEarly = true;
+                    break;
+                }
+                result.ScannedObjects++;
+
+                var info = MapBasic(mo);
+                if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+                result.MatchedObjects++;
+
+                var key = Aggregation.NormalizeKey(ReadGroupKey(mo, info, mode, keyName));
+                double weight = 0;
+                var hasWeight = mo.GetReportProperty("WEIGHT", ref weight);
+
+                Aggregation.Accumulate(agg, key, hasWeight ? weight : (double?)null);
+                if (hasWeight)
+                {
+                    result.ObjectsWithWeight++;
+                    result.TotalWeightKg += weight;
+                }
+            }
+
+            result.TotalWeightKg = Math.Round(result.TotalWeightKg, 2);
+            result.Rows = Aggregation.BuildRows(agg, limit, result);
+            result.Truncated = stoppedEarly;
+            if (stoppedEarly)
+            {
+                result.NextCursor = (skip + result.ScannedObjects).ToString(CultureInfo.InvariantCulture);
+                result.Message = AppendMessage(result.Message,
+                    $"Partial page: stopped after {result.ScannedObjects} source objects (maxObjects). " +
+                    "Repeat the call with cursor=NextCursor and the SAME filters, then merge rows by key — pages cover disjoint slices.");
+            }
+            else if (skip > 0 && result.ScannedObjects == 0)
+            {
+                result.Message = AppendMessage(result.Message,
+                    "Cursor points at or beyond the end of the source — nothing left to scan.");
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = AppendMessage(result.Message, "Aggregation failed: " + ErrorText.Flatten(ex));
+        }
+
+        return result;
+    }
+
+    public UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true)
+    {
+        var result = new UdaDiscoveryResult { Backend = BackendName };
+        if (sampleSize <= 0) sampleSize = 200;
+        if (topValuesPerField <= 0) topValuesPerField = 5;
+
+        try
+        {
+            var model = GetConnectedModel();
+            query = query ?? new ObjectQuery();
+            var valueCounts = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+            var readFailures = 0;
+
+            // Reading all UDAs of one object is a single expensive remoting call (~100+ ms on
+            // live models), so the scan is strictly sample-bounded. When the scan covers the
+            // whole model, split the budget across part types — plain enumeration order is
+            // clustered by type, and a sequential sample would see only beams.
+            var chunked = !query.UseSelection && string.IsNullOrWhiteSpace(query.Type) && partsOnly;
+            var sources = chunked
+                ? PartTypeEnums.Select(t => (IEnumerable<TSM.ModelObject>)Drain(
+                      model.GetModelObjectSelector().GetAllObjectsWithType(t))).ToList()
+                : new List<IEnumerable<TSM.ModelObject>>
+                  {
+                      EnumerateSource(model, query, partsFallback: partsOnly),
+                  };
+
+            for (var i = 0; i < sources.Count; i++)
+            {
+                // Equal share of the remaining budget per remaining source; leftovers roll over.
+                var budget = (sampleSize - result.SampledObjects) / (sources.Count - i);
+                if (budget <= 0) budget = sampleSize - result.SampledObjects;
+                if (budget <= 0) { result.Truncated = true; break; }
+
+                var taken = 0;
+                foreach (var mo in sources[i])
+                {
+                    if (taken >= budget) { result.Truncated = true; break; }
+                    var info = MapBasic(mo);
+                    if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+                    taken++;
+                    result.SampledObjects++;
+
+                    var udas = new Hashtable();
+                    try
+                    {
+                        mo.GetAllUserProperties(ref udas);
+                    }
+                    catch
+                    {
+                        readFailures++;
+                        continue;
+                    }
+
+                    foreach (DictionaryEntry entry in udas)
+                    {
+                        var name = entry.Key?.ToString() ?? "";
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        var value = FormatUdaValue(entry.Value);
+                        if (value.Length == 0) continue; // empty string = unset field
+
+                        if (!valueCounts.TryGetValue(name, out var counts))
+                        {
+                            counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                            valueCounts[name] = counts;
+                        }
+                        counts[value] = counts.TryGetValue(value, out var c) ? c + 1 : 1;
+                    }
+                }
+            }
+
+            result.Fields = valueCounts
+                .Select(kv => new UdaFieldStat
+                {
+                    Name = kv.Key,
+                    ObjectCount = kv.Value.Values.Sum(),
+                    DistinctValueCount = kv.Value.Count,
+                    TopValues = kv.Value
+                        .OrderByDescending(v => v.Value)
+                        .ThenBy(v => v.Key, StringComparer.OrdinalIgnoreCase)
+                        .Take(topValuesPerField)
+                        .Select(v => new UdaValueCount { Value = v.Key, Count = v.Value })
+                        .ToList(),
+                })
+                .OrderByDescending(f => f.ObjectCount)
+                .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var scope = query.UseSelection ? "current UI selection"
+                : chunked ? $"parts, budget split across {PartTypeEnums.Length} part types"
+                : partsOnly ? "parts" : "all objects";
+            result.Message = $"Sampled {result.SampledObjects} objects ({scope}).";
+            if (result.Truncated)
+                result.Message += " SAMPLE ONLY — fields carried exclusively by unsampled objects are invisible here; " +
+                                  "verify a specific field with a filtered count before concluding it is absent.";
+            if (readFailures > 0)
+                result.Message += $" {readFailures} object(s) failed the UDA read and were skipped.";
+        }
+        catch (Exception ex)
+        {
+            result.Message = "Discovery failed: " + ErrorText.Flatten(ex);
+        }
+
+        return result;
+    }
+
+    private static string ReadGroupKey(
+        TSM.ModelObject mo, ModelObjectInfo info, GroupKeyMode mode, string keyName)
+    {
+        switch (mode)
+        {
+            case GroupKeyMode.All: return "(all)";
+            case GroupKeyMode.Type: return info.Type;
+            case GroupKeyMode.Class: return info.Class;
+            case GroupKeyMode.Profile: return info.Profile;
+            case GroupKeyMode.Material: return info.Material;
+            case GroupKeyMode.Name: return info.Name;
+            case GroupKeyMode.Assembly:
+                var pos = "";
+                mo.GetReportProperty("ASSEMBLY_POS", ref pos);
+                return pos ?? "";
+            case GroupKeyMode.Uda:
+                return TryGetUserPropertyAsString(mo, keyName, out var udaValue) ? udaValue : "";
+            case GroupKeyMode.Attribute:
+                return TryGetAttributeValue(mo, keyName, out var attrValue) ? attrValue : "";
+            default: return "";
+        }
+    }
+
+    private static string FormatUdaValue(object? value)
+    {
+        switch (value)
+        {
+            case null: return "";
+            case string s: return s.Trim();
+            case double d: return d.ToString("G", CultureInfo.InvariantCulture);
+            case int i: return i.ToString(CultureInfo.InvariantCulture);
+            default: return value.ToString() ?? "";
+        }
     }
 
     public ProfileConnectionSummary AnalyzeConnectionsForProfile(string profile, double toleranceMm = 50, int? limit = 1000)
@@ -2004,29 +2262,78 @@ public sealed partial class TeklaModelService : ITeklaModelService
             ["Beam"] = TSM.ModelObject.ModelObjectEnum.BEAM,
             ["PolyBeam"] = TSM.ModelObject.ModelObjectEnum.POLYBEAM,
             ["ContourPlate"] = TSM.ModelObject.ModelObjectEnum.CONTOURPLATE,
+            ["BentPlate"] = TSM.ModelObject.ModelObjectEnum.BENT_PLATE,
+            ["LoftedPlate"] = TSM.ModelObject.ModelObjectEnum.LOFTED_PLATE,
+            ["SpiralBeam"] = TSM.ModelObject.ModelObjectEnum.SPIRAL_BEAM,
+            ["Brep"] = TSM.ModelObject.ModelObjectEnum.BREP,
+            ["CustomPart"] = TSM.ModelObject.ModelObjectEnum.CUSTOM_PART,
+            ["Assembly"] = TSM.ModelObject.ModelObjectEnum.ASSEMBLY,
+            ["BoltArray"] = TSM.ModelObject.ModelObjectEnum.BOLT_ARRAY,
+            ["BoltCircle"] = TSM.ModelObject.ModelObjectEnum.BOLT_CIRCLE,
+            ["BoltXYList"] = TSM.ModelObject.ModelObjectEnum.BOLT_XYLIST,
+            ["Weld"] = TSM.ModelObject.ModelObjectEnum.WELD,
+            ["PolygonWeld"] = TSM.ModelObject.ModelObjectEnum.POLYGON_WELD,
+            ["Connection"] = TSM.ModelObject.ModelObjectEnum.CONNECTION,
+            ["Component"] = TSM.ModelObject.ModelObjectEnum.COMPONENT,
+            ["Detail"] = TSM.ModelObject.ModelObjectEnum.DETAIL,
+            ["Seam"] = TSM.ModelObject.ModelObjectEnum.SEAM,
+            ["Fitting"] = TSM.ModelObject.ModelObjectEnum.FITTING,
             ["Grid"] = TSM.ModelObject.ModelObjectEnum.GRID,
             ["ControlLine"] = TSM.ModelObject.ModelObjectEnum.CONTROL_LINE,
+            ["ControlPoint"] = TSM.ModelObject.ModelObjectEnum.CONTROL_POINT,
             ["ReferenceModelObject"] = TSM.ModelObject.ModelObjectEnum.REFERENCE_MODEL_OBJECT,
         };
 
     /// <summary>
+    /// Every enum value that materializes as a physical <see cref="TSM.Part"/>. Enumerating
+    /// these type-by-type replaces a full-model walk: on a live 470k-object model that is the
+    /// difference between ~5 s (parts chain) and ~52 s (GetAllObjects) before any property is
+    /// read. The Open API has no multi-type overload of GetAllObjectsWithType (verified on
+    /// 2021), hence the chain of single-type enumerators.
+    /// </summary>
+    private static readonly TSM.ModelObject.ModelObjectEnum[] PartTypeEnums =
+    {
+        TSM.ModelObject.ModelObjectEnum.BEAM,
+        TSM.ModelObject.ModelObjectEnum.POLYBEAM,
+        TSM.ModelObject.ModelObjectEnum.CONTOURPLATE,
+        TSM.ModelObject.ModelObjectEnum.BENT_PLATE,
+        TSM.ModelObject.ModelObjectEnum.LOFTED_PLATE,
+        TSM.ModelObject.ModelObjectEnum.SPIRAL_BEAM,
+        TSM.ModelObject.ModelObjectEnum.BREP,
+        TSM.ModelObject.ModelObjectEnum.CUSTOM_PART,
+    };
+
+    /// <summary>
     /// Yield the objects a query should operate on: the current UI selection
     /// (<see cref="ObjectQuery.UseSelection"/>), the type-filtered subset when the queried
-    /// type maps to a Tekla enum (lets Tekla skip non-candidates), or every object.
+    /// type maps to a Tekla enum (lets Tekla skip non-candidates), the physical-parts chain
+    /// when the caller opted into <paramref name="partsFallback"/>, or every object.
     /// AutoFetch (enabled process-wide in the static constructor) batches object data during
     /// enumeration instead of one remoting round-trip per property read.
     /// </summary>
-    private static IEnumerable<TSM.ModelObject> EnumerateSource(TSM.Model model, ObjectQuery query)
+    private static IEnumerable<TSM.ModelObject> EnumerateSource(
+        TSM.Model model, ObjectQuery query, bool partsFallback = false)
     {
-        TSM.ModelObjectEnumerator en;
         if (query != null && query.UseSelection)
-            en = new TSMUI.ModelObjectSelector().GetSelectedObjects();
-        else if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
-                 TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
-            en = model.GetModelObjectSelector().GetAllObjectsWithType(objectType);
-        else
-            en = model.GetModelObjectSelector().GetAllObjects();
+            return Drain(new TSMUI.ModelObjectSelector().GetSelectedObjects());
+        if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
+            TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
+            return Drain(model.GetModelObjectSelector().GetAllObjectsWithType(objectType));
+        if (partsFallback && (query is null || string.IsNullOrWhiteSpace(query.Type)))
+            return EnumerateParts(model);
+        return Drain(model.GetModelObjectSelector().GetAllObjects());
+    }
 
+    /// <summary>Chain the per-type enumerators for every physical part type.</summary>
+    private static IEnumerable<TSM.ModelObject> EnumerateParts(TSM.Model model)
+    {
+        foreach (var partType in PartTypeEnums)
+            foreach (var mo in Drain(model.GetModelObjectSelector().GetAllObjectsWithType(partType)))
+                yield return mo;
+    }
+
+    private static IEnumerable<TSM.ModelObject> Drain(TSM.ModelObjectEnumerator en)
+    {
         while (en.MoveNext())
         {
             if (en.Current != null) yield return en.Current;

@@ -45,6 +45,23 @@ public class ScriptPolicyTests
             v => v.Contains("Preprocessor"));
     }
 
+    [Theory]
+    [InlineData("var sw = System.Diagnostics.Stopwatch.StartNew();\nsw.ElapsedMilliseconds")]
+    [InlineData("var sw = new System.Diagnostics.Stopwatch();\nsw.Start();\nsw.Stop();")]
+    public void Allows_fully_qualified_stopwatch_for_timing(string code)
+    {
+        Assert.Empty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
+    [Theory]
+    [InlineData("using System.Diagnostics;\nvar sw = Stopwatch.StartNew();")] // namespace import stays banned
+    [InlineData("System.Diagnostics.Process.Start(\"cmd\");")]
+    [InlineData("var d = System.Diagnostics.Debug.Listeners;")]
+    public void Stopwatch_exception_does_not_open_the_rest_of_diagnostics(string code)
+    {
+        Assert.NotEmpty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
     [Fact]
     public void Bans_await()
     {

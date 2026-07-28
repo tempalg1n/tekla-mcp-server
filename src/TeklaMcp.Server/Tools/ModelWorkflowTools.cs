@@ -36,7 +36,10 @@ public static class ModelWorkflowTools
         => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
 
     [McpServerTool(Name = "tekla_sum_weight")]
-    [Description("Sum weight (kg) for objects matching optional filters. Set useSelection=true to sum only the current UI selection.")]
+    [Description("Sum weight (kg) for objects matching optional filters, streamed without materializing objects " +
+                 "(safe on 400k+ models). Scans physical PARTS by default; partsOnly=false widens to every object " +
+                 "(bolts, welds, assemblies). Set useSelection=true to sum only the current UI selection. " +
+                 "If the result says truncated=true, repeat with cursor=nextCursor and ADD the page totals together.")]
     public static FilteredMetrics SumWeight(
         ITeklaModelService model,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
@@ -44,86 +47,88 @@ public static class ModelWorkflowTools
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
-        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("UDA field name for exact match, e.g. 'USER_FIELD_1'.")] string? udaName = null,
         [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
-        [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
+        [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
+        [Description("Scan physical parts only (default). Set false to include bolts/welds/assemblies/etc.")] bool partsOnly = true,
+        [Description("Cap the number of objects scanned in this call; combine with cursor to page huge models " +
+                     "within the MCP client's request timeout (~40000 is a safe page on live models).")] int? maxObjects = null,
+        [Description("Continuation cursor from the previous page's nextCursor. Keep every other argument identical.")] string? cursor = null)
     {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
-        var totalWeight = 0.0;
-        var withWeight = 0;
-        foreach (var obj in objects)
-        {
-            if (!obj.WeightKg.HasValue) continue;
-            withWeight++;
-            totalWeight += obj.WeightKg.Value;
-        }
-
+        var aggregation = model.AggregateBy(
+            BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection),
+            groupBy: null, limit: 1, cursor: cursor, maxObjects: maxObjects, partsOnly: partsOnly);
         return new FilteredMetrics
         {
-            ObjectCount = objects.Count,
-            ObjectsWithWeight = withWeight,
-            TotalWeightKg = Math.Round(totalWeight, 2),
+            ObjectCount = aggregation.MatchedObjects,
+            ObjectsWithWeight = aggregation.ObjectsWithWeight,
+            TotalWeightKg = aggregation.TotalWeightKg,
+            ScannedObjects = aggregation.ScannedObjects,
+            Truncated = aggregation.Truncated,
+            NextCursor = aggregation.NextCursor,
+            Message = aggregation.Message,
+            Backend = aggregation.Backend,
         };
     }
 
     [McpServerTool(Name = "tekla_group_weight_by")]
-    [Description("Group objects by one field and return count + total weight per group. " +
-                 "groupBy: 'type', 'class', 'profile', 'material', 'name' or 'assembly' (assembly mark / ASSEMBLY_POS).")]
-    public static IReadOnlyList<GroupedMetricRow> GroupWeightBy(
+    [Description("Group objects by one field and return count + total weight (kg) per group, streamed without " +
+                 "materializing objects (safe on 400k+ models). groupBy: 'type', 'class', 'profile', 'material', " +
+                 "'name', 'assembly' (assembly mark / ASSEMBLY_POS), 'uda:NAME' to group by a user-defined " +
+                 "attribute (e.g. 'uda:USER_FIELD_1' for approval-status workflows), or 'attr:NAME' for any " +
+                 "report/UDA/built-in name. Objects with an empty/missing group value land in the '(none)' row — " +
+                 "report it, it is usually the biggest group. Scans physical PARTS by default (partsOnly=false " +
+                 "widens to all objects). If the result says truncated=true, repeat with cursor=nextCursor and the " +
+                 "SAME arguments, then merge rows by key across pages (pages cover disjoint slices).")]
+    public static AggregationResult GroupWeightBy(
         ITeklaModelService model,
-        [Description("Group key: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")] string groupBy,
+        [Description("Group key: 'type', 'class', 'profile', 'material', 'name', 'assembly', 'uda:NAME' or 'attr:NAME'.")] string groupBy,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
-        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("UDA field name for exact match, e.g. 'USER_FIELD_1'.")] string? udaName = null,
         [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
-        [Description("Maximum number of groups to return. Default 50.")] int limit = 50)
-    {
-        var objects = model.FindObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
-        var rows = objects
-            .GroupBy(o => Normalize(GetGroupKey(o, groupBy)))
-            .Select(g => new GroupedMetricRow
-            {
-                Key = g.Key,
-                Count = g.Count(),
-                TotalWeightKg = Math.Round(g.Sum(x => x.WeightKg ?? 0), 2),
-            })
-            .OrderByDescending(r => r.TotalWeightKg)
-            .ThenByDescending(r => r.Count)
-            .ToList();
-
-        if (limit > 0 && rows.Count > limit) rows = rows.Take(limit).ToList();
-        return rows;
-    }
+        [Description("Maximum number of groups to return; the rest is rolled into an '(other)' row. Default 50.")] int limit = 50,
+        [Description("Scan physical parts only (default). Set false to include bolts/welds/assemblies/etc.")] bool partsOnly = true,
+        [Description("Cap the number of objects scanned in this call; combine with cursor to page huge models " +
+                     "within the MCP client's request timeout (~40000 is a safe page on live models).")] int? maxObjects = null,
+        [Description("Continuation cursor from the previous page's nextCursor. Keep every other argument identical.")] string? cursor = null)
+        => model.AggregateBy(
+            BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection),
+            groupBy, limit, cursor, maxObjects, partsOnly);
 
     [McpServerTool(Name = "tekla_list_distinct_values")]
-    [Description("List distinct values of a field with count + total weight per value. " +
-                 "field: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")]
-    public static IReadOnlyList<GroupedMetricRow> ListDistinctValues(
+    [Description("List distinct values of a field with count + total weight per value. Same engine and paging as " +
+                 "tekla_group_weight_by. field: 'type', 'class', 'profile', 'material', 'name', 'assembly', " +
+                 "'uda:NAME' (e.g. 'uda:USER_FIELD_1') or 'attr:NAME'.")]
+    public static AggregationResult ListDistinctValues(
         ITeklaModelService model,
-        [Description("Field: 'type', 'class', 'profile', 'material', 'name' or 'assembly'.")] string field,
+        [Description("Field: 'type', 'class', 'profile', 'material', 'name', 'assembly', 'uda:NAME' or 'attr:NAME'.")] string field,
         [Description("Object type, exact match, e.g. 'Beam'.")] string? type = null,
         [Description("Tekla class, exact match, e.g. '20'.")] string? @class = null,
         [Description("Profile substring, e.g. 'IPE' or 'TUBE'.")] string? profile = null,
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
-        [Description("UDA field name for exact match, e.g. 'RU_FN1_MRK'.")] string? udaName = null,
+        [Description("UDA field name for exact match, e.g. 'USER_FIELD_1'.")] string? udaName = null,
         [Description("Exact UDA value to match (case-insensitive).")] string? udaEquals = null,
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false,
-        [Description("Maximum number of values to return. Default 100.")] int limit = 100)
-        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection, limit);
+        [Description("Maximum number of values to return; the rest is rolled into an '(other)' row. Default 100.")] int limit = 100,
+        [Description("Scan physical parts only (default). Set false to include bolts/welds/assemblies/etc.")] bool partsOnly = true,
+        [Description("Cap the number of objects scanned in this call; combine with cursor to page huge models.")] int? maxObjects = null,
+        [Description("Continuation cursor from the previous page's nextCursor. Keep every other argument identical.")] string? cursor = null)
+        => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection, limit, partsOnly, maxObjects, cursor);
 
     [McpServerTool(Name = "tekla_select_objects")]
     [Description("Select objects in Tekla UI by filters (including UDA/attribute filters or explicit GUID list) and return selected count + preview. " +
@@ -212,27 +217,6 @@ public static class ModelWorkflowTools
         }
         return result;
     }
-
-    private static string GetGroupKey(ModelObjectInfo obj, string groupBy)
-    {
-        switch ((groupBy ?? "").Trim().ToLowerInvariant())
-        {
-            case "type": return obj.Type;
-            case "class": return obj.Class;
-            case "profile": return obj.Profile;
-            case "material": return obj.Material;
-            case "name": return obj.Name;
-            case "assembly":
-            case "assembly_pos":
-            case "mark": return obj.AssemblyPos ?? "";
-            default:
-                throw new ArgumentException(
-                    "Unsupported group field. Use one of: type, class, profile, material, name, assembly.");
-        }
-    }
-
-    private static string Normalize(string value) =>
-        string.IsNullOrWhiteSpace(value) ? "(none)" : value;
 
     private static string FormatTable(IReadOnlyList<ModelObjectInfo> objects, string? format)
     {

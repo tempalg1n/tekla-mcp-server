@@ -13,4 +13,10 @@ public sealed class GroupedMetricRow
 
     /// <summary>Total weight in kilograms for this group.</summary>
     public double TotalWeightKg { get; set; }
+
+    /// <summary>
+    /// Objects in this group that actually reported a weight. When this is far below
+    /// <see cref="Count"/>, <see cref="TotalWeightKg"/> understates the group.
+    /// </summary>
+    public int ObjectsWithWeight { get; set; }
 }

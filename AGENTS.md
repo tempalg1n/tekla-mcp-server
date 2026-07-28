@@ -95,6 +95,32 @@ without an explicit request and a safety gate (see existing UDA tools for the pr
   name) over adding a new tool for each property you want to expose.
 - **QA checks** in `tekla_find_modeling_issues` are pure tool-layer heuristics over the DTO —
   tune predicates there; no Tekla API needed.
+- **Aggregation goes through `ITeklaModelService.AggregateBy` — never `FindObjects`.**
+  `tekla_group_weight_by` / `tekla_sum_weight` / `tekla_list_distinct_values` stream one group
+  key + WEIGHT per object; no DTO materialization, no `Enrich`, no solids (the old
+  `FindObjects`-based path paid a `GetSolid()` per object to read one double — minutes on real
+  models). `groupBy` accepts `uda:NAME` / `attr:NAME`; parsing, cursor handling and row shaping
+  are shared between backends in `TeklaMcp.Core.Aggregation` (unit-tested, Tekla-free).
+- **Cursor paging for heavy scans.** MCP clients abort requests after ~60 s and the reply is
+  lost even if the server finishes, so scan-shaped tools take `maxObjects` + `cursor` and
+  return `truncated` + `nextCursor` (today: a plain source offset; the skip phase is bare
+  `MoveNext`, no property reads). Pages cover disjoint slices; the agent merges rows by key.
+  Use the same contract for any new scan-shaped tool instead of raising timeouts.
+- **The parts chain.** "Physical parts" = `PartTypeEnums` (BEAM…CUSTOM_PART) enumerated
+  type-by-type — `GetAllObjectsWithType` has NO multi-type overload (verified on 2021). On a
+  470k-object model the chain enumerates in ~5 s vs ~52 s for `GetAllObjects`. Analytics and
+  attribute-discovery tools default to `partsOnly=true`; keep `Matches()` verifying the type
+  either way. The mock mirrors the scope via `PartTypeNames`.
+- **Search results must distinguish "not found" from "did not look".**
+  `tekla_find_attributes_by_value` returns `AttributeSearchResult` with
+  `scannedObjects`/`candidatesTried`/`truncated`/`message` precisely because a bare `[]` once
+  sent agents down false trails (a value present on 5k+ objects was reported absent — wrong
+  candidate list AND an exhausted object budget). Any new search/discovery tool must report
+  its coverage the same way, and scan failures go into `message`, never a silent catch.
+- **UDA discovery is sample-based.** `tekla_discover_udas` reads `GetAllUserProperties` on at
+  most `sampleSize` objects (~100+ ms per object live — measured 400 parts ≈ 54 s), spreading
+  the budget across part types because enumeration order clusters by type. Results say
+  SAMPLE ONLY when truncated; never present a sample as a full inventory.
 
 New tool files: `ModelAssemblyTools.cs`, `ModelQaTools.cs`, `ModelPropertyTools.cs`.
 

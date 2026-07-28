@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply with a
 `Tekla.Structures.ModuleManager` type-initializer exception, and
 `tekla_get_reference_geometry` unable to deliver world geometry for IFC overlay objects.
+Plus the whole-model analytics rework from the approval-status field report (weight per
+UDA group on a 471k-object model needed ~20 MCP calls and manual scripting).
+
+### Added
+
+- **Grouping by UDA / arbitrary attribute**: `tekla_group_weight_by` and
+  `tekla_list_distinct_values` accept `groupBy: 'uda:USER_FIELD_1'` / `'attr:NAME'` on top of
+  the built-in fields. Empty/missing values form a first-class `(none)` group; groups beyond
+  `limit` roll into `(other)` so totals stay consistent.
+- **`tekla_discover_udas`**: sample-based inventory of the UDA fields that actually exist —
+  fill counts, distinct values, top values — spreading the sample across part types. Replaces
+  guessing candidate names as the first step on an unfamiliar model.
+- **Cursor paging for heavy scans**: `tekla_group_weight_by` / `tekla_list_distinct_values` /
+  `tekla_sum_weight` take `maxObjects` + `cursor` and return `truncated` + `nextCursor`, so
+  400k+-object models can be aggregated in pages that fit inside the MCP client's ~60 s
+  request timeout instead of losing the reply mid-scan.
+- Scripts may use fully-qualified `System.Diagnostics.Stopwatch` for timing; the rest of
+  `System.Diagnostics` (and the bare `using`) stays banned.
+
+### Changed
+
+- **Analytics no longer materialize objects.** The weighted analytics tools stream via the new
+  `ITeklaModelService.AggregateBy` — one group key + `WEIGHT` read per object, no `GetSolid()`
+  (the old `FindObjects`-based path paid a solid read per object to sum one double).
+- **Analytics/attribute scans default to physical parts** (`partsOnly=true`): the Tekla
+  backend enumerates the part types directly (~10× faster than `GetAllObjects` on large
+  models); pass `partsOnly=false` to include bolts/welds/assemblies.
+- `tekla_find_attributes_by_value` now returns scan coverage (`scannedObjects`,
+  `candidatesTried`, `truncated`, `message`) instead of a bare list, adds `USER_FIELD_1..4` /
+  `COMMENT` to the default candidates, and reports scan failures in `message` instead of
+  swallowing them — an empty result is no longer ambiguous between "absent" and "did not
+  look far enough".
+- `tekla_get_model_summary` reports `totalWeightKg: null` (not `0`) when weights are skipped.
+- `tekla_run_csharp` documents the client-side request-timeout reality and points big scans
+  to chunking / the paged analytics tools; server instructions now cover the analytics
+  escalation path and `tekla_get_api_reference_status`.
 
 ### Fixed
 
