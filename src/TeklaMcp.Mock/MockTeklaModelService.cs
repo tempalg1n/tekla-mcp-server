@@ -16,7 +16,7 @@ namespace TeklaMcp.Mock;
 ///
 /// This implementation contains NO Tekla references and is safe everywhere.
 /// </summary>
-public sealed class MockTeklaModelService : ITeklaModelService
+public sealed partial class MockTeklaModelService : ITeklaModelService
 {
     private const string BackendName = "Mock";
     private static readonly string[] DefaultAttributeCandidates =
@@ -137,7 +137,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (!string.IsNullOrWhiteSpace(query.Profile)) q = q.Where(o => Contains(o.Profile, query.Profile));
         if (!string.IsNullOrWhiteSpace(query.Material)) q = q.Where(o => Contains(o.Material, query.Material));
         if (!string.IsNullOrWhiteSpace(query.NameContains)) q = q.Where(o => Contains(o.Name, query.NameContains));
-        if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
+        if (!string.IsNullOrWhiteSpace(query.UdaName) && query.UdaIsEmpty)
+        {
+            // "Not processed yet" — an object with no value in that field at all.
+            q = q.Where(o =>
+                !_udasByGuid.TryGetValue(o.Guid, out var udas) ||
+                !udas.TryGetValue(query.UdaName!, out var value) ||
+                string.IsNullOrWhiteSpace(value));
+        }
+        else if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
         {
             q = q.Where(o =>
             {
@@ -1883,7 +1891,14 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (!string.IsNullOrWhiteSpace(query.Profile) && !Contains(o.Profile, query.Profile)) return false;
         if (!string.IsNullOrWhiteSpace(query.Material) && !Contains(o.Material, query.Material)) return false;
         if (!string.IsNullOrWhiteSpace(query.NameContains) && !Contains(o.Name, query.NameContains)) return false;
-        if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
+        if (!string.IsNullOrWhiteSpace(query.UdaName) && query.UdaIsEmpty)
+        {
+            if (_udasByGuid.TryGetValue(o.Guid, out var udas) &&
+                udas.TryGetValue(query.UdaName!, out var current) &&
+                !string.IsNullOrWhiteSpace(current))
+                return false;
+        }
+        else if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
         {
             if (!_udasByGuid.TryGetValue(o.Guid, out var udas)) return false;
             if (!udas.TryGetValue(query.UdaName!, out var value) ||

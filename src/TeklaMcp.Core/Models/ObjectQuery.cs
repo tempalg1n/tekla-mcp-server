@@ -31,6 +31,14 @@ public sealed class ObjectQuery
     public string? UdaEquals { get; set; }
 
     /// <summary>
+    /// When true, match objects whose <see cref="UdaName"/> is UNSET or blank — the "not yet
+    /// processed" half of a status field. Without this there is no way to ask for "parts whose
+    /// USER_FIELD_1 is still empty", because <see cref="UdaEquals"/> ignores a blank value.
+    /// Mutually exclusive with <see cref="UdaEquals"/>; when both are set, this one wins.
+    /// </summary>
+    public bool UdaIsEmpty { get; set; }
+
+    /// <summary>
     /// Generic attribute/report/UDA name to match, e.g. "ASSEMBLY_POS" or "RU_FN1_MRK".
     /// </summary>
     public string? AttributeName { get; set; }

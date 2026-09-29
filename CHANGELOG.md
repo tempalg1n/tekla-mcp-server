@@ -13,8 +13,52 @@ Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply wit
 Plus the whole-model analytics rework from the approval-status field report (weight per
 UDA group on a 471k-object model needed ~20 MCP calls and manual scripting).
 
+Plus the file-exchange layer from the KMD reconciliation field report (T_004_KMD_STATUS,
+Tekla 3155): the geometric part of the job is cheap — `GetSolid()` + AABB is ~1.5 ms per part,
+~90 s for the whole model — but there was no channel wide enough to carry ~65 700 parts with
+geometry out, or tens of thousands of GUID→UDA pairs back in. Everything had to pass through the
+tool response, i.e. through an LLM context.
+
 ### Added
 
+- **File exchange — three tools that move bulk data through a file instead of the response.**
+  - `tekla_export_parts_file`: streams matching objects to jsonl/csv. Fields are opt-in —
+    identity and bill-of-materials by default, plus `solidAabb` (world AABB of
+    `Part.GetSolid()`), `startPoint`/`endPoint`, `contourPoints`, `coordSystem`, `cog`, `finish`
+    and any `uda:NAME`. Nothing expensive is read unless it was asked for.
+  - `tekla_set_udas_from_file`: applies UDA values to many objects from a GUID-keyed jsonl/csv
+    file. `apply=false` by default, and `overwriteNonEmpty=false` by default so a value a human
+    already set is left alone (reported as `skippedNonEmpty`, distinct from `unchanged`).
+  - `tekla_export_reference_objects_file`: the same for reference-model (IFC) objects — external
+    GUID, entity, names, world AABB and placement — with `entityFilter` to keep bolts and welds
+    out, and per-row `aabbSource`/`placementSource` so an exact box is never confused with an
+    estimate. Works on any reference model the existing geometry resolution handles, not just
+    the IFC exporter you happen to have. **`includeFaceAabb` is OFF by default** — see the
+    warning below.
+  - `maxSeconds` on both exports: a wall-clock budget that stops the scan between objects and
+    returns a cursor, for pages whose per-object cost was guessed wrong. It bounds many slow
+    objects, NOT one Open API call that never returns — the Open API has no cancellation.
+  - Data never enters the tool response: results carry counters, a path and a field list.
+
+  > ⚠️ **Field report, 2026-08-13 (Tekla 2021, model 3155).** The first two tools passed live
+  > acceptance — 45 082 parts with `solidAabb` exported in 3 cursor pages, 216 s, 13.9 MB. The
+  > third one did not: with `includeFaceAabb` on, `GetReferenceModelObjectFaces` across the IFC
+  > overlay left **Tekla itself** unresponsive with a core pegged, and killing the MCP client did
+  > not release it. `includeFaceAabb` therefore ships OFF, the tool description tells agents to
+  > probe with `maxObjects=5` first, and `maxSeconds` is documented as bounding slow scans rather
+  > than hangs. Details in `docs/tekla-api-notes.md`.
+- **Path allow-list for the exchange tools** (`TEKLA_MCP_FILE_ROOT`, `;`-separated; default
+  `%LOCALAPPDATA%\TeklaMcp\exchange` plus the open model's folder). Absolute paths only, data-file
+  extensions only, no UNC/device paths, no wildcards, no reserved DOS device names, and
+  canonicalization before the root check. Setting the variable replaces the defaults so the
+  allow-list can be narrowed. The script escape hatch still has no file access at all.
+- **`<path>.status.json` sidecar** written on every export call. MCP clients abort at ~60 s and the
+  reply is lost even when the server finished the work; the sidecar is how a completed export can
+  still be told apart from a half-written one.
+- **`udaIsEmpty` filter** on `tekla_find_objects`, `tekla_count_objects` and
+  `tekla_export_parts_file`: match objects whose UDA is unset or blank. `udaEquals` ignores a blank
+  expected value, so "parts whose USER_FIELD_1 is still empty" — the natural work queue for a
+  review workflow — was previously impossible to express.
 - **Grouping by UDA / arbitrary attribute**: `tekla_group_weight_by` and
   `tekla_list_distinct_values` accept `groupBy: 'uda:USER_FIELD_1'` / `'attr:NAME'` on top of
   the built-in fields. Empty/missing values form a first-class `(none)` group; groups beyond
@@ -46,8 +90,22 @@ UDA group on a 471k-object model needed ~20 MCP calls and manual scripting).
 - `tekla_run_csharp` documents the client-side request-timeout reality and points big scans
   to chunking / the paged analytics tools; server instructions now cover the analytics
   escalation path and `tekla_get_api_reference_status`.
+- `tekla_run_csharp` now also warns that `GetAllObjects()` costs ~50 s on a 400k-object model
+  (blowing the client timeout on its own), that `GetAllObjectsWithType` has no multi-type
+  overload — the eight physical part types must be chained — and that bulk data belongs in the
+  file-exchange tools rather than a script.
 
 ### Fixed
+
+- **`string.Split(...)` no longer trips the script mutation policy.** `Split` was in the
+  mutating-member list for `Operation.Split`, which the `Operation` token already catches, so
+  the only thing the bare name ever did was reject ordinary string parsing with
+  «Script uses mutating members (Split)» and force scripts to hand-roll a tokenizer.
+  `SplitSlab` stays listed.
+- **Banned identifiers used as your own declarations now say so.** A local function or variable
+  named `Process` is still rejected — the check is syntax-only and cannot tell it apart from
+  `System.Diagnostics.Process` once the name is in scope — but the message now says "reserved
+  capability name … rename it" instead of accusing the script of reaching for process access.
 
 - **Drawing-object enumeration died on non-serializable objects (e.g. `DetailMark`).**
   After a detail view was created, every `tekla_select_drawing_objects` /

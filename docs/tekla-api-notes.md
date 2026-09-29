@@ -158,6 +158,46 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | Reference faces | `ModelInternal.Operation.GetReferenceModelObjectFaces(Identifier)` → capped global point lists + derived AABB (`aabbSource: "tekla-faces"`) | ✅ common overload compiles against Tekla 2021; ⚠️ **internal API and world-coordinate behavior require live verification on rotated/scaled/base-point IFCs**; v0.7.0 field report: throws for IFC overlay windows — see IFC fallback |
 | Reference IFC fallback | `IfcPlacementReader` (TeklaMcp.Core, pure C#) parses the reference IFC by GlobalId: `IFCLOCALPLACEMENT` chain → world origin + axes, unit-scaled to mm; insertion via `ReferenceModel.Position/Scale` (+ `Rotation`/`ActiveFilePath`/`BasePointGuid` read reflectively — newer members). Reads `.ifczip`/`.zip` (Tekla's `DataStorage\ref` cache — often the ONLY on-disk copy; `ActiveFilePath` points there) and plain `.ifc`; tries every existing copy (cache first, then `Filename`) until the GlobalId resolves. Project length unit = the `LENGTHUNIT` referenced from `IFCUNITASSIGNMENT` — files carry auxiliary length units (Renga IFC4: project `MILLI METRE` + bare `METRE`) and last-wins scales ×1000 | ✅ verified live (Tekla 2023, 2026-07-23) against `3219-АР.ifc` window `0VZkpIecn7$9mG$7iL8u45`: `ifc-file` placement + estimate AABB match the exact `tekla-faces` AABB; ⚠️ **runtime: verify Rotation semantics, base-point offsets and `Scale ≠ 1` overlays live** |
 | Reference lookup by IFC GUID | `ReferenceModel.GetReferenceModelObjectByExternalGuid(String)` invoked reflectively over `GetAllObjectsWithType(REFERENCE_MODEL)` | ⚠️ API availability varies by Tekla version; falls back with a clear message |
+| Export: coordinate system | `ModelObject.GetCoordinateSystem()` → `Origin`, `AxisX`, `AxisY`; Z derived as X×Y (documented definition), all normalized | ✅ Signature verified via reference (`CoordinateSystem GetCoordinateSystem()` on `ModelObject`); ⚠️ **runtime: not yet verified per part type** |
+| Export: contour polygon | `ContourPlate.Contour` / `PolyBeam.Contour` → `Contour.ContourPoints` (an `ArrayList` of `ContourPoint : Point`) | ✅ Signatures verified (`ArrayList ContourPoints { get; set; }`, `ContourPoint` inherits `Point`); ⚠️ **runtime: bent/lofted plates not verified** |
+| Export: centre of gravity | `GetReportProperty("COG_X"/"COG_Y"/"COG_Z")` | ⚠️ standard part report properties; **confirm they are populated for `CustomPart`/`Brep` live** |
+| Reference export source | `ReferenceModel.GetChildren()` when one model is named, else `GetAllObjectsWithType(REFERENCE_MODEL_OBJECT)`; model matched via `ReferenceModel.Identifier` (it inherits `ModelObject`) | ✅ Signatures verified (`ModelObjectEnumerator GetChildren()`); ⚠️ **runtime: not yet verified against a large IFC overlay** |
+
+### Cost of a whole-model export (why the exchange tools page)
+
+Measured on the field model (3155, ~65 700 parts, Tekla 2021): `Part.GetSolid()` + AABB ≈ **1.5 ms
+per part**, so a full geometric export is ~90–100 s of pure API time. MCP clients abort the request
+at ~60 s and the reply is lost even when the server finishes — hence `maxObjects` + `cursor` +
+`append` on `tekla_export_parts_file`, and the `<path>.status.json` sidecar as the out-of-band
+completion record. `GetAllObjects()` alone costs ~50 s on a 400k-object model; the part-type chain
+(`GetAllObjectsWithType` × 8) does the same scan in ~5 s.
+
+### ⚠️ `GetReferenceModelObjectFaces` can wedge Tekla itself (field report, 2026-08-13)
+
+Running `ModelInternal.Operation.GetReferenceModelObjectFaces` in a loop over an IFC overlay in
+model 3155 (Tekla 2021 SP7) left **Tekla unresponsive with one core pegged**. Killing the MCP
+client process did **not** release it: by then the work had been handed to Tekla, and nothing on
+the client side can interrupt it. Resident memory fell in steps (2043 → 1476 → 958 MB) while CPU
+kept climbing, so it was computing rather than deadlocked — but it had not returned 35+ minutes
+later. Same internal API that the v0.7.0 report saw *throw* for IFC overlay windows.
+
+Consequences baked into the code:
+
+- `tekla_export_reference_objects_file` has **`includeFaceAabb=false` by default**. The exact
+  face-derived AABB is opt-in; the default path uses IFC-file placement estimates, and every row
+  says which it got via `aabbSource`.
+- The tool description tells the agent to probe an untried reference model with `maxObjects=5`
+  first and report the cost.
+- `maxSeconds` bounds a page that is merely *slow* — it is checked between objects and therefore
+  **cannot** bound one call that never returns. Do not present it as protection against this.
+
+There is no server-side fix for the underlying behavior: the Open API offers no cancellation, and
+the script escape hatch's execution deadline has the same blind spot (it can abort the worker
+thread, not the computation inside Tekla). Treat any per-object internal `Operation.*` call over a
+whole reference model as capable of taking the application down, and gate it accordingly.
+
+An AABB spanned by a face set that hit the per-object budget is too small and is labelled
+`aabbSource="tekla-faces-truncated"` rather than reported as exact.
 
 ## Drawing API implementation notes
 

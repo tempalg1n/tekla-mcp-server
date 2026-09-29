@@ -170,6 +170,45 @@ public interface ITeklaModelService
         bool apply,
         int? limit = null);
 
+    // -- File exchange --------------------------------------------------------------------
+    //
+    // These three are the ONLY sanctioned file access in the server. They exist because a
+    // geometric reconciliation moves tens of MB of geometry out and tens of thousands of
+    // GUID→UDA pairs back in, and an MCP tool response is an LLM context — the wrong pipe by
+    // one to two orders of magnitude. Data therefore NEVER appears in their results, only
+    // counters. Paths are validated by TeklaMcp.Core.FileExchange.FilePathPolicy.
+
+    /// <summary>
+    /// Stream objects matching <paramref name="query"/> into a file on disk, one record per
+    /// object, and return counters only. Implementations must stream (never materialize the
+    /// model) and must pay only for the fields the request asks for — a solid AABB costs a
+    /// <c>GetSolid()</c> per object. <see cref="ExportRequest.MaxObjects"/> caps one call and
+    /// <see cref="ExportRequest.Cursor"/> resumes it, exactly like
+    /// <see cref="AggregateBy"/>; continuation calls must pass
+    /// <see cref="ExportRequest.Append"/> so pages land in the same file. Never throws —
+    /// failures are reported in <see cref="ExportResult.Message"/>.
+    /// </summary>
+    ExportResult ExportObjectsToFile(ObjectQuery query, ExportRequest request);
+
+    /// <summary>
+    /// Apply UDA values from a jsonl/csv file keyed by Tekla GUID. Honors preview-by-default
+    /// (<see cref="UdaFileWriteRequest.Apply"/>) and, by default, refuses to overwrite a UDA
+    /// that already holds a value. Rows whose GUID is missing from the model are skipped or
+    /// fail the run per <see cref="UdaFileWriteRequest.OnMissing"/>. Never throws.
+    /// </summary>
+    UdaFileWriteResult SetUdasFromFile(UdaFileWriteRequest request);
+
+    /// <summary>
+    /// Stream reference-model (IFC) objects into a file: external GUID, entity, names, world
+    /// AABB and placement, with the same paging contract as
+    /// <see cref="ExportObjectsToFile"/>. Uses the same best-effort geometry resolution as
+    /// <see cref="GetReferenceGeometry"/> (Open API first, reference IFC file as fallback), so
+    /// per-object <see cref="ReferenceGeometryInfo.AabbSource"/> /
+    /// <see cref="ReferenceGeometryInfo.PlacementSource"/> land in the file and the caller can
+    /// tell exact geometry from an estimate. Never throws.
+    /// </summary>
+    ExportResult ExportReferenceObjectsToFile(ReferenceExportRequest request);
+
     // -- Geometry / grids -----------------------------------------------------------------
 
     /// <summary>

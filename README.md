@@ -77,7 +77,7 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **101 tools** in total, including
+All tools use the `tekla_` prefix. The current build exposes **104 tools** in total, including
 **51 drawing-specific tools**.
 
 | Tool | Description |
@@ -86,7 +86,7 @@ All tools use the `tekla_` prefix. The current build exposes **101 tools** in to
 | `tekla_report_gap` | Report a missing capability / insufficient data; returns a ready-to-file issue draft. Use instead of scripting around gaps. |
 | `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. On huge models use `includeWeights=false` / `maxObjects` to keep it fast. |
 | `tekla_list_objects` | List objects with core properties (with limit). |
-| `tekla_find_objects` | Search by filters: type, class, profile, material, name. |
+| `tekla_find_objects` | Search by filters: type, class, profile, material, name, UDA/attribute. `udaIsEmpty=true` selects objects whose UDA is still blank. |
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
 | `tekla_get_properties` | Read any named properties (report props, UDAs, built-ins) for an object by GUID. |
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
@@ -96,7 +96,7 @@ All tools use the `tekla_` prefix. The current build exposes **101 tools** in to
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). Reports scan coverage (`scannedObjects`/`truncated`) so "no match" is never mistaken for "absent". |
 | `tekla_discover_udas` | Sample objects and report which UDA fields actually exist: fill counts, distinct values, top values. The "which field holds X?" starting point. |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
-| `tekla_count_objects` | Count objects matching filters (fast: no per-object data is materialized; an unfiltered count is instant). |
+| `tekla_count_objects` | Count objects matching filters, including `udaIsEmpty` (fast: no per-object data is materialized; an unfiltered count is instant). |
 | `tekla_sum_weight` | Sum weight for objects matching filters. Streams without materializing objects; pages huge models via `maxObjects` + `cursor`. |
 | `tekla_group_weight_by` | Group count + weight by field (`type`, `class`, `profile`, `material`, `name`, `assembly`, `uda:NAME`, `attr:NAME`). Streams (no solids); pages via `maxObjects` + `cursor`; empty values land in `(none)`. |
 | `tekla_list_distinct_values` | Distinct values for a field with count + weight (same engine and paging as `tekla_group_weight_by`). |
@@ -111,6 +111,49 @@ All tools use the `tekla_` prefix. The current build exposes **101 tools** in to
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
 | `tekla_set_udas_by_filter` | Bulk UDA update by filter (`apply=false` by default). |
+
+### File exchange — bulk data in and out
+
+Some work does not fit through an MCP response, because a response is an LLM context. Reconciling
+a model against an IFC reference means moving ~65 000 parts **with geometry** out (megabytes) and
+tens of thousands of GUID→value pairs back in. These three tools stream through a **file on disk**
+instead; the response carries counters only.
+
+| Tool | Description |
+|---|---|
+| `tekla_export_parts_file` | Stream matching objects to a jsonl/csv file: identity, bill-of-materials fields, and on request `solidAabb`, `startPoint`/`endPoint`, `contourPoints`, `coordSystem`, `cog` and any `uda:NAME`. Pages via `maxObjects` + `cursor` + `append`. |
+| `tekla_set_udas_from_file` | Apply UDA values to many objects from a GUID-keyed jsonl/csv file. `apply=false` by default; `overwriteNonEmpty=false` by default, so values a human already set are left alone. |
+| `tekla_export_reference_objects_file` | Same, for reference-model (IFC) objects: external GUID, entity, names, world AABB and placement, with `entityFilter` and per-row `aabbSource`/`placementSource` honesty. |
+
+> ⚠️ **`includeFaceAabb` is off by default.** Exact AABBs for reference objects come from an
+> internal, version-sensitive Tekla call. Running it across an IFC overlay on Tekla 2021 (model
+> 3155, 2026-08-13) left **Tekla itself** unresponsive with a core pegged, and killing the MCP
+> client did not release it — the work had already been handed to Tekla. `maxObjects`/`maxSeconds`
+> stop a scan *between* objects; they cannot interrupt a call that never returns. Probe an untried
+> reference model with `maxObjects=5` before enabling it. The default path uses IFC-file placement
+> estimates, which each row labels via `aabbSource`.
+
+**Where files may go.** This is the server's only file access — the script escape hatch has none.
+Paths must be absolute, carry a data extension (`.jsonl`, `.csv`, `.json`, `.txt`), and sit under an
+allowed root. Roots come from `TEKLA_MCP_FILE_ROOT` (`;`-separated); when it is unset the defaults
+are `%LOCALAPPDATA%\TeklaMcp\exchange` **plus the open model's folder**. Setting the variable
+replaces the defaults, so the allow-list can be narrowed. UNC/device paths, wildcards, reserved
+device names and `..` escapes are rejected.
+
+**Timeouts.** MCP clients abort a request after ~60 s and the reply is lost even when the server
+finished, so pass `maxObjects` (~30 000 is a safe page with `solidAabb`) and, while `truncated` is
+true, repeat with `cursor=nextCursor` and `append=true`. Every call also mirrors its counters into
+`<path>.status.json`, so a timed-out call can still be verified.
+
+Typical reconciliation loop:
+
+```text
+tekla_export_reference_objects_file  → KMD geometry to a file
+tekla_export_parts_file              → KM parts (e.g. udaName=USER_FIELD_1, udaIsEmpty=true) to a file
+        …match the two files offline…
+tekla_set_udas_from_file apply=false → check matched/updated/skippedNonEmpty/notFound
+tekla_set_udas_from_file apply=true  → write
+```
 
 ### Write tools — create / edit / delete
 

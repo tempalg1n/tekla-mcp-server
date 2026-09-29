@@ -84,6 +84,15 @@ const string serverInstructions =
     "maxObjects and continue via cursor=nextCursor instead of raising timeouts. Before a " +
     "scripting session, call tekla_get_api_reference_status once — it tells you whether " +
     "tekla_search_api can verify signatures on this machine.\n\n" +
+    "BULK DATA IN AND OUT goes through a file, never through your context: tekla_export_parts_file " +
+    "(objects with optional solidAabb/coordSystem/contourPoints/cog/uda:NAME), " +
+    "tekla_export_reference_objects_file (IFC objects with world AABB + placement) and " +
+    "tekla_set_udas_from_file (GUID-keyed UDA writes). Reach for them as soon as the job involves " +
+    "more than a few hundred objects or per-object geometry — do NOT page thousands of rows through " +
+    "tekla_find_objects/tekla_get_reference_geometry, and do NOT put long GUID lists in a script. " +
+    "They only accept absolute paths under the configured roots (TEKLA_MCP_FILE_ROOT, default " +
+    "%LOCALAPPDATA%\\TeklaMcp\\exchange plus the model folder), page with maxObjects + cursor + " +
+    "append, and return counters only — the data stays in the file.\n\n" +
     "Model and drawing write/UI tools default to apply=false (preview). Drawing points explicitly " +
     "distinguish view-local, global model, and sheet/paper-mm coordinate spaces. Show the plan and " +
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +

@@ -32,8 +32,9 @@ public static class ModelWorkflowTools
         [Description("Generic attribute/report/UDA name, e.g. 'ASSEMBLY_POS'.")] string? attributeName = null,
         [Description("Exact value for generic attribute match (case-insensitive).")] string? attributeEquals = null,
         [Description("Substring value for generic attribute match (case-insensitive).")] string? attributeContains = null,
+        [Description("With udaName: count objects whose UDA is UNSET or blank. Overrides udaEquals.")] bool udaIsEmpty = false,
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
-        => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection));
+        => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection, udaIsEmpty: udaIsEmpty));
 
     [McpServerTool(Name = "tekla_sum_weight")]
     [Description("Sum weight (kg) for objects matching optional filters, streamed without materializing objects " +
@@ -188,7 +189,8 @@ public static class ModelWorkflowTools
         string? attributeEquals = null,
         string? attributeContains = null,
         IReadOnlyList<string>? guidIn = null,
-        bool useSelection = false) =>
+        bool useSelection = false,
+        bool udaIsEmpty = false) =>
         new ObjectQuery
         {
             Type = type,
@@ -198,6 +200,7 @@ public static class ModelWorkflowTools
             NameContains = nameContains,
             UdaName = udaName,
             UdaEquals = udaEquals,
+            UdaIsEmpty = udaIsEmpty,
             AttributeName = attributeName,
             AttributeEquals = attributeEquals,
             AttributeContains = attributeContains,

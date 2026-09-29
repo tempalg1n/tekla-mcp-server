@@ -2494,7 +2494,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     private static bool MatchesUda(TSM.ModelObject mo, ObjectQuery q)
     {
-        if (!string.IsNullOrWhiteSpace(q.UdaName) && !string.IsNullOrWhiteSpace(q.UdaEquals))
+        if (!string.IsNullOrWhiteSpace(q.UdaName) && q.UdaIsEmpty)
+        {
+            // "Not processed yet": the UDA is absent or blank. Distinct from UdaEquals, which
+            // ignores a blank expected value and so could never express this.
+            if (TryGetUserPropertyAsString(mo, q.UdaName!, out var current) &&
+                !string.IsNullOrWhiteSpace(current))
+                return false;
+        }
+        else if (!string.IsNullOrWhiteSpace(q.UdaName) && !string.IsNullOrWhiteSpace(q.UdaEquals))
         {
             var udaName = q.UdaName!;
             if (!TryGetUserPropertyAsString(mo, udaName, out var udaValue))

@@ -111,6 +111,42 @@ public class ScriptPolicyTests
             "var b = new Beam(); b.Insert(); new Model().CommitChanges();", allowMutations: true));
     }
 
+    [Theory]
+    [InlineData("var parts = \"a,b,c\".Split(',');\nparts.Length")]
+    [InlineData("var parts = line.Split(new[] { ';' });\nparts")]
+    public void String_split_is_not_a_mutation(string code)
+    {
+        // Field report: the bare "Split" entry only ever fired on string.Split, forcing scripts
+        // to hand-roll a tokenizer. Operation.Split is still caught by the "Operation" token.
+        Assert.Empty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
+    [Fact]
+    public void Operation_split_is_still_a_mutation()
+    {
+        Assert.NotEmpty(ScriptPolicy.Validate("Operation.Split(beam, point);", allowMutations: false));
+    }
+
+    [Fact]
+    public void Banned_name_used_as_a_declaration_says_rename_your_declaration()
+    {
+        var violations = ScriptPolicy.Validate(
+            "int Process(int x) => x + 1;\nProcess(1)", allowMutations: false);
+
+        var v = Assert.Single(violations);
+        Assert.Contains("reserved capability name", v);
+        Assert.Contains("rename", v);
+        // Must not accuse the script of reaching for System.Diagnostics.Process.
+        Assert.DoesNotContain("no file/network/process", v);
+    }
+
+    [Fact]
+    public void Banned_name_used_as_a_type_still_gets_the_capability_message()
+    {
+        var violations = ScriptPolicy.Validate("Process.Start(\"cmd\");", allowMutations: false);
+        Assert.Contains(violations, v => v.Contains("no file/network/process"));
+    }
+
     [Fact]
     public void Reports_mutating_members_even_when_allowed()
     {

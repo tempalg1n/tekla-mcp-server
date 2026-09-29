@@ -56,6 +56,9 @@ var requiredTools = new[]
     "tekla_create_ga_drawing_view",
     "tekla_check_csharp",
     "tekla_run_csharp",
+    "tekla_export_parts_file",
+    "tekla_set_udas_from_file",
+    "tekla_export_reference_objects_file",
 };
 foreach (var name in requiredTools)
 {

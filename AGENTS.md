@@ -54,7 +54,7 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy) |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend (synthetic frame) |
 | `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, engine, SafeJson) + API reference search. No Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 | real Tekla Open API backend (Windows) |
@@ -183,6 +183,65 @@ grid parsing) is the most under-verified code in the repo — see `docs/tekla-ap
   `// TODO(windows):` marker plus notes in `docs/tekla-api-notes.md`.
 - Cap faces and custom attributes. Never return an unbounded IFC mesh through MCP.
 
+### Conventions for FILE EXCHANGE tools
+
+`tekla_export_parts_file`, `tekla_set_udas_from_file`, `tekla_export_reference_objects_file`.
+
+These three are the ONLY file access in the server — `ScriptPolicy` still bans `File`/`Path`/
+`Directory` outright, and that stays true. They exist because a geometric reconciliation moves
+tens of MB of geometry out and tens of thousands of GUID→UDA pairs back in, and a tool response is
+an LLM context: the wrong pipe by one to two orders of magnitude.
+
+- **Data never enters the response.** Export results carry counters, a path and a field list —
+  never rows. If you are tempted to add a `sample` of exported rows, don't; that is what
+  `tekla_find_objects` is for.
+- **Every path goes through `FilePathPolicy`** (`src/TeklaMcp.Core/FileExchange/`): absolute only,
+  extension allow-list, root allow-list from `TEKLA_MCP_FILE_ROOT` (set = replaces the defaults,
+  so an operator can narrow it), no UNC/device paths, no wildcards, no reserved DOS names,
+  canonicalized BEFORE the root check. Reserved names are checked on the RAW name because
+  `Path.GetFullPath("…\CON.csv")` rewrites it to `\\.\CON`. Extend the tests in
+  `FilePathPolicyTests` in the same change as any relaxation.
+- **The file mechanics are shared, the scan is not.** `ExportRunner` / `UdaImportRunner` own
+  format, paging, the status sidecar and the result DTO; backends supply only a row source
+  (`Func<skip, ExportScanState, IEnumerable<DataRow>>`) or an `IUdaImportTarget`. That is why a
+  Mock file and a live file have identical layout — keep it that way rather than duplicating
+  writer logic per backend.
+- **Cursors mean SOURCE offsets, not matched rows.** The skip happens before filtering, exactly as
+  in `AggregateBy`, so pages cover disjoint slices. Continuation calls must pass `append=true`;
+  the CSV header is written only when the file is empty.
+- **`<path>.status.json` is written on every call.** MCP clients abort at ~60 s and the reply is
+  lost even when the server finished; the sidecar is the only way the user can tell a completed
+  export from a half-written one. It is best-effort and must never fail an otherwise good export.
+- **Pay only for requested fields.** `ExportFieldSet` carries `NeedsSolid` / `NeedsCog` /
+  `NeedsCoordSystem` / `NeedsContour` / `NeedsReportProperties` precisely so a default export does
+  not call `GetSolid()`. `uda:*` is rejected on purpose — it means `GetAllUserProperties` per
+  object (~100 ms live, hours over a full model); the error points at `tekla_discover_udas`.
+- **Writes keep the preview contract** (`apply=false` default) AND add a second guard:
+  `overwriteNonEmpty=false` leaves a UDA that already holds a value alone, because those values
+  are usually a human's decision. `skippedNonEmpty` reports how many. `unchanged` (already
+  correct) and `skip-non-empty` (refused) are different outcomes — do not merge them.
+- **Geometry honesty carries into the file.** The reference export writes `aabbSource` per row and
+  rewrites `tekla-faces` to `tekla-faces-truncated` when the face budget was hit, because an AABB
+  spanned by a truncated face set is too SMALL. Never widen that to a plain "exact".
+- **`includeFaceAabb` stays OFF by default — do not flip it back.** Running
+  `GetReferenceModelObjectFaces` across an IFC overlay wedged live Tekla (2021, model 3155,
+  2026-08-13): one core pegged, UI unresponsive, and killing the MCP client did NOT release it.
+  See the field report in `docs/tekla-api-notes.md`. The same caution applies to any new
+  per-object internal `Operation.*` call over a whole model.
+- **`maxSeconds` bounds many slow objects, never one wedged call.** It is checked between rows in
+  `ExportRunner`, so a single Open API call that does not return is still unbounded — the Open API
+  has no cancellation. Never describe it as protection against a hang, in code comments or in tool
+  descriptions.
+
+`ObjectQuery.UdaIsEmpty` was added for the same workflow ("parts whose USER_FIELD_1 is still
+blank") — `UdaEquals` ignores a blank expected value and could never express it. Both backends
+implement it in their `MatchesUda`/`MatchesFilters`; wire it into new filter tools too.
+
+New files: `src/TeklaMcp.Core/FileExchange/*`, `src/TeklaMcp.Core/Models/FileExchangeModels.cs`,
+`src/TeklaMcp.Mock/MockTeklaModelService.FileExchange.cs`,
+`src/TeklaMcp.Tekla/TeklaFileExchangeService.cs`,
+`src/TeklaMcp.Server/Tools/ModelFileExchangeTools.cs`.
+
 ### Conventions for DRAWING tools
 
 The drawing layer is experimental (new in v0.7.0) and has had limited live-model testing —
@@ -244,6 +303,12 @@ dedicated tool exists. Rules for maintaining it:
   `ExecutionAttempted` become true as soon as the live worker starts, including failure/timeout.
   Never throw — report failures and partial-mutation warnings in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
+  A name belongs in `MutatingMembers` only if a FALSE POSITIVE is unlikely: bare `Split` was
+  removed because it only ever fired on `string.Split` while the real target, `Operation.Split`,
+  is already caught by the `Operation` token — do not re-add it. When a banned identifier is also
+  DECLARED by the script (a local function named `Process`), the violation message says "rename
+  your declaration" rather than accusing the script of process access; the ban itself still
+  applies, because a syntax-only check cannot tell the two apart once the name is in scope.
   If you extend the script surface (new imports, new globals), extend the policy AND the tests in
   `tests/TeklaMcp.Tests/ScriptPolicyTests.cs` in the same change. Mutations require
   `allowMutations=true`; the tool description obliges the agent to show the user the script and

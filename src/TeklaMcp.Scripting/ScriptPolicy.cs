@@ -101,7 +101,11 @@ public static class ScriptPolicy
         // Operations/macros/export helpers. Qualified Operation.* calls are caught by the
         // "Operation" token; explicit names also cover `using static` and wrapper helpers.
         "Operation", "RunMacro", "RunMacroAndWait", "RunCommand", "PlaceComponents",
-        "MoveObject", "CopyObject", "Split", "SplitSlab",
+        // NOT "Split": the mutating call is Operation.Split, and the "Operation" token above
+        // already catches it. Listing the bare name only ever fired on string.Split(...), which
+        // forced scripts to hand-roll their own tokenizer. "SplitSlab" is distinctive enough to
+        // keep.
+        "MoveObject", "CopyObject", "SplitSlab",
         "CreateIFC4ExportFromAll", "CreateIFC4ExportFromSelected",
         "CreateReportFromAll", "CreateReportFromSelected",
         "CreateNCFilesFromAll", "CreateNCFilesFromSelected", "CreateNCFilesByPartId",
@@ -192,14 +196,28 @@ public static class ScriptPolicy
                     string.Join(", ", AllowedUsings.OrderBy(n => n)) + ".");
         }
 
+        // Banned names the script DECLARES itself (a local function called Process, ...). Every
+        // later use of such a name is a use of that declaration, so the whole script gets the
+        // "rename your declaration" message instead of an accusation about System.Diagnostics.
+        var declaredBanned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var token in root.DescendantTokens()
+                     .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
+            if (BannedIdentifiers.Contains(token.ValueText) && IsDeclarationName(token))
+                declaredBanned.Add(token.ValueText);
+
         foreach (var token in root.DescendantTokens()
                      .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
         {
             var name = token.ValueText;
             if (BannedIdentifiers.Contains(name))
-                Add($"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
-                    "Use Print(...) for output and return a value as the last expression. " +
-                    "(If this is just your variable name, rename it.)");
+                Add(declaredBanned.Contains(name)
+                    ? $"'{name}' is a reserved capability name and cannot be used even for your own " +
+                      "function, variable or parameter — rename it (e.g. " + name + "Row). The check " +
+                      "is syntax-only, so it cannot tell your declaration from the banned type of the " +
+                      "same name."
+                    : $"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
+                      "Use Print(...) for output and return a value as the last expression. " +
+                      "(If this is just your variable name, rename it.)");
             else if (BannedNamespaceSegments.Contains(name) && !IsStopwatchQualifier(token))
                 Add($"'{name}' looks like a banned namespace (System.{name}.*) — not allowed in scripts. " +
                     "(If this is just your variable name, rename it. Fully-qualified " +
@@ -254,6 +272,37 @@ public static class ScriptPolicy
         if (parentQualified != null && ReferenceEquals(parentQualified.Left, node))
             return (parentQualified.Right as IdentifierNameSyntax)?.Identifier.ValueText == "Stopwatch";
         return false;
+    }
+
+    /// <summary>
+    /// True when the token is the NAME being declared (local function, method, variable,
+    /// parameter, foreach/pattern designation) rather than a use of the banned type. The ban
+    /// still applies — a syntax-only policy cannot distinguish the two once the name is in
+    /// scope — but the message can at least say "rename your declaration" instead of accusing
+    /// the script of reaching for System.Diagnostics.Process.
+    /// </summary>
+    private static bool IsDeclarationName(SyntaxToken token)
+    {
+        var parent = token.Parent;
+        if (parent == null) return false;
+
+        switch (parent)
+        {
+            case LocalFunctionStatementSyntax localFunction:
+                return localFunction.Identifier == token;
+            case MethodDeclarationSyntax method:
+                return method.Identifier == token;
+            case VariableDeclaratorSyntax variable:
+                return variable.Identifier == token;
+            case ParameterSyntax parameter:
+                return parameter.Identifier == token;
+            case ForEachStatementSyntax forEach:
+                return forEach.Identifier == token;
+            case SingleVariableDesignationSyntax designation:
+                return designation.Identifier == token;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
