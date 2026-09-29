@@ -102,7 +102,11 @@ const string serverInstructions =
     "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
-    "retrying blindly or scripting around it.";
+    "retrying blindly or scripting around it.\n\n" +
+    "CURVED PARTS: radius and curved dimensions need exact arc points. Get them from " +
+    "tekla_get_part_curve_geometry (bends with radius/chord/sagitta/arc length, inner/outer arcs " +
+    "of round tubes and bars, optional view coordinates) — never estimate them from bounding " +
+    "boxes or from the segmented polyline of a drawing part.";
 
 var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)

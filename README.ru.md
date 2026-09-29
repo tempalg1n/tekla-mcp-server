@@ -64,6 +64,7 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 | `tekla_get_selected_objects` / `tekla_select_objects` | Чтение и установка выделения в UI |
 | `tekla_get_object_udas` / `tekla_set_object_udas` / `tekla_set_udas_by_filter` | Работа с UDA |
 | `tekla_export_parts_file` / `tekla_set_udas_from_file` / `tekla_export_reference_objects_file` | Обмен через файл на диске: выгрузка деталей и объектов опорной модели с геометрией, массовая запись UDA по GUID |
+| `tekla_get_part_curve_geometry` | Точная геометрия оси детали для размеров на гнутых элементах: дуги PolyBeam (центр, радиус, угол, длина дуги, хорда, стрелка) по изгибам, внутренняя и наружная дуги круглых труб и прутков, контур с фасками, при желании — те же точки в координатах вида чертежа |
 | `tekla_search_api` / `tekla_get_api_doc` | Поиск по локальному справочнику Tekla Open API (типы и сигнатуры) |
 | `tekla_run_csharp` | Escape hatch: выполнить короткий C#-скрипт с полным Tekla Open API (read-only по умолчанию, проверка политикой, таймаут) |
 

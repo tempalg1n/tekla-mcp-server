@@ -488,18 +488,28 @@ public sealed partial class TeklaModelService
             if (!workPlaneHandler.SetCurrentTransformationPlane(new TSM.TransformationPlane()))
                 throw new InvalidOperationException(
                     "Could not switch to the global work plane for coordinate conversion.");
-            var global = new TSG.CoordinateSystem(
-                new TSG.Point(0, 0, 0),
-                new TSG.Vector(1, 0, 0),
-                new TSG.Vector(0, 1, 0));
-            var toView = TSG.MatrixFactory.ByCoordinateSystems(
-                global, view.DisplayCoordinateSystem);
+            var toView = GlobalToViewMatrix(view);
             return result.Select(toView.Transform).ToList();
         }
         finally
         {
             workPlaneHandler.SetCurrentTransformationPlane(previous);
         }
+    }
+
+    /// <summary>
+    /// Global model → view display coordinates. The ONE transform behind coordinateSpace=model
+    /// here and behind the view projection of tekla_get_part_curve_geometry, so points read by
+    /// the latter in view space equal what the former produces from model points. Callers run
+    /// it with the global work plane active.
+    /// </summary>
+    private static TSG.Matrix GlobalToViewMatrix(TSD.View view)
+    {
+        var global = new TSG.CoordinateSystem(
+            new TSG.Point(0, 0, 0),
+            new TSG.Vector(1, 0, 0),
+            new TSG.Vector(0, 1, 0));
+        return TSG.MatrixFactory.ByCoordinateSystems(global, view.DisplayCoordinateSystem);
     }
 
     private static void RequirePoints(IReadOnlyCollection<TSG.Point> points, int count, string kind)

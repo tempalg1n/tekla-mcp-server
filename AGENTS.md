@@ -54,7 +54,7 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy) |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve geometry math) |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend (synthetic frame) |
 | `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, engine, SafeJson) + API reference search. No Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 | real Tekla Open API backend (Windows) |
@@ -285,6 +285,38 @@ behavior.
   `DrawingContentTools.cs` and the live partials `TeklaDrawingService.cs`,
   `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs`.
 
+### Conventions for PART CURVE GEOMETRY (`tekla_get_part_curve_geometry`)
+
+Issue #15: dimensioning a curved PolyBeam needs exact arcs, and nothing else exposes them — a
+drawing `Part` has no geometry of its own, and `Part.GetCenterLine` is a segmented polyline.
+
+- **Backends deliver raw pieces, Core derives everything.** The live backend
+  (`TeklaCurveGeometryService.cs`) reads `PolyBeam.GetCenterLinePolycurve()` pieces, the contour
+  with chamfers, `PROFILE_TYPE`, `PROFILE.DIAMETER` and `LENGTH`; bends, chord, sagitta, inner/outer
+  arcs, view projection and rounding are `TeklaMcp.Core.Geometry.CurveMath`, shared with the mock
+  and unit-tested. Add new derived values there, not in a backend.
+- **Arcs are start → mid → end** with mid the angular midpoint and a right-handed normal —
+  exactly Tekla's `Arc` semantics (verified live, see `docs/tekla-api-notes.md`).
+  `CurveMath.CheckReportedArc` compares Tekla's `Radius`/`Angle`/`Length` with the points on
+  every call; keep it, it is the tripwire for a per-version semantic change.
+- **`arcs` are physical bends.** Tekla splits a bend at each contour point on it (`ARC_POINT` →
+  two arcs); `MergeArcs` joins contiguous co-circular arcs. Dimensions use the merged bend.
+- **Round sections only, from `PROFILE.DIAMETER`.** Inner/outer arcs are radius ∓ D/2 for
+  `PROFILE_TYPE` RO/RU. Never size a section from `HEIGHT`/`WIDTH` — on a bent PolyBeam they are
+  not profile dimensions. Non-round offsets would need the profile orientation or the solid;
+  say so instead of guessing.
+- **The centerline is not the solid.** Cuts, fittings and boolean parts are not in it; a
+  `LENGTH` that differs by more than 0.5 mm becomes a warning. Keep that honesty.
+- **One model → view transform.** The view projection uses `GlobalToViewMatrix`, the same helper
+  as `coordinateSpace=model` in the drawing content tools, so points read in view space equal
+  what the dimension tools compute from model points. View problems are warnings next to valid
+  model geometry, never a failed call.
+- Mock: the `PD168.3*6` arch PolyBeam (appended last in `BuildSampleModel` so older fixture
+  ids/GUIDs stay stable) is served as two arcs split at its apex, like Tekla does.
+
+New files: `src/TeklaMcp.Core/Geometry/CurveMath.cs`, `src/TeklaMcp.Core/Models/PartCurveGeometry.cs`,
+`src/TeklaMcp.Mock/MockTeklaModelService.CurveGeometry.cs`, `src/TeklaMcp.Tekla/TeklaCurveGeometryService.cs`.
+
 ### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
 
 `ModelScriptTools.cs` + `src/TeklaMcp.Scripting/` let agents run policy-checked C# scripts when no
@@ -293,7 +325,12 @@ dedicated tool exists. Rules for maintaining it:
 - **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
   the caller: the net48 backend dynamically passes every managed `Tekla.Structures*.dll` file
   from `TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins included when installed);
-  the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Roslyn stays on the 4.9.x line
+  the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Those globs also match native
+  DLLs (Tekla 2025 ships `Tekla.Structures.Native.DbvDatabase.dll`), and
+  `MetadataReference.CreateFromFile` accepts them silently — every compile then fails with
+  `CS0009` (issue #15). `ScriptEngine.BuildReferences` therefore admits only PE images with
+  managed metadata and an assembly manifest (`IsReferenceableAssembly`); keep every reference
+  path going through it, and prefer that check over a name blocklist. Roslyn stays on the 4.9.x line
   (last to target netstandard2.0). Do not globally import `Tekla.Structures.Drawing`: its
   `Part`/`View` names collide with Model/UI types; scripts use an explicit alias instead.
 - **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). `tekla_check_csharp`

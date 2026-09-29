@@ -224,6 +224,18 @@ public interface ITeklaModelService
     /// </summary>
     PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z);
 
+    /// <summary>
+    /// Exact centerline geometry of one part, for dimensioning curved members: lines and arcs
+    /// (on the live backend a PolyBeam's own <c>GetCenterLinePolycurve()</c>), arcs merged per
+    /// physical bend, inner/outer arcs of round sections, the modelled contour with chamfers,
+    /// and — when <see cref="PartCurveGeometryRequest.WantsView"/> — the same geometry in the
+    /// coordinates of an active-drawing view. Derived values come from
+    /// <c>TeklaMcp.Core.Geometry.CurveMath</c> so both backends compute identically. Never
+    /// throws: an unknown GUID gives <see cref="PartCurveGeometry.Found"/> = false, and view
+    /// problems (no active drawing, unknown view) become warnings next to the model geometry.
+    /// </summary>
+    PartCurveGeometry GetPartCurveGeometry(PartCurveGeometryRequest request);
+
     // -- Mutations (create / modify / delete) ---------------------------------------------
     //
     // ALL mutations honor preview-by-default: when apply == false NOTHING is written, but the

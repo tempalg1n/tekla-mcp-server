@@ -139,7 +139,10 @@ public static class DrawingQueryTools
     [McpServerTool(Name = "tekla_list_drawing_objects")]
     [Description("List/filter objects in the active drawing. Returns best-available session Object/View " +
                  "IDs, model identifier, geometry/text/visibility and optional UDAs. Prefer non-zero " +
-                 "ID:ID2; otherwise use selection/current index and re-list after structural edits.")]
+                 "ID:ID2; otherwise use selection/current index and re-list after structural edits. " +
+                 "Model-linked objects (Part, Bolt, ...) carry no geometry of their own in the Drawing " +
+                 "API, so their points stay empty — for exact part geometry (arcs, radii, chords) call " +
+                 "tekla_get_part_curve_geometry with the object's modelGuid and this viewId.")]
     public static IReadOnlyList<DrawingObjectInfo> ListDrawingObjects(
         ITeklaModelService model,
         [Description("Object IDs as 'id:id2; id:id2'.")] string? objectIds = null,

@@ -77,7 +77,7 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **104 tools** in total, including
+All tools use the `tekla_` prefix. The current build exposes **105 tools** in total, including
 **51 drawing-specific tools**.
 
 | Tool | Description |
@@ -92,6 +92,7 @@ All tools use the `tekla_` prefix. The current build exposes **104 tools** in to
 | `tekla_get_selected_objects` | Return objects currently selected in the Tekla UI. |
 | `tekla_get_reference_geometry` | Inspect selected/ID-addressed IFC objects: external GUID/entity, dimensions, world AABB and capped face polygons. |
 | `tekla_get_solid_bbox` | Read explicit native-part solid bounding boxes (or current selection). |
+| `tekla_get_part_curve_geometry` | Exact centerline of one part for dimensioning curved members: a PolyBeam's own lines and arcs (center, start/mid/end, radius, sweep, arc length, chord, sagitta), arcs merged per physical bend, inner/outer arcs of round tubes and bars, the modelled contour with chamfers, and optionally every point in an active-drawing view. |
 | `tekla_list_control_lines` | List ControlLine start/end coordinates. |
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). Reports scan coverage (`scannedObjects`/`truncated`) so "no match" is never mistaken for "absent". |
 | `tekla_discover_udas` | Sample objects and report which UDA fields actually exist: fill counts, distinct values, top values. The "which field holds X?" starting point. |
@@ -291,7 +292,10 @@ silently converted to global model coordinates. Use the coordinate systems retur
 Geometry extraction is richest for graphics, text, marks and angle dimensions. Some complex
 dimension sets, level marks, symbols and model-linked drawing objects currently expose only
 their available bounding box/identity; use `tekla_run_csharp` for a one-off deeper read and
-report recurring gaps.
+report recurring gaps. A drawing `Part` has no geometry of its own in the Drawing API: for the
+exact arcs of a curved part call `tekla_get_part_curve_geometry` with the object's `modelGuid`
+(plus `viewId` to get the points in that view) and feed them to the radius/curved dimension
+tools.
 
 ### C# scripting escape hatch
 

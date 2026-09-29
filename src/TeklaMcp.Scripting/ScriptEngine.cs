@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -69,8 +71,15 @@ public static class ScriptEngine
         {
             if (string.IsNullOrEmpty(path) || refs.ContainsKey(path!) || !File.Exists(path))
                 return;
+            // CreateFromFile does NOT validate the image: it accepts a native DLL and the
+            // compilation later fails with CS0009 — for EVERY script, since the whole reference
+            // set is passed to each compile. Tekla 2025 ships such a file next to the managed
+            // API (Tekla.Structures.Native.DbvDatabase.dll, issue #15), and the backends glob
+            // Tekla.Structures*.dll, so filter here instead of maintaining a name blocklist.
+            if (!IsReferenceableAssembly(path!))
+                return;
             try { refs[path!] = MetadataReference.CreateFromFile(path!); }
-            catch { /* unreadable/native — skip */ }
+            catch { /* unreadable — skip */ }
         }
 
         void AddAssembly(Assembly? assembly)
@@ -112,6 +121,29 @@ public static class ScriptEngine
             AddFile(path);
 
         return refs.Values.ToList();
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is a PE image that carries managed metadata AND an
+    /// assembly manifest — the only kind of file Roslyn can take as a metadata reference.
+    /// Native DLLs, netmodules, non-PE files and unreadable files return false. Reads only the
+    /// PE headers and the metadata tables; the assembly is never loaded.
+    /// </summary>
+    public static bool IsReferenceableAssembly(string path)
+    {
+        try
+        {
+            using (var stream = new FileStream(
+                path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var pe = new PEReader(stream))
+            {
+                return pe.HasMetadata && pe.GetMetadataReader().IsAssembly;
+            }
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static Script<object> Create(string code, IReadOnlyList<MetadataReference> references)

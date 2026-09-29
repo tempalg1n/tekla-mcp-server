@@ -2135,6 +2135,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Scale = 10,
                 RestrictionMin = new Point3D(-1000, -500, -500),
                 RestrictionMax = new Point3D(1000, 4500, 500),
+                // Looks at the XZ plane: view X = global X, view Y = global Z.
+                ViewCoordinateSystem = MockCoordinateSystem(0, 0, 1),
+                DisplayCoordinateSystem = MockCoordinateSystem(0, 0, 1),
                 ModelObjectCount = 8,
             },
             new DrawingViewInfo
@@ -2150,8 +2153,20 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Scale = 10,
                 RestrictionMin = new Point3D(-1000, -1000, -100),
                 RestrictionMax = new Point3D(7000, 7000, 4100),
+                // Plan: view X = global X, view Y = global Y.
+                ViewCoordinateSystem = MockCoordinateSystem(0, 1, 0),
+                DisplayCoordinateSystem = MockCoordinateSystem(0, 1, 0),
                 ModelObjectCount = 18,
             },
+        };
+
+    /// <summary>Global-origin coordinate system with X = global X and the given Y axis.</summary>
+    private static CoordinateSystemInfo MockCoordinateSystem(double yx, double yy, double yz) =>
+        new CoordinateSystemInfo
+        {
+            Origin = new Point3D(0, 0, 0),
+            AxisX = new Point3D(1, 0, 0),
+            AxisY = new Point3D(yx, yy, yz),
         };
 
     private static List<DrawingObjectInfo> BuildSampleDrawingObjects() =>
@@ -2336,6 +2351,28 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 p.Y + ((i / 2) % 2 == 0 ? 60 : -60),
                 50);
         }
+
+        // Curved member (issue #15): a PD168.3*6 tube arch over the Y=3000 line, modelled like a
+        // Tekla curved beam — a PolyBeam whose apex carries CHAMFER_ARC_POINT (see
+        // MockTeklaModelService.CurveGeometry.cs). Appended LAST so every older fixture keeps its
+        // id and GUID. ~24.0 kg/m.
+        Add("PolyBeam", "ARCH", "6", ArchProfile, "S355J2", ArchLength, ArchLength / 1000 * 24.02, "A1",
+            3000, 3000, 4500,
+            ArchStart.X, ArchStart.Y, ArchStart.Z,
+            ArchEnd.X, ArchEnd.Y, ArchEnd.Z);
+        var arch = list[list.Count - 1];
+        arch.MinX = -50.49;
+        arch.MaxX = 6050.49;
+        arch.MinY = 3000 - ArchDiameter / 2;
+        arch.MaxY = 3000 + ArchDiameter / 2;
+        arch.MinZ = 3932.68;
+        arch.MaxZ = ArchApex.Z + ArchDiameter / 2;
+        arch.Position = new PartPosition
+        {
+            Plane = "MIDDLE",
+            Rotation = "FRONT",
+            Depth = "MIDDLE",
+        };
 
         return list;
     }

@@ -19,6 +19,10 @@ Tekla 3155): the geometric part of the job is cheap — `GetSolid()` + AABB is ~
 geometry out, or tens of thousands of GUID→UDA pairs back in. Everything had to pass through the
 tool response, i.e. through an LLM context.
 
+Plus issue #15 (Tekla 2025 field report): exact drawing dimensions for a curved `PolyBeam` were
+impossible — no tool exposed its arcs, a drawing `Part` carries no geometry, and the script
+escape hatch could not compile anything on Tekla 2025.
+
 ### Added
 
 - **File exchange — three tools that move bulk data through a file instead of the response.**
@@ -72,6 +76,19 @@ tool response, i.e. through an LLM context.
   request timeout instead of losing the reply mid-scan.
 - Scripts may use fully-qualified `System.Diagnostics.Stopwatch` for timing; the rest of
   `System.Diagnostics` (and the bare `using`) stays banned.
+- **`tekla_get_part_curve_geometry`** (issue #15): exact centerline geometry of one part for
+  dimensioning curved members. A PolyBeam's own `GetCenterLinePolycurve()` lines and arcs — not
+  the segmented polyline of `GetCenterLine` — with center, start/mid/end, normal, radius, sweep,
+  arc length, chord and sagitta; `arcs` merges the pieces of one physical bend (Tekla returns an
+  `ARC_POINT` bend as two arcs); round sections (`PROFILE_TYPE` RO/RU) get `inner`/`outer` arcs
+  at radius ∓ D/2 from `PROFILE.DIAMETER`; `contour` lists the modelled points with their
+  chamfers. `viewId`/`viewId2`/`viewIndex` of the active drawing add the same geometry in view
+  coordinates through the transform `coordinateSpace=model` already uses, so the points feed
+  `tekla_create_radius_dimension` / `tekla_create_curved_dimension` directly. A part `LENGTH`
+  that differs from the centerline (cuts, fittings, boolean parts) is flagged in `warnings`.
+  Beam: one straight line; ContourPlate: contour only. The derivations live in
+  `TeklaMcp.Core.Geometry.CurveMath`, shared by both backends and unit-tested against arcs read
+  from a live Tekla 2023 model.
 
 ### Changed
 
@@ -94,8 +111,23 @@ tool response, i.e. through an LLM context.
   (blowing the client timeout on its own), that `GetAllObjectsWithType` has no multi-type
   overload — the eight physical part types must be chained — and that bulk data belongs in the
   file-exchange tools rather than a script.
+- `tekla_list_drawing_objects` now says that model-linked drawing objects (`Part`, `Bolt`, …)
+  have no geometry of their own in the Drawing API and points to
+  `tekla_get_part_curve_geometry`; the server instructions tell agents to take arc points from
+  it instead of estimating them.
+- The mock model gains a curved member — a `PD168.3*6` arch `PolyBeam` (27 parts, 43 objects) —
+  and its sample drawing views now carry view/display coordinate systems.
 
 ### Fixed
+
+- **Script escape hatch dead on Tekla 2025 (issue #15).** `tekla_check_csharp` /
+  `tekla_run_csharp` failed EVERY script with `CS0009` because the reference set is globbed from
+  `Tekla.Structures*.dll` and Tekla 2025 ships a native `Tekla.Structures.Native.DbvDatabase.dll`
+  there. `MetadataReference.CreateFromFile` accepts such a file without complaint — the error
+  only surfaces at compile time, so the existing `try/catch` never fired. References are now
+  admitted only when the PE image carries managed metadata and an assembly manifest (checked
+  with `PEReader`, the assembly is never loaded); on a Tekla 2023 bin that check agrees with
+  `AssemblyName.GetAssemblyName` for all 374 DLLs (95 native).
 
 - **`string.Split(...)` no longer trips the script mutation policy.** `Split` was in the
   mutating-member list for `Operation.Split`, which the `Operation` token already catches, so

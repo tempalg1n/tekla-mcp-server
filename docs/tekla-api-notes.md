@@ -162,6 +162,10 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 | Export: contour polygon | `ContourPlate.Contour` / `PolyBeam.Contour` → `Contour.ContourPoints` (an `ArrayList` of `ContourPoint : Point`) | ✅ Signatures verified (`ArrayList ContourPoints { get; set; }`, `ContourPoint` inherits `Point`); ⚠️ **runtime: bent/lofted plates not verified** |
 | Export: centre of gravity | `GetReportProperty("COG_X"/"COG_Y"/"COG_Z")` | ⚠️ standard part report properties; **confirm they are populated for `CustomPart`/`Brep` live** |
 | Reference export source | `ReferenceModel.GetChildren()` when one model is named, else `GetAllObjectsWithType(REFERENCE_MODEL_OBJECT)`; model matched via `ReferenceModel.Identifier` (it inherits `ModelObject`) | ✅ Signatures verified (`ModelObjectEnumerator GetChildren()`); ⚠️ **runtime: not yet verified against a large IFC overlay** |
+| Curve geometry: centerline | `PolyBeam.GetCenterLinePolycurve()` → `Polycurve` (`IEnumerable<ICurve>`) of `LineSegment` / `Arc`; `Arc.StartPoint/ArcMiddlePoint/EndPoint/CenterPoint/Radius/Angle/Length/Normal` | ✅ compiles against 2021–2026; ✅ **verified live (Tekla 2023, 3219, 2026-09-29)** on I30M monorails, D30/D24 anchors and PL40*4 flats: `Angle` is RADIANS, `Length` = R·Angle, `ArcMiddlePoint` is the ANGULAR midpoint, `Normal` = normalize((start−center)×(mid−center)), `StartDirection` = unit(start−center), `StartTangent` = direction of travel. The polycurve is the true centerline, offset from the reference line by the position (PL40*4 with Plane=RIGHT: centerline R 344 vs rounding X = 346). An `ARC_POINT` bend comes back as TWO arcs split at the arc point (merged by `CurveMath.MergeArcs`). ⚠️ Boolean parts / fittings are NOT applied: a D30 anchor with a `BooleanPart` has centerline 1380.1 mm vs `LENGTH` 1480.1 mm (the tool warns). `CheckReportedArc` cross-checks Radius/Angle/Length against the points on every call, so a per-version semantic change shows up as a warning |
+| Curve geometry: straight parts | `Part.GetCenterLine(false)` → first/last point | ✅ used for `Beam`; ⚠️ on a PolyBeam it returns a SEGMENTED polyline (19 points for one 90° bend) — never derive arcs from it |
+| Curve geometry: chamfers | `ContourPoint.Chamfer` → `Type` (`CHAMFER_NONE/LINE/ROUNDING/ARC/ARC_POINT/SQUARE/SQUARE_PARALLEL/LINE_AND_ARC`), `X`, `Y`, `DZ1`, `DZ2` | ✅ verified live: `ROUNDING` X = fillet radius on the reference line, tangent points X from the corner along both legs of a 90° corner; `ARC_POINT` marks the point an arc passes through |
+| Curve geometry: view projection | `MatrixFactory.ByCoordinateSystems(global, View.DisplayCoordinateSystem)` via `GlobalToViewMatrix`, the SAME helper `coordinateSpace=model` uses in the content tools | ✅ shared code path; ⚠️ **not yet exercised live on an open drawing** (no drawing was open during the 2026-09-29 run); verify on a rotated single-part drawing |
 
 ### Cost of a whole-model export (why the exchange tools page)
 
@@ -274,6 +278,12 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
 `CLASS`, `NAME`, `ASSEMBLY_POS`, `PART_POS`, `PHASE`. Full list in Tekla documentation
 (Template/Report properties section).
 
+Profile facts, verified live on Tekla 2023 (model 3219, 2026-09-29): `PROFILE_TYPE` (`RO` round
+tube, `RU` round bar, `I`, `B` plate/flat, …), `PROFILE.DIAMETER` (O51X3.5 → 51, D30 → 30),
+`PROFILE.PLATE_THICKNESS` (tube wall: 3.5). ⚠️ `HEIGHT`/`WIDTH` are NOT profile dimensions on a bent
+PolyBeam: a bent D30 anchor reports `HEIGHT = 2655.98` (and `WIDTH = 30`). Use the `PROFILE.*`
+properties for section sizes.
+
 ## Windows build environment
 
 - Windows x64; Tekla Structures installed and running with a model open.
@@ -301,6 +311,16 @@ tools (e.g. beam count 4367 == `tekla_count_objects`); policy blocks (`Console`,
 `#r`) and compile errors (CS1061 + guidance) behave as designed. Also verified on macOS against
 the 2023 NuGet DLLs: policy → compile pipeline, all default imports resolve (mock backend,
 `TEKLA_MCP_SCRIPT_REF_DIR`).
+
+**Native DLLs in the reference glob (issue #15).** Both backends glob `Tekla.Structures*.dll`
+(and `Tekla.Dialog*.dll` / `Tekla.*.dll`), and Tekla 2025 ships a NATIVE
+`Tekla.Structures.Native.DbvDatabase.dll` next to the managed API. `MetadataReference.CreateFromFile`
+does not validate the image — it only prefetches the bytes — so a native (or garbage) file becomes a
+reference without an exception and EVERY compile then fails with `CS0009`. `ScriptEngine.BuildReferences`
+therefore admits a file only when `PEReader` finds managed metadata and an assembly manifest
+(`IsReferenceableAssembly`). Checked against all 374 DLLs in a Tekla 2023 `bin` (95 native): identical
+verdicts to `AssemblyName.GetAssemblyName`, and all 29 `Tekla.Structures*.dll` stay referenced.
+Unit tests use a hand-built PE32 image without a CLI header (`ScriptReferenceTests`).
 
 ### Assembly loading history (constraints that must not be violated)
 

@@ -16,9 +16,10 @@ namespace TeklaMcp.Tests;
 public class MockAnalyticsTests
 {
     // Mock fixture: 4 columns (Approved), 6 main beams (Partially approved),
-    // 4 braces (Rejected), 8 secondary beams + 4 base plates unset; 16 bolts are not parts.
-    private const int Parts = 26;
-    private const int AllObjects = 42;
+    // 4 braces (Rejected), 8 secondary beams + 4 base plates + 1 arch PolyBeam unset;
+    // 16 bolts are not parts.
+    private const int Parts = 27;
+    private const int AllObjects = 43;
 
     [Fact]
     public void Aggregate_by_uda_groups_approval_statuses_with_weights()
@@ -36,7 +37,7 @@ public class MockAnalyticsTests
         Assert.Equal(4, byKey["Approved"].Count);
         Assert.Equal(6, byKey["Partially approved"].Count);
         Assert.Equal(4, byKey["Rejected"].Count);
-        Assert.Equal(12, byKey["(none)"].Count); // unset field is a first-class group
+        Assert.Equal(13, byKey["(none)"].Count); // unset field is a first-class group
 
         // Column weight: 4 × 4.0 m × 88.3 kg/m.
         Assert.Equal(4 * 4.0 * 88.3, byKey["Approved"].TotalWeightKg, 1);
@@ -72,7 +73,7 @@ public class MockAnalyticsTests
             if (page.Truncated) Assert.NotNull(cursor);
         } while (cursor != null && pages < 20);
 
-        Assert.Equal(3, pages); // 26 parts / 10 per page
+        Assert.Equal(3, pages); // 27 parts / 10 per page
         Assert.Equal(full.Rows.Sum(r => r.Count), merged.Values.Sum());
         Assert.Equal(full.TotalWeightKg, mergedWeight, 1);
         foreach (var row in full.Rows)

@@ -59,6 +59,7 @@ var requiredTools = new[]
     "tekla_export_parts_file",
     "tekla_set_udas_from_file",
     "tekla_export_reference_objects_file",
+    "tekla_get_part_curve_geometry",
 };
 foreach (var name in requiredTools)
 {

@@ -30,4 +30,36 @@ public static class ModelGeometryTools
         [Description("Y-axis grid label, e.g. 'Д'.")] string axisY,
         [Description("Elevation Z in mm.")] double z)
         => model.ResolvePoint(axisX, axisY, z);
+
+    [McpServerTool(Name = "tekla_get_part_curve_geometry")]
+    [Description(
+        "Exact centerline geometry of ONE part, for dimensioning curved members (PolyBeam, e.g. " +
+        "curved tubes, bent bars, curved monorails) in drawings. Read-only. Returns: 'segments' — " +
+        "lines and arcs exactly as Tekla computes them (arc: start/mid/end/center/normal, radius, " +
+        "sweepAngle, arc length, chord, sagitta); 'arcs' — one entry per physical bend (Tekla splits " +
+        "an ARC_POINT bend into two arcs; these are merged), use THESE for radius, chord, rise and " +
+        "arc-length dimensions; for round sections (PROFILE_TYPE RO/RU) each bend also has 'inner' " +
+        "and 'outer' arcs at radius ∓ D/2; 'contour' — the modelled input points with chamfers. " +
+        "Units: mm and degrees, global model coordinates. Pass viewId/viewId2 (or viewIndex) of the " +
+        "ACTIVE drawing to also get every point in that view's coordinates ('view' block, use with " +
+        "coordinateSpace=view); model points work directly with coordinateSpace=model in " +
+        "tekla_create_radius_dimension / tekla_create_curved_dimension / " +
+        "tekla_create_straight_dimension. For a part in a drawing pass the modelGuid from " +
+        "tekla_list_drawing_objects. Read 'warnings': cuts, fittings and boolean parts are NOT in " +
+        "the centerline, so a LENGTH mismatch is flagged there. Beam: one straight line; " +
+        "ContourPlate: contour only.")]
+    public static PartCurveGeometry GetPartCurveGeometry(
+        ITeklaModelService model,
+        [Description("Model part GUID (for a drawing part: its modelGuid).")] string guid,
+        [Description("Optional: non-zero View ID in the active drawing to also express the geometry in.")]
+        int? viewId = null,
+        [Description("Optional: View ID2 of that view.")] int? viewId2 = null,
+        [Description("Optional, ephemeral view index; prefer viewId/viewId2.")] int? viewIndex = null)
+        => model.GetPartCurveGeometry(new PartCurveGeometryRequest
+        {
+            Guid = (guid ?? "").Trim(),
+            ViewId = viewId,
+            ViewId2 = viewId2,
+            ViewIndex = viewIndex,
+        });
 }
