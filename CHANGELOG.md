@@ -240,6 +240,17 @@ escape hatch could not compile anything on Tekla 2025.
   now classified by exception type (the .NET messages are localized), with the action — restart
   the MCP server, restarting Tekla again does not help — plus the running Tekla PIDs/start times
   and the channel diagnostics (MCP-SCF-011).
+- **Mutating scripts are bound to the approved source: `tekla_run_csharp` takes
+  `expectedSha256`.** It is required with `allowMutations=true` and must equal the `codeSha256`
+  that `tekla_check_csharp` returned for the script the user approved; a missing or stale hash
+  is rejected before anything compiles or runs. Previously nothing stopped an agent from editing
+  an approved mutation script and running the edited version. Read-only runs may pass it too.
+  **Breaking** for clients that ran mutating scripts without the check step.
+- **`tekla_get_connection_info` says which server answered**: server version, runtime, PID and
+  start time, the Tekla version the build targets, where the Tekla assemblies load from and how
+  that folder was found, and the running TeklaStructures processes (PID + start time). A server
+  started before the Tekla it should talk to, or built for another Tekla year, is visible at a
+  glance — field reports could not tell a stale `tekla_2021` process from a fresh `tekla_2023`.
 
 ## [0.7.0] - 2026-07-23
 

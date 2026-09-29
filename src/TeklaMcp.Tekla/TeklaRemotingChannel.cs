@@ -180,23 +180,32 @@ public static class TeklaRemotingChannel
         return false;
     }
 
-    /// <summary>PID + start time lets the user match a failure to a Tekla restart.</summary>
     private static string DescribeTeklaProcesses()
+    {
+        var processes = ListTeklaProcesses();
+        return processes.Count == 0 ? "none running" : string.Join(", ", processes);
+    }
+
+    /// <summary>
+    /// Running TeklaStructures processes as "PID n started …". PID + start time lets the user
+    /// match a failure to a Tekla restart, or spot a second Tekla of the same year.
+    /// </summary>
+    public static List<string> ListTeklaProcesses()
     {
         try
         {
-            var processes = System.Diagnostics.Process.GetProcessesByName("TeklaStructures");
-            if (processes.Length == 0) return "none running";
-            return string.Join(", ", processes.Select(p =>
-            {
-                try { return $"PID {p.Id} started {p.StartTime:yyyy-MM-dd HH:mm:ss}"; }
-                catch { return $"PID {p.Id}"; }
-                finally { p.Dispose(); }
-            }));
+            return System.Diagnostics.Process.GetProcessesByName("TeklaStructures")
+                .Select(p =>
+                {
+                    try { return $"PID {p.Id} started {p.StartTime:yyyy-MM-dd HH:mm:ss}"; }
+                    catch { return $"PID {p.Id}"; }
+                    finally { p.Dispose(); }
+                })
+                .ToList();
         }
         catch (Exception e)
         {
-            return "unavailable (" + e.Message + ")";
+            return new List<string> { "unavailable (" + e.Message + ")" };
         }
     }
 

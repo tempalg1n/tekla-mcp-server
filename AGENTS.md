@@ -336,7 +336,9 @@ dedicated tool exists. Rules for maintaining it:
 - **The pipeline is policy → compile → execute** (`ScriptResult.Stage`). `tekla_check_csharp`
   runs the identical policy + compiler path with `compileOnly=true`, permits mutation syntax
   because it never executes, and returns the source SHA-256 + detected mutating members for
-  approval. The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
+  approval. `tekla_run_csharp` binds a run to that approval: `ScriptApprovalGate` (tool layer,
+  before the backend) requires `expectedSha256` when `allowMutations=true` and rejects any
+  mismatch, read-only runs included — keep it in front of every execution path. The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
   `ExecutionAttempted` become true as soon as the live worker starts, including failure/timeout.
   Never throw — report failures and partial-mutation warnings in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).

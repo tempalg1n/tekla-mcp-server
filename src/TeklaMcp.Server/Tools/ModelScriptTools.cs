@@ -23,8 +23,9 @@ public static class ModelScriptTools
         "If you use this for something recurring, ALSO call tekla_report_gap so it becomes a first-class tool.\n" +
         "\n" +
         "RECOMMENDED WORKFLOW: (1) verify type/member signatures with tekla_search_api / tekla_get_api_doc — do not " +
-        "guess them; (2) validate the exact source with tekla_check_csharp; (3) run it. For a mutation, include the " +
-        "check result's codeSha256 when showing the exact script to the user for approval.\n" +
+        "guess them; (2) validate the exact source with tekla_check_csharp; (3) run it. For a mutation, show the user the " +
+        "exact script plus the check result's codeSha256, and after approval pass that hash as expectedSha256 — a " +
+        "mutating run without it, or with a hash that no longer matches the source, is rejected unexecuted.\n" +
         "\n" +
         "SCRIPT ENVIRONMENT:\n" +
         "- C# top-level statements (no class/Main needed). Pre-imported namespaces: System, System.Collections.Generic, " +
@@ -87,8 +88,16 @@ public static class ModelScriptTools
                      "write tools (preview-by-default).")]
         bool allowMutations = false,
         [Description("Execution deadline in seconds (default 60, max 600). Abort is best-effort around Tekla remoting.")]
-        int timeoutSeconds = 60)
-        => model.ExecuteScript(code ?? "", allowMutations, timeoutSeconds);
+        int timeoutSeconds = 60,
+        [Description("codeSha256 of the exact script the user approved (from tekla_check_csharp). REQUIRED when " +
+                     "allowMutations=true; optional otherwise. A mismatch means the source changed after approval " +
+                     "and the run is rejected without compiling or executing.")]
+        string? expectedSha256 = null)
+    {
+        code ??= "";
+        return ScriptApprovalGate.Check(code, allowMutations, expectedSha256)
+               ?? model.ExecuteScript(code, allowMutations, timeoutSeconds);
+    }
 
     [McpServerTool(Name = "tekla_check_csharp")]
     [Description(
@@ -98,7 +107,7 @@ public static class ModelScriptTools
         "script, never connects to the model, and never changes a model or drawing. Mutating members are therefore " +
         "allowed during this check so a proposed write can be verified BEFORE asking the user to approve it. A " +
         "successful check is not approval to execute: show the user this exact script plus codeSha256 and only then " +
-        "call tekla_run_csharp with allowMutations=true after explicit approval. Inspect compiled=true; on a Mock " +
+        "call tekla_run_csharp with allowMutations=true and expectedSha256=codeSha256 after explicit approval. Inspect compiled=true; on a Mock " +
         "backend without TEKLA_MCP_SCRIPT_REF_DIR, compilation is unavailable and success=false.")]
     public static ScriptResult CheckCsharp(
         ITeklaModelService model,

@@ -52,7 +52,7 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 
 | Инструмент | Назначение |
 |---|---|
-| `tekla_get_connection_info` | Проверка подключения к модели |
+| `tekla_get_connection_info` | Проверка подключения к модели и какой сервер ответил (версия, PID, время старта, сборка Tekla, запущенные процессы Tekla) |
 | `tekla_get_model_summary` | Сводка по модели |
 | `tekla_list_objects` / `tekla_find_objects` | Список и поиск объектов |
 | `tekla_count_objects` / `tekla_sum_weight` | Подсчёт и суммарный вес |

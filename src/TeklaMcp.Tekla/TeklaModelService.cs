@@ -94,7 +94,23 @@ public sealed partial class TeklaModelService : ITeklaModelService
         // All Tekla-touching init lives in EnsureTeklaReady(), called lazily per operation.
     }
 
-    public ConnectionInfo GetConnectionInfo()
+    public ConnectionInfo GetConnectionInfo() => WithTeklaIdentity(ProbeConnection());
+
+    /// <summary>Build/binding facts the tool layer cannot know; filled on every outcome.</summary>
+    private static ConnectionInfo WithTeklaIdentity(ConnectionInfo info)
+    {
+        try { info.CompiledTeklaVersion = TeklaAssemblyResolver.CompiledVersion?.ToString(); } catch { }
+        try
+        {
+            info.TeklaBinDir = TeklaAssemblyResolver.BinDir;
+            info.TeklaBinDirSource = TeklaAssemblyResolver.Source;
+        }
+        catch { }
+        info.TeklaProcesses = TeklaRemotingChannel.ListTeklaProcesses();
+        return info;
+    }
+
+    private static ConnectionInfo ProbeConnection()
     {
         try
         {

@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.ComponentModel;
 using ModelContextProtocol.Server;
 using TeklaMcp.Core;
@@ -17,10 +21,47 @@ public static class ModelInfoTools
 {
     [McpServerTool(Name = "tekla_get_connection_info")]
     [Description("Check whether a Tekla Structures model is open and reachable. Returns " +
-                 "model name, path, the active backend (Mock or Tekla) and a status message. " +
-                 "Call this first to verify connectivity before other tools.")]
+                 "model name, path, the active backend (Mock or Tekla) and a status message, plus which " +
+                 "server answered: server version/runtime/PID/start time, the Tekla version it was built " +
+                 "for, where the Tekla assemblies load from, and the running Tekla processes. A server " +
+                 "that started BEFORE the Tekla process it should talk to, or a build for another Tekla " +
+                 "year, explains most connection failures. Call this first to verify connectivity.")]
     public static ConnectionInfo GetConnectionInfo(ITeklaModelService model)
-        => model.GetConnectionInfo();
+    {
+        var info = model.GetConnectionInfo();
+        AddServerIdentity(info);
+        return info;
+    }
+
+    private static readonly Lazy<(int Pid, string StartedAt)> ServerProcess = new(() =>
+    {
+        try
+        {
+            using var p = Process.GetCurrentProcess();
+            return (p.Id, p.StartTime.ToString("yyyy-MM-ddTHH:mm:sszzz", CultureInfo.InvariantCulture));
+        }
+        catch
+        {
+            return (0, "");
+        }
+    });
+
+    private static void AddServerIdentity(ConnectionInfo info)
+    {
+        try
+        {
+            var asm = typeof(ModelInfoTools).Assembly;
+            info.ServerVersion =
+                asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? asm.GetName().Version?.ToString() ?? "";
+            info.ServerRuntime = RuntimeInformation.FrameworkDescription;
+            (info.ServerProcessId, info.ServerStartedAt) = ServerProcess.Value;
+        }
+        catch
+        {
+            // Identity is diagnostic garnish; never fail the connectivity probe over it.
+        }
+    }
 
     [McpServerTool(Name = "tekla_get_model_summary")]
     [Description("Return aggregated statistics for the whole model: total object count, " +

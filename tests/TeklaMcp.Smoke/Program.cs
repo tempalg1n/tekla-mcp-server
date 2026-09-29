@@ -1,4 +1,5 @@
 using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 if (args.Length < 1)
 {
@@ -76,6 +77,18 @@ var status = await statusTool.CallAsync(
     arguments: null,
     cancellationToken: timeout.Token);
 Require(status.IsError != true, "Mock status tool returned an MCP error.");
+var statusText = string.Concat(status.Content.OfType<TextContentBlock>().Select(block => block.Text));
+Require(statusText.Contains("\"serverProcessId\":") && statusText.Contains("\"serverVersion\":\""),
+    "Status tool does not report the server identity: " + statusText);
+
+// A mutating script without the approved hash must be refused before the backend sees it.
+var runTool = tools.Single(tool => tool.Name == "tekla_run_csharp");
+var unapproved = await runTool.CallAsync(
+    new Dictionary<string, object?> { ["code"] = "new Model().CommitChanges();", ["allowMutations"] = true },
+    cancellationToken: timeout.Token);
+var unapprovedText = string.Concat(unapproved.Content.OfType<TextContentBlock>().Select(block => block.Text));
+Require(unapprovedText.Contains("requires expectedSha256"),
+    "Mutating tekla_run_csharp without expectedSha256 was not rejected: " + unapprovedText);
 
 Console.WriteLine(
     "MCP smoke passed: " + client.ServerInfo.Name + " " +

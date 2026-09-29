@@ -82,7 +82,7 @@ All tools use the `tekla_` prefix. The current build exposes **105 tools** in to
 
 | Tool | Description |
 |---|---|
-| `tekla_get_connection_info` | Check whether a model is open; return name, path, and active backend. |
+| `tekla_get_connection_info` | Check whether a model is open; return name, path, active backend, and which server answered (version, PID, start time, Tekla build/bin folder, running Tekla processes). |
 | `tekla_report_gap` | Report a missing capability / insufficient data; returns a ready-to-file issue draft. Use instead of scripting around gaps. |
 | `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. On huge models use `includeWeights=false` / `maxObjects` to keep it fast. |
 | `tekla_list_objects` | List objects with core properties (with limit). |
@@ -315,7 +315,7 @@ Safety model:
 - **No host access.** A syntax-level policy bans file system, network, processes, reflection, threads and `Console` (stdout belongs to the MCP protocol). `#r`/`#load` and `await` are rejected too.
 - **Execution deadline** (default 60 s, max 600 s) on a dedicated thread. Abort is best-effort
   around Tekla remoting; the result warns when worker termination cannot be confirmed.
-- **Compile before consent.** `tekla_check_csharp` never connects to or executes against the model, so a proposed mutation can be verified before approval; use its `codeSha256` to identify the exact reviewed source. The live backend compiles against every installed managed `Tekla.Structures*.dll` (including Drawing/Dialog when present). Drawing is not a global import because its `Part`/`View` types are ambiguous — use `using TSD = Tekla.Structures.Drawing;`.
+- **Compile before consent.** `tekla_check_csharp` never connects to or executes against the model, so a proposed mutation can be verified before approval; use its `codeSha256` to identify the exact reviewed source. `tekla_run_csharp` with `allowMutations=true` requires that hash as `expectedSha256` and refuses, unexecuted, a script whose source no longer matches it. The live backend compiles against every installed managed `Tekla.Structures*.dll` (including Drawing/Dialog when present). Drawing is not a global import because its `Part`/`View` types are ambiguous — use `using TSD = Tekla.Structures.Drawing;`.
 - **Bounded output.** `Print` uses private host-owned storage capped at 500 lines / 64,000 characters; the return value is rendered inside the timeout worker as capped, always-valid JSON.
 - On the **mock backend** scripts are validated and compiled but never executed (compilation needs Tekla DLLs — point `TEKLA_MCP_SCRIPT_REF_DIR` at a folder with `Tekla.Structures*.dll`, e.g. extracted from the NuGet packages).
 
