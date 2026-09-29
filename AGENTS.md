@@ -113,8 +113,10 @@ to do; keep `McpException` for argument/validation errors raised in the tool lay
   `MoveNext`, no property reads). Pages cover disjoint slices; the agent merges rows by key.
   Use the same contract for any new scan-shaped tool instead of raising timeouts.
 - **The parts chain.** "Physical parts" = `PartTypeEnums` (BEAM…CUSTOM_PART) enumerated
-  type-by-type — `GetAllObjectsWithType` has NO multi-type overload (verified on 2021). On a
-  470k-object model the chain enumerates in ~5 s vs ~52 s for `GetAllObjects`. Analytics and
+  type-by-type. On a 470k-object model the chain enumerates in ~5 s vs ~52 s for
+  `GetAllObjects`. (An earlier note here said `GetAllObjectsWithType` has no multi-type
+  overload — wrong: a `System.Type[]` overload exists, 2021 included; only the `ArrayList` form
+  failed. It is unmeasured against the chain — see `docs/backlog.md` §7.) Analytics and
   attribute-discovery tools default to `partsOnly=true`; keep `Matches()` verifying the type
   either way. The mock mirrors the scope via `PartTypeNames`.
 - **Search results must distinguish "not found" from "did not look".**

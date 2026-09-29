@@ -54,6 +54,10 @@ specified` until the MCP server process is restarted (seen on 2021 and 2023, sev
   simulation gives "Requested service not found"). Check live which one happens.
 - `DelegateProxy.Initialize()` exists only in some builds (not for Model/Drawing in NuGet
   2021.0.0 / 2023.0.1) — do not rely on it for 2021–2023.
+- Public reset hooks that avoid reading the private `proxy` field (decompilation, untested):
+  2021–2023 `CDelegateSetter.SetInstanceForUnitTesting(ICDelegate)` sets
+  `DelegateProxy.Delegate`; 2024+ `CDelegateSetter.ResetInstance()` calls
+  `DelegateProxy.Initialize()` (Model, Drawing and base assemblies).
 
 **Plan.**
 
@@ -131,3 +135,31 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
   mention `expectedSha256` in the scripted-mutation contract of the `ServerInstructions`.
 - Orphaned server processes pile up across client restarts (dozens on the reporting machine,
   also seen here): exit when the parent MCP client process is gone.
+
+### 7. Found after the first write-up (same day, not fixed yet)
+
+- **Bug — a 2024+ build breaks its own channel names when an older Tekla runs alongside.**
+  `TeklaRemotingChannel.DeriveSessionSuffix` falls back to pipes of ANY version when none match
+  the build, and `PatchToSuffix` then writes `{Assembly}-{suffix}:{AssemblyVersion}` into the
+  2024+ `Remoter.ChannelName`. Tekla 2024+ publishes
+  `{Assembly}-{ProductName}-{SESSIONNAME|Console}:{FileVersion}` instead, so the first touch
+  poisons the proxy (§1). `TEKLA_MCP_CHANNEL` breaks it the same way. Fix: skip alignment and
+  patching entirely when the build's major version is 2024 or later — Tekla 2024+ already falls
+  back to `Console` when `SESSIONNAME` is empty. From code reading and decompilation; not run live
+  (no 2024+ install here).
+- **Bug — the resolver keeps a mismatched Open API folder.** First-process-wins and the 2021
+  `nt\bin\plugins` layout are fixed (960d861), but `BinDir` and the installed version are still
+  cached even when they do not match the build, and re-probed only while `BinDir` is null. A
+  server that first saw only another Tekla version keeps reporting "wrong build" after the right
+  Tekla starts. Fix: re-probe on a mismatch before throwing (safe — the resolver never loads a
+  mismatched assembly).
+- **Performance — the AutoFetch snapshot.** With `ModelObjectEnumerator.AutoFetch = true`,
+  constructing an enumerator runs one `ExportGetSnapshotFromDatabase` over the whole source
+  (decompilation). If that holds, `GetSize()` is not a cheap count and every cursor page pays the
+  full snapshot again — the AGENTS.md scan rules assume otherwise. Measure live (count and
+  page timings on a 400k-object model) before changing them. Calls over ~60 s are a second
+  plausible cause of the "MCP lost access" reports.
+- **Doc error — `GetAllObjectsWithType(System.Type[])` exists**, Tekla 2021 included (checked in
+  the installed 2021.0.0.0 metadata). AGENTS.md is corrected; the `tekla_run_csharp` description
+  still says there is no multi-type overload. Whether one `Type[]` call beats the per-type chain
+  (~5 s on 470k objects) is unmeasured.
