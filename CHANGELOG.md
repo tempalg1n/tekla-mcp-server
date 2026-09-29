@@ -212,6 +212,35 @@ escape hatch could not compile anything on Tekla 2025.
   `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
   it.
 
+### Changed
+
+- **`tekla_run_csharp` return values expand 6 nesting levels (was 4) and mark the cap
+  explicitly.** A container past the cap used to be rendered with `ToString()`, so per-segment
+  coordinate lists came back as the strings ``System.Collections.Generic.List`1[System.Double]``
+  / `System.Double[]` — indistinguishable from real values. It is now an explicit marker such
+  as `"[depth limit reached: List<Double> with 3 items]"`; numbers, strings, enums and GUIDs at
+  the cap are still serialized normally.
+- **`tekla_run_csharp` reports every serializer cap out of band: `returnValueTruncated` +
+  `returnValueTruncation`.** From the KXMp scaffolding field report (MCP-SCF-001, Tekla 2023):
+  a script counted 141 parts, the 100-item cap returned the first 100 rows, and the agent
+  accepted them as the full audit — the JSON stayed valid, so nothing in it said it was cut.
+  Cut strings (with the longest original length), capped lists (with their real size when it is
+  a cheap `Count`), depth markers, the per-object property cap and the 64k size envelope now all
+  set the flag, plus a warning telling the agent not to report the value as complete. The flag,
+  not the JSON's shape, decides: a script that returns `new { truncated = true }` is complete.
+- **Catalog imports and model switching count as mutations in the script policy.**
+  `CatalogHandler.Import*Items` (bolts, custom components, drawings, library/parametric profiles,
+  materials, meshes, rebars, shapes) and `SaveProfileDatabase` overwrite environment catalogs;
+  a field report ran `ImportCustomComponentItems` through `tekla_check_csharp` with an empty
+  `detectedMutatingMembers`. `ModelHandler.Open/Close/CreateNew*UserModel` are gated too.
+- **`tekla_get_connection_info` explains a lost connection instead of echoing the raw IPC error.**
+  After a Tekla restart the Open API proxy still reports connected (`GetConnectionStatus()` is a
+  local null check) and the first real call fails with a `RemotingException`; a proxy whose first
+  touch happened before Tekla was up fails with a cached `TypeInitializationException`. Both are
+  now classified by exception type (the .NET messages are localized), with the action — restart
+  the MCP server, restarting Tekla again does not help — plus the running Tekla PIDs/start times
+  and the channel diagnostics (MCP-SCF-011).
+
 ## [0.7.0] - 2026-07-23
 
 First-class tools for the three biggest gaps observed in a real end-to-end modeling session:

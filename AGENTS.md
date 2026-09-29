@@ -355,6 +355,11 @@ dedicated tool exists. Rules for maintaining it:
   private host-owned `ScriptGlobals.Print` storage (line + total-character caps, snapshot only)
   and `SafeJson` (capped, defensive, always valid JSON). Return-value serialization stays inside
   the timeout worker because Tekla proxy property access can block.
+- **Every SafeJson cap is reported out of band.** Valid JSON hides a cut: a 100-item list parses
+  like a complete one (a field report accepted 100 of 141 rows as a full audit). Any cap that
+  drops data must bump a counter in `SafeJsonReport`, which surfaces as
+  `ScriptResult.ReturnValueTruncated` / `ReturnValueTruncation`. If you add a cap, report it
+  there and test it in `SafeJsonTests`; never rely on an in-band marker alone.
 - **`tekla_search_api`/`tekla_get_api_doc`** read the `tools/TeklaApiDoc` output (git-ignored) found
   via `TEKLA_MCP_API_REF_DIR` or by probing for `reference/tekla-api`.
   `tekla_get_api_reference_status` exposes availability/setup explicitly. They must degrade to

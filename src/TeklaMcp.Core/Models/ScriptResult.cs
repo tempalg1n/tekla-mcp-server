@@ -56,6 +56,16 @@ public sealed class ScriptResult
     /// <summary>The script's return value (its last expression), rendered as JSON. Capped.</summary>
     public string? ReturnValueJson { get; set; }
 
+    /// <summary>
+    /// True when a serializer cap dropped part of the return value (long strings, lists over
+    /// the item cap, nesting past the depth cap, the total-size envelope). The JSON stays valid
+    /// either way, so this flag — not the JSON's own shape — decides whether it is complete.
+    /// </summary>
+    public bool ReturnValueTruncated { get; set; }
+
+    /// <summary>One line per serializer cap that fired; empty when the value is complete.</summary>
+    public List<string> ReturnValueTruncation { get; set; } = new List<string>();
+
     /// <summary>Lines the script emitted via Print(...). Capped.</summary>
     public List<string> PrintedOutput { get; set; } = new List<string>();
 

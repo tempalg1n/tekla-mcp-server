@@ -138,6 +138,82 @@ public static class TeklaRemotingChannel
         }
     }
 
+    /// <summary>
+    /// Turns a failed connection attempt into a cause and an action. Both failure modes below
+    /// are cached by the Open API for the life of this process (see the class remarks), so the
+    /// honest instruction is "restart the MCP server" — retrying the tool cannot help.
+    /// </summary>
+    public static string DiagnoseConnectionFailure(Exception ex)
+    {
+        string cause;
+        if (HasInChain<TypeInitializationException>(ex))
+        {
+            cause = "The Open API connection failed to initialize — typically this server touched " +
+                    "Tekla before Tekla published its channel (server started first, or Tekla was " +
+                    "closed at that moment). The Open API caches that failure for the life of the " +
+                    "server process. Open the model in Tekla, then restart this MCP server " +
+                    "(reconnect it in the MCP client).";
+        }
+        else if (HasInChain<System.Runtime.Remoting.RemotingException>(ex) ||
+                 HasInChain<System.Net.Sockets.SocketException>(ex) ||
+                 HasInChain<System.IO.IOException>(ex))
+        {
+            cause = "The server was connected earlier, but the Tekla process behind that connection " +
+                    "is gone (Tekla was restarted or closed). The Open API cannot re-establish the " +
+                    "connection inside this process. Restart this MCP server (reconnect it in the " +
+                    "MCP client); restarting Tekla again will not help.";
+        }
+        else
+        {
+            cause = "Connection failed.";
+        }
+
+        return cause + " Error: " + TeklaMcp.Core.ErrorText.Flatten(ex) +
+               " | Tekla processes: " + DescribeTeklaProcesses() +
+               " | " + Describe() + PipeListingCaveat();
+    }
+
+    private static bool HasInChain<T>(Exception? ex) where T : Exception
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+            if (e is T) return true;
+        return false;
+    }
+
+    /// <summary>PID + start time lets the user match a failure to a Tekla restart.</summary>
+    private static string DescribeTeklaProcesses()
+    {
+        try
+        {
+            var processes = System.Diagnostics.Process.GetProcessesByName("TeklaStructures");
+            if (processes.Length == 0) return "none running";
+            return string.Join(", ", processes.Select(p =>
+            {
+                try { return $"PID {p.Id} started {p.StartTime:yyyy-MM-dd HH:mm:ss}"; }
+                catch { return $"PID {p.Id}"; }
+                finally { p.Dispose(); }
+            }));
+        }
+        catch (Exception e)
+        {
+            return "unavailable (" + e.Message + ")";
+        }
+    }
+
+    /// <summary>
+    /// Tekla 2024+ moved from IPC named pipes to Trimble.Remoting (shared memory + named kernel
+    /// objects; reported from decompiled 2024–2026 assemblies, not yet live-verified here), so an
+    /// empty pipe list there is not evidence that Tekla is down.
+    /// </summary>
+    private static string PipeListingCaveat()
+    {
+        var major = TeklaAssemblyResolver.CompiledVersion?.Major;
+        return major >= 2024
+            ? " (this is a Tekla " + major + " build: its remoting does not use named pipes, so an " +
+              "empty pipe list is expected and says nothing about Tekla's state)"
+            : "";
+    }
+
     /// <summary>Returns false when there was nothing to align to yet (no Tekla pipes) — retryable.</summary>
     private static bool AlignCore()
     {

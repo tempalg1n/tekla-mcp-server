@@ -112,6 +112,27 @@ are known-good. Override with the `TEKLA_MCP_CHANNEL` env var (model channel; it
 suffix is applied to the others). "Not connected" errors include the model + base channels,
 `SESSIONNAME`, loaded API version/path, and the published Tekla pipes.
 
+**Two different dead connections** (probed on live Tekla 2023 with a scratch client,
+2026-09-29; `tekla_get_connection_info` classifies them via
+`TeklaRemotingChannel.DiagnoseConnectionFailure`):
+
+- *Stale* — connected once, then Tekla restarted/closed. `Model.GetConnectionStatus()` is only
+  `DelegateProxy.Delegate != null` in 2021–2026 (decompiled), so it keeps returning **true**;
+  the first real call (`GetInfo()`) throws `RemotingException` ("Requested service not found",
+  then "Failed to write to an IPC port"). Recoverable in-process in that probe: a new CAO via
+  `Tekla.Structures.Internal.RemotingProxyHelper.CreateInstance<CDelegate>("ipc://" + channel)`
+  assigned through the public `GenericDelegateProxy.Delegate` setter (2021–2023; 2024+ has an
+  internal `DelegateProxy.Initialize()`). **Not implemented yet** — the server tells the user to
+  restart it.
+- *Poisoned* — the first touch happened while the channel did not exist: the `DelegateProxy`
+  static ctor throws, the `TypeInitializationException` is cached, and fixing `SESSIONNAME` /
+  `Remoter.ChannelName` afterwards does not help. Only a new process (or AppDomain) recovers.
+
+Classification is by exception type, never message text: the .NET remoting messages are
+localized (RU installs). TODO(windows): Tekla 2024+ uses Trimble.Remoting (shared memory +
+named kernel objects, not named pipes — from decompiled assemblies, unverified live), so the
+pipe list in `Describe()` is empty there by design.
+
 Also: the Open API writes `Connection failed : …` to **stdout** when a channel connect
 fails (`GenericDelegateProxy` ctor). `Program.cs` routes `Console.Out` to stderr before any
 Tekla type loads — the MCP transport itself uses the raw `Console.OpenStandardOutput()`

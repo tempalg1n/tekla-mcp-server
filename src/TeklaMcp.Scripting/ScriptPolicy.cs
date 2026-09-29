@@ -112,6 +112,19 @@ public static class ScriptPolicy
         "InsertView", "InsertViewByStandardFile", "UpdateModificationStampToLatest",
         "SetAsCurrentRevision", "RemoveRevision",
 
+        // Environment catalogs (CatalogHandler, 2021–2023 verified from the NuGet assemblies):
+        // imports overwrite same-named catalog entries, and a field report ran a custom-component
+        // import through compile-check with no mutation detected.
+        "ImportBoltItems", "ImportCustomComponentItems", "ImportDrawingItems",
+        "ImportLibraryProfileItems", "ImportMaterialItems", "ImportMeshItems",
+        "ImportParametricProfileItems", "ImportRebarItems", "ImportShapeItems",
+        "SaveProfileDatabase",
+
+        // ModelHandler: switching, closing or creating a model. Bare Open/Close are acceptable
+        // here only because matching is invocation-only and File/Stream/Process are banned, so
+        // the realistic callee is ModelHandler.
+        "Open", "Close", "CreateNewSingleUserModel", "CreateNewMultiUserModel",
+
         // Drawing lifecycle / output.
         "SaveActiveDrawing", "CloseActiveDrawing", "IssueDrawing", "UnissueDrawing",
         "UpdateDrawing", "PrintDrawing", "PrintDrawings", "CreateDrawings",

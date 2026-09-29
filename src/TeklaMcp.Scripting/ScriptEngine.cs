@@ -196,6 +196,7 @@ public static class ScriptEngine
         var timeout = TimeSpan.FromSeconds(Math.Min(Math.Max(timeoutSeconds, 1), MaxTimeoutSeconds));
 
         string? returnValueJson = null;
+        SafeJsonReport? returnValueReport = null;
         Exception? failure = null;
         var completed = false;
 
@@ -207,7 +208,7 @@ public static class ScriptEngine
                 // Serialization is intentionally INSIDE the timeout worker. Tekla return
                 // objects can expose remoting properties or ToString() implementations that
                 // hang; those must be governed by the same deadline as script execution.
-                returnValueJson = SafeJson.ToJson(state.ReturnValue);
+                returnValueJson = SafeJson.ToJson(state.ReturnValue, out returnValueReport);
                 completed = true;
             }
             catch (Exception ex)
@@ -283,6 +284,19 @@ public static class ScriptEngine
 
         result.Success = true;
         result.ReturnValueJson = returnValueJson;
+        if (returnValueReport != null && returnValueReport.Truncated)
+        {
+            result.ReturnValueTruncated = true;
+            result.ReturnValueTruncation = returnValueReport.Notes();
+            result.Warnings.Add(
+                "returnValueJson is INCOMPLETE (see returnValueTruncation) - do not treat it as the " +
+                "full result. Return counts/aggregates, page the data across calls, or use " +
+                "tekla_export_parts_file for bulk rows.");
+        }
+        else if (returnValueReport != null && returnValueReport.ThrowingProperties > 0)
+        {
+            result.ReturnValueTruncation = returnValueReport.Notes();
+        }
     }
 
     private static void AddPartialMutationWarning(ScriptResult result, string prefix)

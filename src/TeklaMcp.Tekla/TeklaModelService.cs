@@ -122,7 +122,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
-            return new ConnectionInfo { Connected = false, Backend = BackendName, Message = ErrorText.Flatten(ex) };
+            // GetConnectionStatus() is only a local null check on the proxy, so a Tekla restart
+            // surfaces here, as a RemotingException from GetInfo(). Say what broke and what the
+            // user must restart instead of echoing the raw IPC error (field report MCP-SCF-011).
+            return new ConnectionInfo
+            {
+                Connected = false,
+                Backend = BackendName,
+                Message = TeklaRemotingChannel.DiagnoseConnectionFailure(ex),
+            };
         }
     }
 

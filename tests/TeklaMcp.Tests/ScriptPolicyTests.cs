@@ -169,6 +169,12 @@ public class ScriptPolicyTests
     [InlineData("ModelObjectEnumerator.AutoFetch = false;", "AutoFetch")]
     [InlineData("mark.MergeMarks(other);", "MergeMarks")]
     [InlineData("drawingObject.Scale(2.0);", "Scale")]
+    [InlineData("new CatalogHandler().ImportCustomComponentItems(\"C:\\\\x.uel\");", "ImportCustomComponentItems")]
+    [InlineData("catalog.ImportShapeItems(path);", "ImportShapeItems")]
+    [InlineData("catalog.SaveProfileDatabase();", "SaveProfileDatabase")]
+    [InlineData("new ModelHandler().Open(\"C:\\\\Models\\\\Other\");", "Open")]
+    [InlineData("handler.Close();", "Close")]
+    [InlineData("handler.CreateNewSingleUserModel(\"M\", \"C:\\\\Models\");", "CreateNewSingleUserModel")]
     public void Detects_drawing_and_model_mutations(string code, string expectedMember)
     {
         var analysis = ScriptPolicy.Analyze(code, allowMutations: false);

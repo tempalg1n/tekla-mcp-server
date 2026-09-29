@@ -34,7 +34,12 @@ public static class ModelScriptTools
         "Use an explicit alias such as `using TSD = Tekla.Structures.Drawing;`.\n" +
         "- Connect yourself: `var model = new Model();` (attaches to the running Tekla).\n" +
         "- RETURN a value as the LAST EXPRESSION of the script — it is serialized to JSON (returnValueJson). Return " +
-        "small aggregated values (numbers, strings, anonymous objects, lists, dictionaries), never raw model objects.\n" +
+        "small aggregated values (numbers, strings, anonymous objects, lists, dictionaries), never raw model objects. " +
+        "Up to 6 nested levels of lists/objects are expanded; anything deeper comes back as a " +
+        "\"[depth limit reached: …]\" string — flatten deeper data. Lists are cut at 100 items and strings at 4000 " +
+        "characters. ALWAYS check returnValueTruncated: when true the JSON is still valid but INCOMPLETE " +
+        "(returnValueTruncation says which cap fired) — page the data across calls or use tekla_export_parts_file, " +
+        "and never report a truncated value as the full result.\n" +
         "- `Print(...)` for intermediate output (capped at 500 lines / 64000 characters). Console does NOT exist here.\n" +
         "- Units are mm; coordinates are whatever work plane is current (dedicated tools use the GLOBAL plane).\n" +
         "- Enumerators: `var e = model.GetModelObjectSelector().GetAllObjectsWithType(...); while (e.MoveNext()) ...` " +
