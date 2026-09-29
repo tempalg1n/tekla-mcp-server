@@ -424,3 +424,6 @@ Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8
 - Tekla Open API 2026: https://developer.tekla.com/doc/tekla-structures/2026
 - MCP C# SDK: https://github.com/modelcontextprotocol/csharp-sdk
 - Local: [docs/architecture.md](docs/architecture.md), [docs/tekla-api-notes.md](docs/tekla-api-notes.md)
+- Deferred work with its findings (reconnect after a Tekla restart, instance selection, write
+  outcomes, component-development read tools): [docs/backlog.md](docs/backlog.md) — read it
+  before starting any of those, and move an item out once it is done.
