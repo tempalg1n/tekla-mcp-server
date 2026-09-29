@@ -22,13 +22,16 @@ public sealed class SafeJsonReport
     /// <summary>Largest known item count among capped collections; -1 when none was countable.</summary>
     public int LargestCappedCollection { get; internal set; } = -1;
 
-    /// <summary>Objects whose public properties exceeded the per-object cap.</summary>
+    /// <summary>Objects whose public members (properties and fields) exceeded the per-object cap.</summary>
     public int PropertyCappedObjects { get; internal set; }
 
     /// <summary>Containers past the depth cap, rendered as "[depth limit reached: …]" markers.</summary>
     public int DepthLimitHits { get; internal set; }
 
-    /// <summary>Property getters that threw and were rendered as "&lt;threw: …&gt;".</summary>
+    /// <summary>
+    /// Members whose read threw — a getter, or a lazy value part-way through — rendered as
+    /// "&lt;threw: …&gt;".
+    /// </summary>
     public int ThrowingProperties { get; internal set; }
 
     /// <summary>The whole value exceeded the total-size cap; the JSON is a preview envelope.</summary>
@@ -38,7 +41,7 @@ public sealed class SafeJsonReport
     public bool SerializationFailed { get; internal set; }
 
     /// <summary>
-    /// True when data was dropped. Throwing getters are reported in <see cref="Notes"/> but do
+    /// True when data was dropped. Throwing members are reported in <see cref="Notes"/> but do
     /// not count: their failure is visible in place and is not a cap.
     /// </summary>
     public bool Truncated =>
@@ -82,10 +85,10 @@ public sealed class SafeJsonReport
         if (PropertyCappedObjects > 0)
             notes.Add(
                 $"{PropertyCappedObjects} object(s) had more than {SafeJson.MaxProperties} public " +
-                "properties; the rest were omitted.");
+                "members (properties and fields); the rest were omitted.");
         if (ThrowingProperties > 0)
             notes.Add(
-                $"{ThrowingProperties} property getter(s) threw and were rendered as \"<threw: …>\".");
+                $"{ThrowingProperties} member(s) threw while being read and were rendered as \"<threw: …>\".");
         return notes;
     }
 }

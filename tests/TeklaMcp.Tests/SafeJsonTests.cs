@@ -278,4 +278,171 @@ public class SafeJsonTests
         Assert.Contains("Return a smaller", parsed.RootElement.GetProperty("guidance").GetString());
         Assert.True(json.Length < 64_000);
     }
+
+    [Fact]
+    public void Renders_value_tuples_as_Item_members()
+    {
+        // Element names (Name, Coords) are compile-time only; at runtime a ValueTuple has public
+        // FIELDS Item1..ItemN and no properties, so it used to come back as its ToString():
+        // "(B1, System.Collections.Generic.List`1[System.Double])".
+        var coords = new List<double> { 1, 2 };
+
+        Assert.Equal("{\"Item1\":\"B1\",\"Item2\":[1,2]}", SafeJson.ToJson((Name: "B1", Coords: coords)));
+        Assert.Equal(
+            "[{\"Item1\":\"B1\",\"Item2\":[1,2]},{\"Item1\":\"B2\",\"Item2\":[1,2]}]",
+            SafeJson.ToJson(new[] { "B1", "B2" }.Select(b => (b, coords))));
+    }
+
+    [Fact]
+    public void Flattens_long_tuples_into_consecutive_Item_members()
+    {
+        // The 8th element onwards lives in a nested Rest tuple; C# exposes it as Item8, Item9, ….
+        Assert.Equal(
+            "{\"Item1\":1,\"Item2\":2,\"Item3\":3,\"Item4\":4,\"Item5\":5,\"Item6\":6," +
+            "\"Item7\":7,\"Item8\":8,\"Item9\":9}",
+            SafeJson.ToJson((1, 2, 3, 4, 5, 6, 7, 8, 9)));
+    }
+
+    /// <summary>Shaped like Tekla's Geometry3d.Point: X/Y/Z are public fields, no properties.</summary>
+    private class FieldPoint
+    {
+        public double X, Y, Z;
+
+        public FieldPoint(double x, double y, double z)
+        {
+            X = x;
+            Y = y;
+            Z = z;
+        }
+
+        // Rounded text like Tekla's (which also uses the current culture: "(1000,000, …)").
+        public override string ToString() => FormattableString.Invariant($"({X:F3}, {Y:F3}, {Z:F3})");
+    }
+
+    /// <summary>Shaped like Tekla's ContourPoint: inherits the X/Y/Z fields, adds a property.</summary>
+    private sealed class FieldContourPoint : FieldPoint
+    {
+        public FieldContourPoint(double x, double y, double z) : base(x, y, z) { }
+
+        public string Chamfer { get; set; } = "none";
+    }
+
+    [Fact]
+    public void Renders_public_fields_as_numbers()
+    {
+        Assert.Equal("{\"X\":1000,\"Y\":2000.5004,\"Z\":0}", SafeJson.ToJson(new FieldPoint(1000, 2000.5004, 0)));
+    }
+
+    [Fact]
+    public void Renders_inherited_fields_after_properties()
+    {
+        // Properties alone gave {"Chamfer":"none"}: the coordinates were silently dropped.
+        Assert.Equal(
+            "{\"Chamfer\":\"none\",\"X\":10,\"Y\":20,\"Z\":30}",
+            SafeJson.ToJson(new FieldContourPoint(10, 20, 30)));
+    }
+
+    private sealed class ManyMembers
+    {
+        public int P1 => 1;
+        public int P2 => 2;
+#pragma warning disable CS0649 // never assigned: only the member count matters
+        public int F01, F02, F03, F04, F05, F06, F07, F08, F09, F10,
+                   F11, F12, F13, F14, F15, F16, F17, F18, F19, F20,
+                   F21, F22, F23, F24, F25, F26, F27, F28, F29, F30;
+#pragma warning restore CS0649
+    }
+
+    [Fact]
+    public void Member_cap_spans_properties_and_fields()
+    {
+        var json = SafeJson.ToJson(new ManyMembers(), out var report);
+
+        using var parsed = JsonDocument.Parse(json);
+        var names = parsed.RootElement.EnumerateObject().Select(p => p.Name).ToList();
+        Assert.Equal(25, names.Count);
+        Assert.Equal(new[] { "P1", "P2", "F01" }, names.Take(3));
+        Assert.Equal("F23", names[names.Count - 1]);
+        // Dropped fields are reported exactly like dropped properties.
+        Assert.Equal(1, report.PropertyCappedObjects);
+        Assert.True(report.Truncated);
+        Assert.Contains(report.Notes(), n => n.Contains("public members"));
+    }
+
+    private class BaseWithField
+    {
+        public int Value = 1;
+    }
+
+    private sealed class HidesField : BaseWithField
+    {
+        public new string Value => "derived";
+    }
+
+    [Fact]
+    public void Hidden_members_are_not_repeated()
+    {
+        // Reflection returns both the property and the base field it hides; C# sees only the property.
+        Assert.Equal("{\"Value\":\"derived\"}", SafeJson.ToJson(new HidesField()));
+    }
+
+    private sealed class FieldCyclic
+    {
+        public FieldCyclic? Next;
+    }
+
+    [Fact]
+    public void Depth_cap_stops_cycles_through_fields()
+    {
+        var a = new FieldCyclic();
+        a.Next = a;
+        var json = SafeJson.ToJson(a); // must terminate
+
+        using var parsed = JsonDocument.Parse(json);
+        var node = parsed.RootElement;
+        while (node.ValueKind == JsonValueKind.Object)
+            node = node.GetProperty("Next");
+        Assert.Equal("[depth limit reached: FieldCyclic]", node.GetString());
+    }
+
+    private sealed class FaultsMidSequence
+    {
+        public int Fine => 1;
+        public IEnumerable<int> LazyProperty => Faulty();
+        public IEnumerable<int> LazyField = Faulty();
+
+        private static IEnumerable<int> Faulty()
+        {
+            yield return 1;
+            throw new System.InvalidOperationException("remoting died");
+        }
+    }
+
+    [Fact]
+    public void Member_faulting_mid_value_keeps_json_valid()
+    {
+        // A lazy value (LINQ over model objects, a Tekla enumerator) can fault after part of it
+        // was written; that partial "[1" must not stay in front of the error marker.
+        var json = SafeJson.ToJson(new FaultsMidSequence(), out var report);
+
+        using var parsed = JsonDocument.Parse(json);
+        var root = parsed.RootElement;
+        Assert.Equal(1, root.GetProperty("Fine").GetInt32());
+        Assert.Equal("<threw: remoting died>", root.GetProperty("LazyProperty").GetString());
+        Assert.Equal("<threw: remoting died>", root.GetProperty("LazyField").GetString());
+        // Noted, but not truncation: the failure is visible in place.
+        Assert.Equal(2, report.ThrowingProperties);
+        Assert.False(report.Truncated);
+    }
+
+    private sealed class Opaque
+    {
+        public override string ToString() => "opaque";
+    }
+
+    [Fact]
+    public void Falls_back_to_ToString_only_without_members()
+    {
+        Assert.Equal("\"opaque\"", SafeJson.ToJson(new Opaque()));
+    }
 }

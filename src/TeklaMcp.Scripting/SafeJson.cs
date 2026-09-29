@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -10,8 +11,8 @@ namespace TeklaMcp.Scripting;
 /// <summary>
 /// Defensive object → JSON renderer for script return values. Arbitrary Tekla objects can
 /// hold cycles, remoting proxies and properties that throw, so instead of a real serializer
-/// this walks the value with hard caps (depth, item count, total size) and per-property
-/// try/catch; containers nested past the depth cap become an explicit
+/// this walks public properties and fields with hard caps (depth, item count, total size) and
+/// per-member try/catch; containers nested past the depth cap become an explicit
 /// <c>"[depth limit reached: …]"</c> marker. Output is for the agent's eyes — best effort,
 /// never an exception.
 /// </summary>
@@ -21,7 +22,7 @@ public static class SafeJson
     // Together with the item and total-size caps this is what terminates cyclic graphs.
     internal const int MaxDepth = 6;
     internal const int MaxItems = 100;
-    internal const int MaxProperties = 25;
+    internal const int MaxProperties = 25; // per object: properties and fields together
     internal const int MaxStringLength = 4_000;
     internal const int MaxTotalLength = 64_000;
     private const int MaxTruncatedPreviewLength = 16_000;
@@ -161,13 +162,10 @@ public static class SafeJson
 
     private static void WriteObject(StringBuilder sb, object value, int depth, SafeJsonReport r)
     {
-        PropertyInfo[] props;
+        List<(string Name, Func<object?> Read)> members;
         try
         {
-            props = value.GetType()
-                .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => p.CanRead && p.GetIndexParameters().Length == 0)
-                .ToArray();
+            members = ReadableMembers(value);
         }
         catch
         {
@@ -175,38 +173,99 @@ public static class SafeJson
             return;
         }
 
-        if (props.Length == 0)
+        // ToString() only when there is nothing else to show: for an object with members it is
+        // usually a CLR type name or a lossy format (Tekla's Point prints "(1000,000, …)").
+        if (members.Count == 0)
         {
             WriteString(sb, Stringify(value), r);
             return;
         }
 
-        if (props.Length > MaxProperties)
+        if (members.Count > MaxProperties)
         {
             r.PropertyCappedObjects++;
-            props = props.Take(MaxProperties).ToArray();
+            members.RemoveRange(MaxProperties, members.Count - MaxProperties);
         }
 
         sb.Append('{');
         var first = true;
-        foreach (var prop in props)
+        foreach (var member in members)
         {
             if (!first) sb.Append(',');
             first = false;
-            WriteString(sb, prop.Name, r);
+            WriteString(sb, member.Name, r);
             sb.Append(':');
+            var valueStart = sb.Length;
             try
             {
-                Write(sb, prop.GetValue(value), depth - 1, r);
+                Write(sb, member.Read(), depth - 1, r);
             }
             catch (Exception ex)
             {
+                // A lazy value can fault half-written ("[1,2"); drop the fragment so the JSON stays
+                // valid. Caps it already counted stay reported — overstating a cut is the safe side.
+                sb.Length = valueStart;
                 r.ThrowingProperties++;
                 WriteString(sb, "<threw: " + BaseMessage(ex) + ">", r);
             }
         }
         sb.Append('}');
     }
+
+    /// <summary>
+    /// Public instance properties, then public instance fields (Tekla's <c>Point</c>/<c>Vector</c>
+    /// keep X/Y/Z in fields) — all of them, so the caller can apply and report
+    /// <see cref="MaxProperties"/>. A name is emitted once, so a member hidden with <c>new</c> is
+    /// not repeated. Values are read lazily, one try/catch each.
+    /// </summary>
+    private static List<(string Name, Func<object?> Read)> ReadableMembers(object value)
+    {
+        var members = new List<(string Name, Func<object?> Read)>();
+        var type = value.GetType();
+        if (IsValueTuple(type))
+        {
+            AddTupleItems(members, value, 0);
+            return members;
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var prop in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (prop.CanRead && prop.GetIndexParameters().Length == 0 && names.Add(prop.Name))
+                members.Add((prop.Name, () => prop.GetValue(value)));
+        }
+        foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (names.Add(field.Name))
+                members.Add((field.Name, () => field.GetValue(value)));
+        }
+        return members;
+    }
+
+    /// <summary>
+    /// Tuple element names are compile-time only; at runtime a <c>ValueTuple</c> holds fields
+    /// Item1..Item7 plus a nested <c>Rest</c> tuple from the 8th element on. Flatten it the way
+    /// C# does (<c>t.Item8</c> is <c>t.Rest.Item1</c>) so an N-tuple renders as Item1..ItemN.
+    /// </summary>
+    private static void AddTupleItems(List<(string Name, Func<object?> Read)> members, object tuple, int offset)
+    {
+        var type = tuple.GetType();
+        for (var i = 1; i <= 7; i++)
+        {
+            var item = type.GetField("Item" + i);
+            if (item == null)
+                return;
+            members.Add(("Item" + (offset + i), () => item.GetValue(tuple)));
+        }
+
+        var rest = type.GetField("Rest")?.GetValue(tuple);
+        if (rest != null && IsValueTuple(rest.GetType()))
+            AddTupleItems(members, rest, offset + 7);
+    }
+
+    private static bool IsValueTuple(Type type) =>
+        type.IsValueType && type.IsGenericType && type.Namespace == "System" &&
+        type.Name.StartsWith("ValueTuple`", StringComparison.Ordinal);
 
     /// <summary>
     /// Explicit stand-in for a container past <see cref="MaxDepth"/>, e.g.

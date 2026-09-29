@@ -37,7 +37,9 @@ public static class ModelScriptTools
         "- RETURN a value as the LAST EXPRESSION of the script — it is serialized to JSON (returnValueJson). Return " +
         "small aggregated values (numbers, strings, anonymous objects, lists, dictionaries), never raw model objects. " +
         "Up to 6 nested levels of lists/objects are expanded; anything deeper comes back as a " +
-        "\"[depth limit reached: …]\" string — flatten deeper data. Lists are cut at 100 items and strings at 4000 " +
+        "\"[depth limit reached: …]\" string — flatten deeper data. Public fields are serialized too: a Point is " +
+        "{\"X\":…,\"Y\":…,\"Z\":…}, a tuple is {\"Item1\":…,\"Item2\":…} (element names do not survive compilation — " +
+        "return an anonymous object for named keys). Lists are cut at 100 items and strings at 4000 " +
         "characters. ALWAYS check returnValueTruncated: when true the JSON is still valid but INCOMPLETE " +
         "(returnValueTruncation says which cap fired) — page the data across calls or use tekla_export_parts_file, " +
         "and never report a truncated value as the full result.\n" +

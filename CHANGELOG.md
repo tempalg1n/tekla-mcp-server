@@ -194,6 +194,10 @@ escape hatch could not compile anything on Tekla 2025.
   normal-looking result with `createdCount: 0`. Previews and partial successes are
   unchanged. (The requested `tekla_create_beams_batch` already exists as
   `tekla_create_beams` — up to 200 beams in one commit.)
+- **`tekla_run_csharp` could return invalid JSON when a returned value failed half-way.** A
+  member whose lazy value (LINQ over model objects, a Tekla enumerator) threw after its first
+  items kept the written fragment in front of the error marker — `{"Items":[1"<threw: …>"}`.
+  The member is now replaced as a whole by `"<threw: …>"`.
 
 ### Added
 
@@ -228,6 +232,19 @@ escape hatch could not compile anything on Tekla 2025.
   a cheap `Count`), depth markers, the per-object property cap and the 64k size envelope now all
   set the flag, plus a warning telling the agent not to report the value as complete. The flag,
   not the JSON's shape, decides: a script that returns `new { truncated = true }` is complete.
+- **`tekla_run_csharp` return values include public fields, so tuples and Tekla points come
+  back as data.** Only public properties were read, with `ToString()` as the fallback: a
+  `ValueTuple` (its items are fields) came back as
+  ``"(B1, System.Collections.Generic.List`1[System.Double])"``, a Tekla `Point`/`Vector` (X/Y/Z
+  are fields) as a rounded current-culture string such as `"(1000,000, 2000,500, 0,000)"`, and a
+  `ContourPoint` as `{"Chamfer":{…}}` with its coordinates dropped (all seen on a live Tekla
+  2023). Public instance fields now follow the properties within the same 25-member cap, which
+  still sets `returnValueTruncated`: `{"X":1000,"Y":2000.5,"Z":0}`,
+  `{"Item1":"B1","Item2":[1,2]}`. Tuple element names are compile-time only, so tuples always
+  use `Item1..ItemN` (the 8th element onwards continues as `Item8`, … instead of a nested
+  `Rest`); return an anonymous object for named keys. `ToString()` remains only for objects
+  without public members. Anything that parsed the old point strings must read `X`/`Y`/`Z`
+  instead.
 - **Catalog imports and model switching count as mutations in the script policy.**
   `CatalogHandler.Import*Items` (bolts, custom components, drawings, library/parametric profiles,
   materials, meshes, rebars, shapes) and `SaveProfileDatabase` overwrite environment catalogs;
