@@ -1592,17 +1592,26 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             compilationSkipped = false;
             result.Stage = "compile";
             result.CompilationAttempted = true;
-            var dlls = System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll");
+            // Same selection as the live backend, minus loaded assemblies (the mock loads no
+            // Tekla): the folder alone decides, and mixed Tekla years are still rejected.
+            var references = Scripting.ScriptReferenceSelector.Select(
+                loadedAssemblyPaths: null,
+                directoryFiles: System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll")
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase),
+                expectedTeklaMajor: null);
+            result.ReferenceSummary = references.Summary;
             var script = Scripting.ScriptEngine.Create(
-                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: dlls));
+                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: references.Paths));
             result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
             if (result.CompileErrors.Count > 0)
             {
-                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                result.References.AddRange(references.Report);
+                result.Guidance = Scripting.ScriptReferenceSelector.CompileFailureGuidance(references);
                 result.DurationMs = watch.ElapsedMilliseconds;
                 return result;
             }
             result.Compiled = true;
+            if (compileOnly) result.References.AddRange(references.Report);
         }
         else
         {

@@ -81,6 +81,12 @@ Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
 Tool naming: `tekla_<verb>_<noun>`, snake_case. **Do not add write/mutating tools**
 without an explicit request and a safety gate (see existing UDA tools for the preview pattern).
 
+Tool errors: the MCP SDK replaces the message of every exception except `McpException` with a
+bare "An error occurred invoking '…'." — `ToolErrorFilter` (registered in `Program.cs`) sends
+`ErrorText.Flatten(ex)` instead, because a lost Tekla connection used to reach the agent as a
+cause-less tool error (DEV-005). So throw exceptions whose messages say what went wrong and what
+to do; keep `McpException` for argument/validation errors raised in the tool layer.
+
 ### Conventions added for the analytics tools
 
 - **`useSelection` scope switch.** Filter/analytics tools accept `useSelection` (bool). It maps
@@ -107,8 +113,10 @@ without an explicit request and a safety gate (see existing UDA tools for the pr
   `MoveNext`, no property reads). Pages cover disjoint slices; the agent merges rows by key.
   Use the same contract for any new scan-shaped tool instead of raising timeouts.
 - **The parts chain.** "Physical parts" = `PartTypeEnums` (BEAM…CUSTOM_PART) enumerated
-  type-by-type — `GetAllObjectsWithType` has NO multi-type overload (verified on 2021). On a
-  470k-object model the chain enumerates in ~5 s vs ~52 s for `GetAllObjects`. Analytics and
+  type-by-type. On a 470k-object model the chain enumerates in ~5 s vs ~52 s for
+  `GetAllObjects`. (An earlier note here said `GetAllObjectsWithType` has no multi-type
+  overload — wrong: a `System.Type[]` overload exists, 2021 included; only the `ArrayList` form
+  failed. It is unmeasured against the chain — see `docs/backlog.md` §7.) Analytics and
   attribute-discovery tools default to `partsOnly=true`; keep `Matches()` verifying the type
   either way. The mock mirrors the scope via `PartTypeNames`.
 - **Search results must distinguish "not found" from "did not look".**
@@ -323,11 +331,18 @@ New files: `src/TeklaMcp.Core/Geometry/CurveMath.cs`, `src/TeklaMcp.Core/Models/
 dedicated tool exists. Rules for maintaining it:
 
 - **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
-  the caller: the net48 backend dynamically passes every managed `Tekla.Structures*.dll` file
-  from `TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins included when installed);
-  the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Those globs also match native
-  DLLs (Tekla 2025 ships `Tekla.Structures.Native.DbvDatabase.dll`), and
-  `MetadataReference.CreateFromFile` accepts them silently — every compile then fails with
+  the caller: the net48 backend passes the Tekla assemblies LOADED in the process (authoritative —
+  what the live connection binds, possibly from the GAC) plus the `Tekla.Structures*.dll` /
+  `Tekla.Dialog*.dll` files in `TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins
+  when installed); the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Both go through
+  `ScriptReferenceSelector`, which drops non-managed files, duplicate assembly names (the loaded
+  one wins) and other Tekla years, and records every decision: `ScriptResult.ReferenceSummary`
+  always, `ScriptResult.References` on compile-only checks and compile failures. Never make the
+  folder the ONLY source again — with the folder at Tekla 2021's `nt\bin` (seven unrelated
+  `Tekla.Structures.*.dll`; the API lives in `nt\bin\plugins`) every script compiled without
+  `Tekla.Structures.Model` while connecting worked from the GAC (DEV-005 field report). The
+  globs also match native DLLs (Tekla 2025 ships `Tekla.Structures.Native.DbvDatabase.dll`),
+  and `MetadataReference.CreateFromFile` accepts them silently — every compile then fails with
   `CS0009` (issue #15). `ScriptEngine.BuildReferences` therefore admits only PE images with
   managed metadata and an assembly manifest (`IsReferenceableAssembly`); keep every reference
   path going through it, and prefer that check over a name blocklist. Roslyn stays on the 4.9.x line
@@ -418,3 +433,6 @@ Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8
 - Tekla Open API 2026: https://developer.tekla.com/doc/tekla-structures/2026
 - MCP C# SDK: https://github.com/modelcontextprotocol/csharp-sdk
 - Local: [docs/architecture.md](docs/architecture.md), [docs/tekla-api-notes.md](docs/tekla-api-notes.md)
+- Deferred work with its findings (reconnect after a Tekla restart, instance selection, write
+  outcomes, component-development read tools): [docs/backlog.md](docs/backlog.md) — read it
+  before starting any of those, and move an item out once it is done.

@@ -498,6 +498,10 @@ Example for Claude Desktop, Claude Code, or Cursor (`mcpServers`):
 - [ ] Broader object coverage: bolts, assemblies, rebar, geometry
 - [x] Automated tests for Core and Mock layers
 - [x] Per-version build matrix for Tekla 2021–2026
+- [ ] Reconnect after a Tekla restart without restarting the MCP client, and explicit Tekla
+  instance selection — analysed, deferred; see [docs/backlog.md](docs/backlog.md)
+- [ ] Explicit write outcomes and read tools for component development (advanced options,
+  catalogs, plugin components) — see [docs/backlog.md](docs/backlog.md)
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

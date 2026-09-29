@@ -198,6 +198,27 @@ escape hatch could not compile anything on Tekla 2025.
   member whose lazy value (LINQ over model objects, a Tekla enumerator) threw after its first
   items kept the written fragment in front of the error marker — `{"Items":[1"<threw: …>"}`.
   The member is now replaced as a whole by `"<threw: …>"`.
+- **Script escape hatch dead on Tekla 2021 with `TEKLA_BIN_DIR` at `nt\bin` (DEV-005 field
+  report).** Connecting and reading worked, but `tekla_check_csharp` could not resolve
+  `Tekla.Structures.Model`, `Geometry3d`, `Filtering` or `TeklaStructuresInfo`: script references
+  were taken ONLY from the resolver's folder whenever it held any `Tekla.Structures*.dll`, and
+  2021's `nt\bin` holds seven unrelated ones (the API is in `nt\bin\plugins`; the connection bound
+  the core API from the GAC). Script references now start from the Tekla assemblies the server has
+  actually loaded, the folder only adds what is missing, and duplicates and other Tekla years are
+  rejected. `tekla_check_csharp` returns `referenceSummary` plus every reference with version,
+  path and the reason it was used or left out; a compile without the core API says it is an
+  installation problem, not a script error. Reproduced and verified on a Tekla 2021 install.
+- **Open API folder detection.** `TEKLA_BIN_DIR` may point at the API folder, its parent or the
+  install root, and a value without `Tekla.Structures.Model.dll` is ignored with a warning
+  instead of being trusted. The process probe understands 2021's `nt\bin\plugins` and prefers
+  the Tekla whose version matches the build (a 2021 build next to a running 2023 used to report
+  "wrong build"). The registry fallback now reads the key current installs actually write,
+  `SOFTWARE\Trimble\Tekla Structures\<version>\setup` — the legacy key it probed does not exist
+  there.
+- **Tool errors carry their cause.** The MCP SDK sends only "An error occurred invoking '…'." for
+  every exception except `McpException`, so e.g. the lost-connection diagnostics built by the
+  backend never reached the agent (DEV-005: `tekla_get_model_summary` "general tool error" after
+  a Tekla restart). A call-tool filter now returns the flattened exception text.
 
 ### Added
 

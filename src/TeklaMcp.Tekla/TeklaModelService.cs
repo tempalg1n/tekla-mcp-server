@@ -1411,18 +1411,23 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.Stage = "compile";
-            var script = Scripting.ScriptEngine.Create(code, BuildScriptReferences());
+            var references = SelectScriptReferences();
+            result.ReferenceSummary = references.Summary;
+            var script = Scripting.ScriptEngine.Create(
+                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: references.Paths));
             result.CompilationAttempted = true;
             result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
             if (result.CompileErrors.Count > 0)
             {
-                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                result.References.AddRange(references.Report);
+                result.Guidance = Scripting.ScriptReferenceSelector.CompileFailureGuidance(references);
                 return result;
             }
             result.Compiled = true;
 
             if (compileOnly)
             {
+                result.References.AddRange(references.Report);
                 result.Success = true;
                 result.Guidance =
                     "Compile-only validation succeeded. The script was NOT executed and no Tekla model/drawing " +
@@ -1447,53 +1452,63 @@ public sealed partial class TeklaModelService : ITeklaModelService
     }
 
     /// <summary>
-    /// Metadata references for script compilation. Prefer every managed Tekla.Structures*.dll
-    /// available in the resolver's bin directory over a hand-maintained shortlist: this gives
-    /// the escape hatch the Drawing, Dialog, Datatype, Plugins and future Open API surfaces
-    /// when installed, without taking compile-time dependencies in TeklaMcp.Scripting.
+    /// Tekla references for script compilation. The assemblies this process has actually loaded
+    /// are authoritative — they are what the live connection binds, possibly from the GAC — and
+    /// the resolver's Open API folder only adds what nobody loaded yet (Drawing, Dialog,
+    /// Datatype, Plugins, …). ScriptReferenceSelector drops non-managed files, duplicates and
+    /// other Tekla years, and records every decision for tekla_check_csharp. (The folder used to
+    /// be the ONLY source whenever it held any Tekla.Structures*.dll, which broke every script on
+    /// Tekla 2021 with the folder at nt\bin — DEV-005 field report.)
     /// </summary>
-    private static IReadOnlyList<Microsoft.CodeAnalysis.MetadataReference> BuildScriptReferences()
+    private static Scripting.ScriptReferenceSelection SelectScriptReferences()
     {
+        var loaded = new List<string>();
+        void AddLoaded(System.Reflection.Assembly? assembly)
+        {
+            try
+            {
+                if (assembly != null && !assembly.IsDynamic && !string.IsNullOrEmpty(assembly.Location))
+                    loaded.Add(assembly.Location);
+            }
+            catch
+            {
+                // no usable location — cannot be a metadata reference
+            }
+        }
+
+        // The core API first: typeof() binds it (metadata only, no remoting) even when no tool
+        // has touched Tekla yet, e.g. a compile-only check right after startup.
+        AddLoaded(typeof(TSM.Model).Assembly);
+        AddLoaded(typeof(global::Tekla.Structures.Identifier).Assembly);
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var name = assembly.GetName().Name ?? "";
+            if (name.StartsWith("Tekla.Structures", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("Tekla.Dialog", StringComparison.OrdinalIgnoreCase))
+                AddLoaded(assembly);
+        }
+
+        var folderFiles = new List<string>();
         var bin = TeklaAssemblyResolver.BinDir;
         if (bin != null)
         {
             try
             {
-                var paths = System.IO.Directory
+                folderFiles.AddRange(System.IO.Directory
                     .GetFiles(bin, "Tekla.Structures*.dll", System.IO.SearchOption.TopDirectoryOnly)
                     .Concat(System.IO.Directory
                         .GetFiles(bin, "Tekla.Dialog*.dll", System.IO.SearchOption.TopDirectoryOnly))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                if (paths.Length > 0)
-                    return Scripting.ScriptEngine.BuildReferences(teklaDllPaths: paths);
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
             }
             catch
             {
-                // TODO(windows): an unusual locked/protected Tekla bin should degrade to the
-                // loaded-assembly fallback below, not make the escape hatch unavailable.
+                // TODO(windows): a locked/protected Tekla folder degrades to the loaded assemblies.
             }
         }
 
-        // No resolver bin located (unusual), or it could not be enumerated: fall back to every
-        // already-loaded managed Tekla API assembly with a readable Location.
-        var loaded = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(assembly =>
-            {
-                var name = assembly.GetName().Name ?? "";
-                return name.StartsWith("Tekla.Structures", StringComparison.OrdinalIgnoreCase)
-                       || name.StartsWith("Tekla.Dialog", StringComparison.OrdinalIgnoreCase);
-            })
-            .ToArray();
-        return Scripting.ScriptEngine.BuildReferences(
-            teklaAssemblies: loaded.Length > 0
-                ? loaded
-                : new[]
-                {
-                    typeof(TSM.Model).Assembly,
-                    typeof(global::Tekla.Structures.Identifier).Assembly,
-                });
+        return Scripting.ScriptReferenceSelector.Select(
+            loaded, folderFiles, TeklaAssemblyResolver.CompiledVersion?.Major);
     }
 
     private static TSM.ModelObject? CreateOne(TSM.Model model, PartSpec spec)

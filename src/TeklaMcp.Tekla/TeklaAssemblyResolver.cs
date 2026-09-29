@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using Microsoft.Win32;
+using TeklaMcp.Core;
 
 namespace TeklaMcp.Tekla;
 
@@ -28,9 +30,15 @@ public static class TeklaAssemblyResolver
     private static readonly object Gate = new object();
     private static bool _registered;
     private static bool _mismatchLogged;
+    private static bool _envIgnoredLogged;
+    private static bool _envSubfolderLogged;
     private static Version? _installedVersion;
 
-    /// <summary>The Tekla 'bin' directory assemblies are resolved from, or null if not found.</summary>
+    /// <summary>
+    /// The Tekla Open API folder assemblies are resolved from (the folder holding
+    /// Tekla.Structures.Model.dll — <c>bin</c> on 2023+, <c>nt\bin\plugins</c> on 2021), or null
+    /// if not found.
+    /// </summary>
     public static string? BinDir { get; private set; }
 
     /// <summary>How <see cref="BinDir"/> was located: "env" | "process" | "registry" | "(not found)".</summary>
@@ -169,13 +177,63 @@ public static class TeklaAssemblyResolver
         catch { return null; }
     }
 
+    // Caller holds Gate (Register / OnAssemblyResolve), which also guards the log-once flags.
     private static string? LocateBinDir(out string source)
     {
-        // 1) Explicit override — always wins.
+        // 1) Explicit override — wins when it really holds the Open API. Its API subfolder is
+        //    accepted too: Tekla 2021 keeps the API in nt\bin\plugins, and nt\bin itself holds
+        //    seven unrelated Tekla.Structures.*.dll. That folder used to be taken as-is: the
+        //    Model then bound from the GAC (so connecting worked), the version check had nothing
+        //    to read, and every script compiled without Tekla.Structures.Model (DEV-005).
         var env = Environment.GetEnvironmentVariable("TEKLA_BIN_DIR");
-        if (!string.IsNullOrWhiteSpace(env) && Directory.Exists(env)) { source = "env"; return env; }
+        if (!string.IsNullOrWhiteSpace(env))
+        {
+            var dir = TeklaBinLayout.FindApiDirectory(env, File.Exists);
+            if (dir != null)
+            {
+                if (!SamePath(dir, env!))
+                    LogOnce(ref _envSubfolderLogged,
+                        $"[tekla] TEKLA_BIN_DIR='{env}' holds no Open API itself; using its subfolder '{dir}'.");
+                source = "env";
+                return dir;
+            }
+            LogOnce(ref _envIgnoredLogged,
+                $"[tekla] WARNING: TEKLA_BIN_DIR='{env}' contains no {TeklaBinLayout.ModelAssemblyFile} " +
+                "(its plugins/bin subfolders were checked too) — ignoring it and probing the running Tekla.");
+        }
 
-        // 2) The RUNNING Tekla — guarantees we check against the open instance.
+        // 2) The RUNNING Tekla, then 3) the registry. Prefer an Open API whose major version is the
+        //    one this build was compiled for: with Tekla 2021 and 2023 open side by side the first
+        //    process found used to win, and the 2021 build then failed as "wrong build".
+        var candidates = new List<KeyValuePair<string, string>>(); // folder → how it was found
+        foreach (var dir in FromProcesses())
+            candidates.Add(new KeyValuePair<string, string>(dir, "process"));
+        var reg = FromRegistry();
+        if (reg != null)
+            candidates.Add(new KeyValuePair<string, string>(reg, "registry"));
+
+        foreach (var candidate in candidates)
+        {
+            if (!MatchesCompiledMajor(candidate.Key)) continue;
+            source = candidate.Value;
+            return candidate.Key;
+        }
+        if (candidates.Count > 0)
+        {
+            // Only other Tekla versions are around: return one anyway so EnsureVersionMatch can
+            // say "wrong build for this Tekla version" instead of "Tekla not found".
+            source = candidates[0].Value;
+            return candidates[0].Key;
+        }
+
+        source = "(not found)";
+        return null;
+    }
+
+    /// <summary>Open API folders of the running TeklaStructures processes (each at most once).</summary>
+    private static List<string> FromProcesses()
+    {
+        var result = new List<string>();
         try
         {
             foreach (var p in Process.GetProcessesByName("TeklaStructures"))
@@ -183,67 +241,134 @@ public static class TeklaAssemblyResolver
                 try
                 {
                     var file = p.MainModule?.FileName;
-                    var dir = string.IsNullOrEmpty(file) ? null : Path.GetDirectoryName(file);
-                    if (!string.IsNullOrEmpty(dir) && HasTeklaModel(dir!)) { source = "process"; return dir; }
+                    var dir = TeklaBinLayout.FindApiDirectory(
+                        string.IsNullOrEmpty(file) ? null : Path.GetDirectoryName(file), File.Exists);
+                    if (dir != null && !result.Contains(dir, StringComparer.OrdinalIgnoreCase))
+                        result.Add(dir);
                 }
                 catch { /* access denied / bitness mismatch — try the next process */ }
+                finally { p.Dispose(); }
             }
         }
         catch { /* ignore */ }
+        return result;
+    }
 
-        // 3) Registry fallback.
-        var reg = FromRegistry();
-        if (reg != null) { source = "registry"; return reg; }
+    /// <summary>True when the folder's Tekla.Structures.Model.dll has this build's major version.</summary>
+    private static bool MatchesCompiledMajor(string dir)
+    {
+        if (CompiledVersion is null) return true;
+        try
+        {
+            var version = AssemblyName.GetAssemblyName(
+                Path.Combine(dir, TeklaBinLayout.ModelAssemblyFile)).Version;
+            return version != null && version.Major == CompiledVersion.Major;
+        }
+        catch
+        {
+            return false; // unreadable/locked — prefer another candidate
+        }
+    }
 
-        source = "(not found)";
-        return null;
+    private static bool SamePath(string a, string b)
+    {
+        try
+        {
+            return string.Equals(
+                Path.GetFullPath(a.Trim().Trim('"')).TrimEnd('\\', '/'),
+                Path.GetFullPath(b.Trim().Trim('"')).TrimEnd('\\', '/'),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void LogOnce(ref bool logged, string message)
+    {
+        if (logged) return;
+        logged = true;
+        Console.Error.WriteLine(message); // stderr only — stdout is reserved for the MCP protocol
     }
 
     private static string? FromRegistry()
     {
-        // Best-effort: Tekla records install info under SOFTWARE\Tekla\Structures\<version>.
-        // Value names vary across versions, so probe common ones and the \bin subfolder.
         foreach (var root in new[] { Registry.LocalMachine, Registry.CurrentUser })
         {
-            try
-            {
-                using var key = root.OpenSubKey(@"SOFTWARE\Tekla\Structures");
-                if (key == null) continue;
-
-                // A machine can have several Teklas installed side by side — prefer the one
-                // this build was compiled for, then fall back to the highest.
-                var compiledYear = CompiledVersion?.Major.ToString() ?? "";
-                var versions = key.GetSubKeyNames()
-                    .OrderByDescending(v => v.StartsWith(compiledYear, StringComparison.Ordinal))
-                    .ThenByDescending(v => v, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-
-                foreach (var version in versions)
-                {
-                    using var vk = key.OpenSubKey(version);
-                    if (vk == null) continue;
-                    foreach (var valueName in new[] { "Bin directory", "BinDirectory", "InstallationDirectory", "" })
-                    {
-                        var dir = NormalizeBin(vk.GetValue(valueName) as string);
-                        if (dir != null) return dir;
-                    }
-                }
-            }
-            catch { /* ignore and try the next root */ }
+            var dir = FromTrimbleKey(root) ?? FromLegacyTeklaKey(root);
+            if (dir != null) return dir;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Current installs register under SOFTWARE\Trimble\Tekla Structures\&lt;version&gt;\setup with
+    /// MainDir (e.g. C:\TeklaStructures\) + TSVersionDir (e.g. 2021.0) — verified on 2021 and 2023.
+    /// The legacy SOFTWARE\Tekla\Structures key does not exist there, so the registry fallback
+    /// found nothing and a 2021 build with only Tekla 2023 running reported "wrong build".
+    /// </summary>
+    private static string? FromTrimbleKey(RegistryKey root)
+    {
+        try
+        {
+            using var key = root.OpenSubKey(@"SOFTWARE\Trimble\Tekla Structures");
+            if (key == null) return null;
+            foreach (var version in PreferCompiledYear(key.GetSubKeyNames()))
+            {
+                using var setup = key.OpenSubKey(version + @"\setup");
+                var mainDir = (setup?.GetValue("MainDir") as string)?.Trim().Trim('"');
+                if (string.IsNullOrEmpty(mainDir)) continue; // e.g. HKCU "Ifc", "License"
+                var versionDir = (setup!.GetValue("TSVersionDir") as string)?.Trim();
+                var dir = NormalizeBin(Path.Combine(mainDir!, string.IsNullOrEmpty(versionDir) ? version : versionDir!));
+                if (dir != null) return dir;
+            }
+        }
+        catch { /* ignore — best effort */ }
+        return null;
+    }
+
+    /// <summary>Older layout: SOFTWARE\Tekla\Structures\&lt;version&gt; with version-specific value names.</summary>
+    private static string? FromLegacyTeklaKey(RegistryKey root)
+    {
+        try
+        {
+            using var key = root.OpenSubKey(@"SOFTWARE\Tekla\Structures");
+            if (key == null) return null;
+            foreach (var version in PreferCompiledYear(key.GetSubKeyNames()))
+            {
+                using var vk = key.OpenSubKey(version);
+                if (vk == null) continue;
+                foreach (var valueName in new[] { "Bin directory", "BinDirectory", "InstallationDirectory", "" })
+                {
+                    var dir = NormalizeBin(vk.GetValue(valueName) as string);
+                    if (dir != null) return dir;
+                }
+            }
+        }
+        catch { /* ignore — best effort */ }
+        return null;
+    }
+
+    /// <summary>
+    /// Several Teklas can be installed side by side — try the one this build was compiled for
+    /// first, then the highest.
+    /// </summary>
+    private static string[] PreferCompiledYear(string[] versions)
+    {
+        var compiledYear = CompiledVersion?.Major.ToString() ?? "";
+        return versions
+            .OrderByDescending(v => compiledYear.Length > 0 && v.StartsWith(compiledYear, StringComparison.Ordinal))
+            .ThenByDescending(v => v, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static string? NormalizeBin(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         raw = raw!.Trim().Trim('"');
-        if (!Directory.Exists(raw)) return null;
-        if (HasTeklaModel(raw)) return raw;
-        var bin = Path.Combine(raw, "bin");
-        return HasTeklaModel(bin) ? bin : null;
+        // Registry values point at an install root, a bin folder or (2021) nt\bin — all resolve
+        // to the folder that actually holds the Open API.
+        return Directory.Exists(raw) ? TeklaBinLayout.FindApiDirectory(raw, File.Exists) : null;
     }
-
-    private static bool HasTeklaModel(string dir) =>
-        File.Exists(Path.Combine(dir, "Tekla.Structures.Model.dll"));
 }
