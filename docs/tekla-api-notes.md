@@ -74,11 +74,29 @@ different-version copy never matches, and a same-version copy is protocol-compat
 definition. The universal build also silently relied on undocumented binary compatibility
 between the 2021 API surface and newer Tekla DLLs — Trimble's own model is per-version.
 
-**Locating the Tekla `bin`** (in order): the `TEKLA_BIN_DIR` env var → the running
-`TeklaStructures.exe` process's folder (best — matches the open instance) → the Windows registry
-(`SOFTWARE\Tekla\Structures\<version>`; installs matching the compiled version are preferred
-over newer ones). If none is found at startup, the resolver re-probes whenever a `Tekla.*` bind
-occurs, so "start the server first, open Tekla later" recovers without a restart.
+**Locating the Tekla `bin`** — really the Open API folder, the one holding
+`Tekla.Structures.Model.dll`: `bin` on 2023+, **`nt\bin\plugins` on 2021** (its `nt\bin` holds
+seven unrelated `Tekla.Structures.*.dll`). `TeklaBinLayout` (Core) resolves any given folder —
+the API folder itself, its `plugins`/`bin` subfolder, or an install root — to that folder. Order:
+the `TEKLA_BIN_DIR` env var (or its API subfolder; a value without the Model DLL is logged and
+IGNORED — it used to be trusted blindly, which broke every script on 2021, see below) → the
+running `TeklaStructures.exe` processes' folders → the Windows registry
+(`SOFTWARE\Trimble\Tekla Structures\<version>\setup`: `MainDir` + `TSVersionDir`, verified on
+2021 and 2023; the older `SOFTWARE\Tekla\Structures\<version>` is still probed). Among processes
+and registry installs, an Open API whose major version matches this build wins: with 2021 and
+2023 running side by side the first process found used to win, and a 2021 build without
+`TEKLA_BIN_DIR` reported "wrong build". If nothing matches, another version is returned so
+`EnsureVersionMatch` can say "wrong build" instead of "not found". If none is found at startup,
+the resolver re-probes whenever a `Tekla.*` bind occurs, so "start the server first, open Tekla
+later" recovers without a restart.
+
+**Script references (DEV-005 field report, Tekla 2021, verified 2026-09-29 on this machine's
+2021 install).** With `TEKLA_BIN_DIR=…\2021.0\nt\bin`, connecting and reading worked — the core
+API bound from the GAC (2021.0.0.0 is there) — but `tekla_check_csharp` failed every script with
+CS0234 for `Tekla.Structures.Model`/`Geometry3d`/`Filtering`: references were globbed from that
+folder only, and the loaded-assembly fallback ran only for an EMPTY glob. Reproduced with the
+v0.7.0-3 build; fixed by `ScriptReferenceSelector` (loaded assemblies authoritative, folder adds,
+mixed Tekla years rejected, every decision reported) plus the folder resolution above.
 
 **Remoting channel names (SESSIONNAME).** Confirmed by decompiling the Tekla 2023
 assemblies: every Open API assembly computes its channel name as

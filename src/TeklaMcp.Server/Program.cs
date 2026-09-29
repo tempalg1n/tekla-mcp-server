@@ -126,7 +126,10 @@ builder.Services
         options.ServerInstructions = serverInstructions;
     })
     .WithStdioServerTransport()
-    .WithToolsFromAssembly(); // discovers [McpServerToolType] classes in this assembly
+    .WithToolsFromAssembly() // discovers [McpServerToolType] classes in this assembly
+    // Pass the real exception text to the agent instead of the SDK's bare
+    // "An error occurred invoking '<tool>'." (see ToolErrorFilter).
+    .WithRequestFilters(filters => filters.AddCallToolFilter(TeklaMcp.Server.ToolErrorFilter.Create));
 
 var app = builder.Build();
 await app.RunAsync();

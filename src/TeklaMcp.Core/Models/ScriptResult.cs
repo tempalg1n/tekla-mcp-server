@@ -53,6 +53,20 @@ public sealed class ScriptResult
     /// <summary>C# compiler errors — fix the script and retry.</summary>
     public List<string> CompileErrors { get; set; } = new List<string>();
 
+    /// <summary>
+    /// One line describing the Tekla reference set the compile used: count, Tekla version and
+    /// origin. When it says the core API is missing, compile errors are a server/installation
+    /// problem, not a script mistake.
+    /// </summary>
+    public string? ReferenceSummary { get; set; }
+
+    /// <summary>
+    /// Every Tekla assembly the compiler considered, with version, path and why it was used or
+    /// left out. Filled by compile-only checks and on compile failures; empty on normal runs to
+    /// keep results small.
+    /// </summary>
+    public List<ScriptReferenceInfo> References { get; set; } = new List<ScriptReferenceInfo>();
+
     /// <summary>The script's return value (its last expression), rendered as JSON. Capped.</summary>
     public string? ReturnValueJson { get; set; }
 
