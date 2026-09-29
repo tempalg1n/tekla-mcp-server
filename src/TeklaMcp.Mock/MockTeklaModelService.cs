@@ -655,21 +655,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
 
     public IReadOnlyList<GridLineInfo> GetGrids() => Grids;
 
-    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z)
-    {
-        var result = new PointResult { AxisX = axisXLabel, AxisY = axisYLabel, Z = z };
-        var gx = Grids.FirstOrDefault(g => g.Axis == "X" && Eq(g.Label, axisXLabel));
-        var gy = Grids.FirstOrDefault(g => g.Axis == "Y" && Eq(g.Label, axisYLabel));
-        if (gx is null || gy is null)
-        {
-            result.Message = $"Grid label not found (X='{axisXLabel}': {(gx != null)}, Y='{axisYLabel}': {(gy != null)}).";
-            return result;
-        }
-        result.Resolved = true;
-        result.X = gx.Coordinate;
-        result.Y = gy.Coordinate;
-        return result;
-    }
+    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z) =>
+        TeklaMcp.Core.Geometry.GridMath.Resolve(Grids, axisXLabel, axisYLabel, z);
 
     // -- Mutations ----------------------------------------------------------------------
 

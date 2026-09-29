@@ -54,7 +54,7 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve geometry math) |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve geometry math, grid semantics, schematic renderer + PNG encoder) |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend (synthetic frame) |
 | `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, engine, SafeJson) + API reference search. No Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 | real Tekla Open API backend (Windows) |
@@ -324,6 +324,55 @@ drawing `Part` has no geometry of its own, and `Part.GetCenterLine` is a segment
 
 New files: `src/TeklaMcp.Core/Geometry/CurveMath.cs`, `src/TeklaMcp.Core/Models/PartCurveGeometry.cs`,
 `src/TeklaMcp.Mock/MockTeklaModelService.CurveGeometry.cs`, `src/TeklaMcp.Tekla/TeklaCurveGeometryService.cs`.
+
+### Conventions for VISUAL tools (`tekla_capture_view`, `tekla_render_schematic`)
+
+Agents were "blind": they found objects by indirect signs and never saw the model. Both tools return
+an MCP `ImageContentBlock` (the agent sees it) plus a JSON text block, built in
+`ModelVisualTools.Answer`; the image bytes travel in `RenderedImage` and are nulled out of the DTO
+before it is serialized.
+
+- **Never capture the screen.** `tekla_capture_view` copies pixels ONLY from Tekla's own view window
+  with `PrintWindow(…, PW_RENDERFULLCONTENT)` (`TeklaWindowCapture`). A screen copy
+  (`BitBlt`/`CopyFromScreen`) was tried once while probing and captured an overlapping Explorer
+  window with the user's private file names instead of the model. Do not add it as a fallback.
+- **Only on-screen views.** `PrintWindow` returns the main window's composition, so an MDI view
+  hidden behind another view comes back as whatever covers it. Covered/minimized views are refused
+  with the list of open views; never "bring a view forward" behind the user's back.
+- **Side effects are brief and restored.** Zoom (`ViewHandler.ZoomToBoundingBox`), rotation
+  (`ViewCamera`), highlight (`ModelObjectVisualization`) and numbers (`GraphicsDrawer.DrawText`,
+  active view only) happen only when the agent passes targets/direction, and `restore=true` (default)
+  puts the camera back and clears temporary states in a `finally`. Without targets the capture touches
+  nothing. Keep that split; a new visual option must be opt-in and restorable.
+- **Settle before capturing.** Tekla redraws asynchronously: `CaptureSettled` waits for two equal
+  frame fingerprints that also differ from the pre-change frame (or ~1 s of no change) and warns when
+  the budget runs out. Do not replace it with a fixed sleep.
+- **The schematic is BETA** (user decision, 2026-09-29: "useful, but looks so-so for now"). Keep
+  the BETA marker in the tool description, the server instructions and `SchematicRenderResult.Stage`
+  until its picture quality is reviewed. Known weak spots: stick geometry without section widths,
+  crowded overviews of dense models, the 8×8 bitmap font.
+- **Backends deliver geometry, Core draws.** `GetSchematicScene` returns raw pieces (reference
+  lines, contours, bolt points, solid AABB fallback capped at 300 `GetSolid` calls, grids);
+  `TeklaMcp.Core.Rendering.SchematicRenderer` does projection, colours, labels and PNG encoding
+  (hand-rolled rasterizer, font and encoder — Core stays dependency-free), identical for mock and
+  live. GUID focus is looked up directly; context comes from `GetObjectsByBoundingBox`, never a
+  whole-model walk; a `region` limits the focus too and frames the picture.
+- **A view is the direction the camera LOOKS along** — `ViewProjection`, the schematic's `view` and
+  the capture's `direction` share presets and the `"dx,dy,dz"` convention of
+  `ViewCamera.DirectionVector` (verified live), so a camera read from a capture can be redrawn.
+- **Coverage is reported.** Legend entries say `labelPlaced`; caps set `focusTruncated`/
+  `contextTruncated`/`scanTruncated`; missing GUIDs are listed. Same rule as the search tools.
+- **The mock never pretends.** Its capture is a schematic stand-in with a red "MOCK BACKEND" banner,
+  `source="mock-schematic"`, and no side-effect flags set.
+- **Grids** (shared with `tekla_list_grids`/`tekla_resolve_point`): `GridMath` parses X/Y as spacings,
+  Z as absolute levels, reads real `LabelX/Y/Z` and each grid's own `GetCoordinateSystem()`; labels
+  repeat across grids, so `Resolve` prefers a pair from the same grid and says when it had to choose.
+
+New files: `src/TeklaMcp.Core/Rendering/*`, `src/TeklaMcp.Core/Geometry/GridMath.cs`,
+`src/TeklaMcp.Core/Models/SchematicModels.cs`, `src/TeklaMcp.Core/Models/ViewCaptureModels.cs`,
+`src/TeklaMcp.Mock/MockTeklaModelService.Visual.cs`, `src/TeklaMcp.Tekla/TeklaSchematicService.cs`,
+`src/TeklaMcp.Tekla/TeklaViewCaptureService.cs`, `src/TeklaMcp.Tekla/TeklaWindowCapture.cs`,
+`src/TeklaMcp.Server/Tools/ModelVisualTools.cs`.
 
 ### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
 

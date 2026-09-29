@@ -236,6 +236,37 @@ public interface ITeklaModelService
     /// </summary>
     PartCurveGeometry GetPartCurveGeometry(PartCurveGeometryRequest request);
 
+    // -- Visual context ---------------------------------------------------------------------
+    //
+    // Agents otherwise reason about the model only through property lists. These two give them
+    // a picture: a schematic drawn by TeklaMcp.Core.Rendering from raw geometry (identical on
+    // both backends), and a capture of what Tekla itself renders in a model view.
+
+    /// <summary>
+    /// Raw drawable geometry for <c>tekla_render_schematic</c>: focus objects matching
+    /// <see cref="SchematicSceneRequest.Query"/> (GUIDs are looked up directly, never by a
+    /// whole-model scan), context parts inside the focus box grown by
+    /// <see cref="SchematicSceneRequest.ContextMarginMm"/> (or inside
+    /// <see cref="SchematicSceneRequest.Region"/>), and the grids with real labels and origins.
+    /// With no scope at all the whole model is context (an overview), capped by
+    /// <see cref="SchematicSceneRequest.MaxContextObjects"/>. Cheap geometry only — reference
+    /// lines, contours, bolt positions; a solid AABB only as a bounded fallback for other part
+    /// types. Coverage (caps, missing GUIDs, objects without geometry) is reported, never hidden.
+    /// Never throws: failures go into <see cref="SchematicScene.Message"/>.
+    /// </summary>
+    SchematicScene GetSchematicScene(SchematicSceneRequest request);
+
+    /// <summary>
+    /// Picture of a model view for <c>tekla_capture_view</c>. The live backend captures the
+    /// pixels Tekla rendered in the target view's own window (PrintWindow, never a screen copy,
+    /// so other applications' windows cannot leak into it); optionally zooms to, colours and
+    /// numbers target objects and rotates the camera first, and by default restores camera and
+    /// colours afterwards. Only a view that is visible on screen can be captured. The mock backend
+    /// returns a schematic stand-in and says so (<see cref="ViewCaptureResult.Source"/>). Never
+    /// throws: failures go into <see cref="ViewCaptureResult.Message"/>.
+    /// </summary>
+    ViewCaptureResult CaptureView(ViewCaptureRequest request);
+
     // -- Mutations (create / modify / delete) ---------------------------------------------
     //
     // ALL mutations honor preview-by-default: when apply == false NOTHING is written, but the

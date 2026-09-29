@@ -27,6 +27,17 @@ Reference-model objects are an explicit exception to GUID-first addressing: Tekl
 reports an empty GUID for them, so reference geometry is addressed by the integer model-object
 ID from the current session.
 
+### Pictures for agents
+
+Two tools return images (MCP `ImageContentBlock`) next to their JSON:
+
+- `tekla_render_schematic` (**beta**): the backend's `GetSchematicScene` delivers only raw
+  geometry; `TeklaMcp.Core.Rendering` projects and draws it (own rasterizer, bitmap font, PNG
+  encoder — Core stays dependency-free), so mock and live pictures come from the same code.
+- `tekla_capture_view`: the live backend copies the pixels Tekla rendered in its own view window
+  (`TeklaWindowCapture`, Win32 `PrintWindow`), optionally after a restorable zoom/highlight through
+  the Model.UI API. The mock answers with a schematic stand-in labelled as such.
+
 ### Drawing subsystem
 
 The drawing layer is **experimental** (first shipped in v0.7.0): it has had less live-model

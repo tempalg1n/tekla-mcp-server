@@ -106,7 +106,13 @@ const string serverInstructions =
     "CURVED PARTS: radius and curved dimensions need exact arc points. Get them from " +
     "tekla_get_part_curve_geometry (bends with radius/chord/sagitta/arc length, inner/outer arcs " +
     "of round tubes and bars, optional view coordinates) — never estimate them from bounding " +
-    "boxes or from the segmented polyline of a drawing part.";
+    "boxes or from the segmented polyline of a drawing part.\n\n" +
+    "SEEING THE MODEL: look instead of guessing from coordinates. tekla_capture_view returns a " +
+    "screenshot of the live Tekla view, optionally zoomed to and highlighting given GUIDs (a brief, " +
+    "restored change on the user's screen). tekla_render_schematic (BETA — an early, simplified " +
+    "sketch that can look cluttered on dense models) draws a numbered plan/elevation/iso with real " +
+    "grid labels and a legend with GUIDs, without touching Tekla. Use them to orient yourself, to " +
+    "identify what the user points at, and to check what a write created before you report success.";
 
 var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
