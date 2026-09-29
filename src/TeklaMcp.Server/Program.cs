@@ -50,7 +50,10 @@ else
     // on a version mismatch. Must run before the first Tekla type is touched.
     TeklaMcp.Tekla.TeklaAssemblyResolver.Register();
     TeklaMcp.Tekla.TeklaRemotingChannel.Align();
-    builder.Services.AddSingleton<ITeklaModelService, TeklaMcp.Tekla.TeklaModelService>();
+    // Via a factory, not the type: the backend is constructed only after the version check
+    // passes, because a failed static initializer would be cached for the process (see
+    // TeklaBackendFactory).
+    builder.Services.AddSingleton<ITeklaModelService>(_ => TeklaMcp.Tekla.TeklaBackendFactory.Create());
 }
 #else
 _ = forceMock; // mock is the only option on this TFM

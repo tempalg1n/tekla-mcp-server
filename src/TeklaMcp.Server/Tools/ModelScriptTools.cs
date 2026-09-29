@@ -48,10 +48,11 @@ public static class ModelScriptTools
         "- Enumerators: `var e = model.GetModelObjectSelector().GetAllObjectsWithType(...); while (e.MoveNext()) ...` " +
         "(AutoFetch is already enabled process-wide). Filter by type early — models can hold 400k+ objects.\n" +
         "- DO NOT call GetAllObjects() on a real model: ~50 s just to enumerate a 400k-object model (measured), " +
-        "which alone blows the client's ~60 s request timeout. Use GetAllObjectsWithType(...). It has NO multi-type " +
-        "overload (the ArrayList one does not compile), so call it once per type and chain the results — the physical " +
-        "part types are BEAM, POLYBEAM, CONTOURPLATE, BENT_PLATE, LOFTED_PLATE, SPIRAL_BEAM, BREP, CUSTOM_PART " +
-        "(~5 s for all eight on the same model).\n" +
+        "which alone blows the client's ~60 s request timeout. Use GetAllObjectsWithType(...). The MEASURED path is " +
+        "one call per ModelObjectEnum type, chained — the physical part types are BEAM, POLYBEAM, CONTOURPLATE, " +
+        "BENT_PLATE, LOFTED_PLATE, SPIRAL_BEAM, BREP, CUSTOM_PART (~5 s for all eight on the same model). A " +
+        "System.Type[] overload also exists (e.g. new[] { typeof(Beam), typeof(PolyBeam) }) but is unmeasured; there " +
+        "is no ArrayList overload.\n" +
         "- Need whole-model data OUT, or many GUID→UDA pairs back IN? Do not script it: use " +
         "tekla_export_parts_file / tekla_set_udas_from_file, which stream through a file instead of the response.\n" +
         "\n" +

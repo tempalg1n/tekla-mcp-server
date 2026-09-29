@@ -95,8 +95,9 @@ PID and process start time.
 
 2024–2026 use Trimble.Remoting (memory-mapped files and named kernel objects), not named pipes.
 The channel is `{Assembly}-{ProductName}-{SESSIONNAME|Console}:{FileVersion}` and exists when
-`EventWaitHandle.TryOpenExisting(channel + "$S")` succeeds. `Align()` / `Describe()` list
-`\\.\pipe\` and therefore see nothing on these versions. `DelegateProxy.Initialize()` plus
+`EventWaitHandle.TryOpenExisting(channel + "$S")` succeeds. `Describe()` lists `\\.\pipe\` and
+therefore sees nothing on these versions; `Align()` no longer touches 2024+ builds at all (fixed
+2026-09-29, see CHANGELOG). `DelegateProxy.Initialize()` plus
 `RemotingProxyHelper.DisposeService()` look like the recreate path; the behaviour of a stale
 proxy after a restart is unknown — test on a live 2024+ before claiming support.
 
@@ -136,30 +137,23 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
 - Orphaned server processes pile up across client restarts (dozens on the reporting machine,
   also seen here): exit when the parent MCP client process is gone.
 
-### 7. Found after the first write-up (same day, not fixed yet)
+### 7. Found after the first write-up (same day)
 
-- **Bug — a 2024+ build breaks its own channel names when an older Tekla runs alongside.**
-  `TeklaRemotingChannel.DeriveSessionSuffix` falls back to pipes of ANY version when none match
-  the build, and `PatchToSuffix` then writes `{Assembly}-{suffix}:{AssemblyVersion}` into the
-  2024+ `Remoter.ChannelName`. Tekla 2024+ publishes
-  `{Assembly}-{ProductName}-{SESSIONNAME|Console}:{FileVersion}` instead, so the first touch
-  poisons the proxy (§1). `TEKLA_MCP_CHANNEL` breaks it the same way. Fix: skip alignment and
-  patching entirely when the build's major version is 2024 or later — Tekla 2024+ already falls
-  back to `Console` when `SESSIONNAME` is empty. From code reading and decompilation; not run live
-  (no 2024+ install here).
-- **Bug — the resolver keeps a mismatched Open API folder.** First-process-wins and the 2021
-  `nt\bin\plugins` layout are fixed (960d861), but `BinDir` and the installed version are still
-  cached even when they do not match the build, and re-probed only while `BinDir` is null. A
-  server that first saw only another Tekla version keeps reporting "wrong build" after the right
-  Tekla starts. Fix: re-probe on a mismatch before throwing (safe — the resolver never loads a
-  mismatched assembly).
+Two bugs and a doc error from this list were fixed the same day (channel alignment of 2024+
+builds, a mismatched Open API folder sticking for the process, the "no multi-type overload"
+sentence) — see CHANGELOG. Still open:
+
 - **Performance — the AutoFetch snapshot.** With `ModelObjectEnumerator.AutoFetch = true`,
   constructing an enumerator runs one `ExportGetSnapshotFromDatabase` over the whole source
   (decompilation). If that holds, `GetSize()` is not a cheap count and every cursor page pays the
   full snapshot again — the AGENTS.md scan rules assume otherwise. Measure live (count and
   page timings on a 400k-object model) before changing them. Calls over ~60 s are a second
   plausible cause of the "MCP lost access" reports.
-- **Doc error — `GetAllObjectsWithType(System.Type[])` exists**, Tekla 2021 included (checked in
-  the installed 2021.0.0.0 metadata). AGENTS.md is corrected; the `tekla_run_csharp` description
-  still says there is no multi-type overload. Whether one `Type[]` call beats the per-type chain
-  (~5 s on 470k objects) is unmeasured.
+- **Measure `GetAllObjectsWithType(System.Type[])`** against the per-type chain (~5 s on 470k
+  objects) before recommending it.
+- **Recovery from a version mismatch without any GAC copy is only partial.** When neither the
+  GAC nor the located folder holds this build's Open API, every bind fails. The resolver no longer
+  makes that permanent, and the backend is not constructed until the version matches. But any
+  class whose static initializer ran during the mismatch stays broken until the server restarts
+  (CLR behaviour, verified in isolation). The common case — the right Tekla installed, so its
+  assemblies are in the GAC — never gets there.

@@ -2327,8 +2327,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
     /// Every enum value that materializes as a physical <see cref="TSM.Part"/>. Enumerating
     /// these type-by-type replaces a full-model walk: on a live 470k-object model that is the
     /// difference between ~5 s (parts chain) and ~52 s (GetAllObjects) before any property is
-    /// read. The Open API has no multi-type overload of GetAllObjectsWithType (verified on
-    /// 2021), hence the chain of single-type enumerators.
+    /// read. A GetAllObjectsWithType(System.Type[]) overload does exist (2021 included — an
+    /// earlier note here said it did not); the chain stays because it is the measured path.
     /// </summary>
     private static readonly TSM.ModelObject.ModelObjectEnum[] PartTypeEnums =
     {

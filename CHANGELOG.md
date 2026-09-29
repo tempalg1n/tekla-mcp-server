@@ -219,6 +219,27 @@ escape hatch could not compile anything on Tekla 2025.
   every exception except `McpException`, so e.g. the lost-connection diagnostics built by the
   backend never reached the agent (DEV-005: `tekla_get_model_summary` "general tool error" after
   a Tekla restart). A call-tool filter now returns the flattened exception text.
+- **Tekla 2024+ builds broke their own connection when an older Tekla ran alongside.** The
+  channel fix-up aligned to the pipes of ANY Tekla version and wrote 2021–2023-style names
+  (`{Assembly}-{session}:{version}`) into the 2024+ Remoters. Those use Trimble.Remoting and name
+  their channels `{Assembly}-{Product}-{SESSIONNAME|Console}:{FileVersion}`, so the proxies were
+  poisoned on first use. 2024+ builds are now never aligned — they name their channels
+  themselves — and `TEKLA_MCP_CHANNEL` on 2024+ patches exact names without touching
+  `SESSIONNAME`. From decompiled 2024–2026 assemblies; no 2024+ install was available to run it
+  live.
+- **2021–2023 builds no longer align to another Tekla version's session.** With only a different
+  Tekla running, the server used to adopt that Tekla's session suffix and stop aligning for the
+  rest of the process. It now waits for its own version's pipes.
+- **"Wrong build" stuck for the process lifetime.** The resolver kept a mismatched Open API folder
+  and re-probed only while none was set. It now re-probes on a mismatch. It also no longer throws
+  from `AssemblyResolve`: the CLR caches such an exception for the AppDomain and never asks again
+  (verified on .NET Framework 4.8), so one bind during a mismatch used to break Tekla until a
+  restart. The backend is constructed only after the version check passes
+  (`TeklaBackendFactory`), because a failed static initializer is cached the same way; every tool
+  call then reports the plain "wrong build" message instead of a type-load error.
+- **`tekla_run_csharp` description: `GetAllObjectsWithType(System.Type[])` exists** (2021
+  included). The description used to say there is no multi-type overload; the per-type chain stays
+  the recommended, measured path.
 
 ### Added
 

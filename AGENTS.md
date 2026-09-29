@@ -46,7 +46,13 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
    bindingRedirects for `Tekla.*`, no `Assembly.Load(byte[])`/`LoadFile` in the resolver —
    both failed on live machines (issue #11; see "Assembly loading history" in
    `docs/tekla-api-notes.md`). When a new Tekla version ships, extend the matrices in
-   `.github/workflows/release.yml` and `ci.yml`.
+   `.github/workflows/release.yml` and `ci.yml`. The CLR caches bind failures:
+   - never THROW from the `AssemblyResolve` handler — return null;
+   - create `TeklaModelService` only through `TeklaBackendFactory`, i.e. after the version check;
+   - keep the 2021–2023 channel alignment (`TeklaRemotingChannel`) away from 2024+ builds, which
+     name their Trimble.Remoting channels themselves.
+
+   Each of these once turned a transient state into "broken until the server restarts".
 
 ---
 

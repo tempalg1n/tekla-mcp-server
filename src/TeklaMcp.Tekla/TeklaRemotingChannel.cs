@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using TeklaMcp.Core;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
 using TSM = Tekla.Structures.Model;
@@ -46,22 +47,21 @@ namespace TeklaMcp.Tekla;
 ///
 /// Override: set <c>TEKLA_MCP_CHANNEL</c> to force an exact MODEL channel name (skips
 /// probing); the session suffix embedded in it is applied to the other channels too.
+///
+/// All of the above is 2021–2023 only. Tekla 2024+ runs on Trimble.Remoting (no named pipes)
+/// and names its channels itself — <c>{Assembly}-{ProductName}-{SESSIONNAME|Console}:{FileVersion}</c>.
+/// Its builds are never aligned: next to a running older Tekla the fix-up used to write that
+/// Tekla's 2021–2023-style names into the 2024+ Remoters and poison the proxies. Only an explicit
+/// <c>TEKLA_MCP_CHANNEL</c> is applied there (see <c>AlignTrimbleRemoting</c>).
 /// </summary>
 public static class TeklaRemotingChannel
 {
     private const string PipePrefix = "Tekla.Structures";
 
-    /// <summary>Longest name first, so "Tekla.Structures" only matches as a last resort.</summary>
-    private static readonly string[] KnownAssemblyNames =
-    {
-        "Tekla.Structures.Drawing",
-        "Tekla.Structures.Model",
-        "Tekla.Structures",
-    };
-
     private static readonly object Gate = new object();
     private static bool _done;
     private static bool _warmedUp;
+    private static bool _unavailableLogged;
 
     public static void Align()
     {
@@ -70,8 +70,28 @@ public static class TeklaRemotingChannel
             if (_done) return;
             try
             {
-                // False only while Tekla publishes no pipes — retry on the next call.
-                _done = AlignCore();
+                // Tekla 2024+ names its channels itself. Decided HERE, before AlignCore is even
+                // JIT-compiled: compiling a method that merely mentions a Tekla type loads that
+                // assembly (verified on .NET Framework 4.8). AlignCore returns false while this
+                // build's Tekla publishes no pipes yet — retry on the next call.
+                var compiledMajor = TeklaAssemblyResolver.CompiledVersion?.Major;
+                _done = RemotingChannelNames.NamesItsOwnChannels(compiledMajor)
+                    ? AlignTrimbleRemoting(compiledMajor.GetValueOrDefault())
+                    : AlignCore();
+            }
+            catch (Exception ex) when (IsTeklaApiUnavailable(ex))
+            {
+                // The Open API assemblies cannot be loaded YET (no or a wrong-version Open API
+                // folder when the server started). The resolver re-probes after a version
+                // mismatch, so a later call can succeed — giving up here used to leave the
+                // channels unaligned for the process lifetime.
+                if (!_unavailableLogged)
+                {
+                    _unavailableLogged = true;
+                    Console.Error.WriteLine(
+                        "[tekla] remoting channel alignment postponed — the Tekla Open API cannot be " +
+                        "loaded yet: " + ErrorText.Flatten(ex));
+                }
             }
             catch (Exception ex)
             {
@@ -226,14 +246,16 @@ public static class TeklaRemotingChannel
     /// <summary>Returns false when there was nothing to align to yet (no Tekla pipes) — retryable.</summary>
     private static bool AlignCore()
     {
+        var compiledMajor = TeklaAssemblyResolver.CompiledVersion?.Major;
+        var forced = Environment.GetEnvironmentVariable("TEKLA_MCP_CHANNEL");
+
         // 1) Determine the target session suffix WITHOUT touching any Tekla type: reading a
         //    Remoter field runs its type initializer, which snapshots SESSIONNAME — the env
         //    var must be corrected first.
         string? suffix;
-        var forced = Environment.GetEnvironmentVariable("TEKLA_MCP_CHANNEL");
         if (!string.IsNullOrWhiteSpace(forced))
         {
-            suffix = SessionSuffixOf(forced!.Trim());
+            suffix = RemotingChannelNames.SessionSuffixOf(forced!.Trim());
             Console.Error.WriteLine(
                 $"[tekla] TEKLA_MCP_CHANNEL forces the model channel to '{forced.Trim()}'" +
                 (suffix is null ? " (no session suffix recognized in it)." : $" (session suffix '{suffix}')."));
@@ -242,7 +264,13 @@ public static class TeklaRemotingChannel
         {
             var pipes = ListPublishedTeklaPipes();
             if (pipes.Count == 0) return false; // Tekla not running (or pipes unreadable) — retry later.
-            suffix = DeriveSessionSuffix(pipes);
+            suffix = RemotingChannelNames.DeriveSessionSuffix(
+                pipes, compiledMajor, Environment.GetEnvironmentVariable("SESSIONNAME"), out var note);
+            if (note != null) Console.Error.WriteLine("[tekla] " + note);
+            // Only other Tekla versions publish. Aligning to THEIR session used to end alignment for
+            // the process, so a later start of this build's Tekla in another session never
+            // connected — wait for this version's own pipes instead.
+            if (suffix is null) return false;
         }
 
         // 2) Make this process compute the same channel names Tekla's process did. This fixes
@@ -274,61 +302,57 @@ public static class TeklaRemotingChannel
     }
 
     /// <summary>
-    /// Picks the session suffix from published pipe names like
-    /// "Tekla.Structures.Model-Console:2023.0.0.0". Prefers pipes of the Tekla major version
-    /// this build was compiled for, and the current SESSIONNAME when several Tekla sessions
-    /// publish different suffixes.
+    /// Tekla 2024+: leave the Open API's own channel names alone — it already falls back to
+    /// "Console" when SESSIONNAME is unset. Only an explicit TEKLA_MCP_CHANNEL (the exact Model
+    /// channel) is applied; the base and Drawing channels get the same name with their own
+    /// assembly prefix. SESSIONNAME is not touched: 2024+ names carry a product segment that
+    /// the 2021–2023 suffix logic would fold into the session. From decompiled 2024–2026
+    /// assemblies — TODO(windows): verify on a live 2024+ install. No Tekla type is mentioned
+    /// in this method, so the skip path loads no Tekla assembly.
     /// </summary>
-    private static string? DeriveSessionSuffix(List<string> pipes)
+    private static bool AlignTrimbleRemoting(int major)
     {
-        var compiledMajor = TeklaAssemblyResolver.CompiledVersion?.Major;
-        var candidates = new List<(string Suffix, int? Major)>();
-        foreach (var pipe in pipes)
+        var forced = Environment.GetEnvironmentVariable("TEKLA_MCP_CHANNEL");
+        if (string.IsNullOrWhiteSpace(forced))
         {
-            var colon = pipe.LastIndexOf(':');
-            if (colon <= 0) continue;
-            var name = pipe.Substring(0, colon);
-            int? major = Version.TryParse(pipe.Substring(colon + 1), out var v) ? v.Major : (int?)null;
-            foreach (var asm in KnownAssemblyNames)
-            {
-                if (!name.StartsWith(asm + "-", StringComparison.OrdinalIgnoreCase)) continue;
-                candidates.Add((name.Substring(asm.Length + 1), major));
-                break;
-            }
+            Console.Error.WriteLine(
+                $"[tekla] Tekla {major} build: channel alignment skipped — Tekla " +
+                $"{RemotingChannelNames.FirstTrimbleRemotingMajor}+ names its Trimble.Remoting channels itself.");
+            return true;
         }
-        if (candidates.Count == 0) return null;
 
-        var preferred = candidates
-            .Where(c => compiledMajor is null || c.Major == compiledMajor)
-            .Select(c => c.Suffix)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        if (preferred.Count == 0)
-            preferred = candidates.Select(c => c.Suffix).Distinct(StringComparer.Ordinal).ToList();
-
-        if (preferred.Count == 1) return preferred[0];
-
-        // Several Tekla sessions (e.g. multiple RDP users) — keep the current session's if it
-        // is one of them, otherwise pick deterministically and say so.
-        var current = Environment.GetEnvironmentVariable("SESSIONNAME");
-        if (current != null && preferred.Contains(current)) return current;
-        preferred.Sort(StringComparer.OrdinalIgnoreCase);
+        var model = forced!.Trim();
         Console.Error.WriteLine(
-            $"[tekla] several Tekla sessions publish pipes ({string.Join(", ", preferred)}); " +
-            $"using '{preferred[0]}'. Set TEKLA_MCP_CHANNEL to override.");
-        return preferred[0];
+            $"[tekla] TEKLA_MCP_CHANNEL forces the model channel to '{model}' (Tekla {major}: base and " +
+            "drawing channels follow by assembly name; SESSIONNAME left alone).");
+        ForceChannelsByAssemblyName(model);
+        return true;
     }
 
-    /// <summary>Extracts "Console" from "Tekla.Structures.Model-Console:2023.0.0.0".</summary>
-    private static string? SessionSuffixOf(string channel)
+    /// <summary>The TEKLA_MCP_CHANNEL part of <see cref="AlignTrimbleRemoting"/>.</summary>
+    private static void ForceChannelsByAssemblyName(string model)
     {
-        var colon = channel.LastIndexOf(':');
-        var name = colon > 0 ? channel.Substring(0, colon) : channel;
-        foreach (var asm in KnownAssemblyNames)
-            if (name.StartsWith(asm + "-", StringComparison.OrdinalIgnoreCase))
-                return name.Substring(asm.Length + 1);
-        return null;
+        PatchChannel(typeof(TSM.Model).Assembly, "Tekla.Structures.ModelInternal.Remoter", model);
+
+        var baseChannel = RemotingChannelNames.WithAssembly(model, "Tekla.Structures.Model", "Tekla.Structures");
+        if (baseChannel != null)
+            PatchChannel(typeof(TS.TeklaStructuresInfo).Assembly,
+                "Tekla.Structures.TeklaStructuresInternal.Remoter", baseChannel);
+
+        var drawingChannel = RemotingChannelNames.WithAssembly(model, "Tekla.Structures.Model", "Tekla.Structures.Drawing");
+        if (drawingChannel != null)
+            TryPatchDrawingChannel(drawingChannel);
     }
+
+    /// <summary>
+    /// True when the failure means the Tekla Open API assemblies cannot be loaded (yet): no or a
+    /// wrong-version Open API folder. Retryable — see <see cref="Align"/>.
+    /// </summary>
+    private static bool IsTeklaApiUnavailable(Exception ex) =>
+        HasInChain<FileNotFoundException>(ex) ||
+        HasInChain<FileLoadException>(ex) ||
+        HasInChain<BadImageFormatException>(ex) ||
+        HasInChain<TeklaVersionMismatchException>(ex);
 
     private static void PatchToSuffix(Assembly assembly, string remoterTypeName, string suffix)
     {
@@ -346,6 +370,21 @@ public static class TeklaRemotingChannel
         {
             PatchToSuffix(typeof(TSD.DrawingHandler).Assembly,
                 "Tekla.Structures.DrawingInternal.Remoter", suffix);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                "[tekla] drawing channel alignment skipped: " + ex.Message);
+        }
+    }
+
+    /// <summary>Same as <see cref="TryPatchDrawing"/> with an exact channel name.</summary>
+    private static void TryPatchDrawingChannel(string channel)
+    {
+        try
+        {
+            PatchChannel(typeof(TSD.DrawingHandler).Assembly,
+                "Tekla.Structures.DrawingInternal.Remoter", channel);
         }
         catch (Exception ex)
         {

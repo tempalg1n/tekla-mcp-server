@@ -130,6 +130,19 @@ are known-good. Override with the `TEKLA_MCP_CHANNEL` env var (model channel; it
 suffix is applied to the others). "Not connected" errors include the model + base channels,
 `SESSIONNAME`, loaded API version/path, and the published Tekla pipes.
 
+Alignment is a 2021–2023 mechanism with two rules (pure logic in `Core/RemotingChannelNames`,
+unit-tested):
+
+- **Only the build's own version counts.** With only another Tekla version publishing, `Align()`
+  waits (returns "retry") instead of adopting that Tekla's session. Adopting it used to end
+  alignment for the process.
+- **2024+ builds are never aligned.** Trimble.Remoting names the channels itself —
+  `{Assembly}-{ProductName}-{SESSIONNAME|Console}:{FileVersion}`, no pipes. Writing 2021–2023-style
+  names into those Remoters (which happened whenever an older Tekla ran alongside) poisons the
+  proxies. `TEKLA_MCP_CHANNEL` on 2024+ patches the exact Model name and the same name with the
+  base and Drawing assembly prefixes, and leaves `SESSIONNAME` alone. This is from decompiled
+  2024–2026 assemblies. TODO(windows): verify on a live 2024+ install.
+
 **Two different dead connections** (probed on live Tekla 2023 with a scratch client,
 2026-09-29; `tekla_get_connection_info` classifies them via
 `TeklaRemotingChannel.DiagnoseConnectionFailure`):
@@ -365,10 +378,29 @@ Unit tests use a hand-built PE32 image without a CLI header (`ScriptReferenceTes
 
 `TeklaAssemblyResolver` now simply `Assembly.LoadFrom`s the matching per-version install's
 DLLs — plain and policy-free. `Assembly.Location` is real again, and script metadata
-references use the DLL files in `TeklaAssemblyResolver.BinDir` (which also covers
-every installed managed `Tekla.Structures*.dll`, including Drawing/Dialog/Datatype/Plugins) —
-see `TeklaModelService.BuildScriptReferences`. Two hard-won constraints
-from the universal-build era (the PR #10 failure matrix) still apply to ANY future change here:
+references start from the loaded Tekla assemblies plus the DLL files in
+`TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins included) — see
+`TeklaModelService.SelectScriptReferences`.
+
+**What the CLR caches when a bind fails** (probed on .NET Framework 4.8 with a fake strong
+assembly, 2026-09-29):
+
+- An exception THROWN by an `AssemblyResolve` handler is cached for the AppDomain: the handler
+  is never called again for that assembly and every later bind rethrows it. A handler that
+  returns null is asked again next time. So the resolver must never throw. On a version
+  mismatch it returns null, and the "wrong build" message comes from `EnsureVersionMatch`
+  instead.
+- A failed static initializer (TypeInitializationException) is cached for good, even when the
+  handler returned null. That is why `TeklaModelService`, whose static fields hold Tekla enum
+  tables, is created through `TeklaBackendFactory` only after the version check passes. The DI
+  container retries a singleton factory that threw (checked with
+  Microsoft.Extensions.DependencyInjection 8).
+- Compiling a method that merely mentions a Tekla type binds its assembly, even when that code
+  path never runs. Decisions that must work without the Open API (e.g. skipping alignment for
+  2024+ builds) belong in a method that mentions no Tekla type.
+
+Two hard-won constraints from the universal-build era (the PR #10 failure matrix) still apply to
+ANY future change here:
 
 - **Never combine an `AssemblyResolve`-based resolver with anti-GAC bindingRedirects.** On
   .NET Framework `Assembly.Load(byte[])` (unlike `LoadFile`) APPLIES binding policy to the

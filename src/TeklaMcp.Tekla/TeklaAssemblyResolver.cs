@@ -34,6 +34,10 @@ public static class TeklaAssemblyResolver
     private static bool _envSubfolderLogged;
     private static Version? _installedVersion;
 
+    /// <summary>How often a version mismatch may trigger a fresh search for the Open API folder.</summary>
+    private static readonly TimeSpan MismatchReprobeInterval = TimeSpan.FromSeconds(5);
+    private static DateTime _lastLocateUtc = DateTime.MinValue;
+
     /// <summary>
     /// The Tekla Open API folder assemblies are resolved from (the folder holding
     /// Tekla.Structures.Model.dll — <c>bin</c> on 2023+, <c>nt\bin\plugins</c> on 2021), or null
@@ -59,6 +63,7 @@ public static class TeklaAssemblyResolver
 
             BinDir = LocateBinDir(out var source);
             Source = source;
+            _lastLocateUtc = DateTime.UtcNow;
             AppDomain.CurrentDomain.AssemblyResolve += OnAssemblyResolve;
 
             // stderr only — stdout is reserved for the MCP protocol.
@@ -91,6 +96,13 @@ public static class TeklaAssemblyResolver
             if (installed is null || CompiledVersion is null) return;
             if (installed.Major == CompiledVersion.Major) return;
 
+            // The folder found earlier belongs to another Tekla version, but the right one may
+            // have been started (or become findable) since. The mismatch used to stick for the
+            // process lifetime; probe again instead. Switching is safe: nothing was loaded from
+            // the mismatched folder — OnAssemblyResolve refuses before LoadFrom.
+            if (ReprobeAfterMismatch()) return;
+            installed = InstalledVersion() ?? installed;
+
             var msg =
                 $"Wrong build for this Tekla version: this TeklaMcp.Server build is for " +
                 $"Tekla {CompiledVersion.Major}, but the installed/running Tekla is " +
@@ -102,8 +114,37 @@ public static class TeklaAssemblyResolver
                 _mismatchLogged = true;
                 Console.Error.WriteLine("[tekla] " + msg);
             }
-            throw new InvalidOperationException(msg);
+            throw new TeklaVersionMismatchException(msg);
         }
+    }
+
+    /// <summary>
+    /// Searches for the Open API folder again after a version mismatch — at most every
+    /// <see cref="MismatchReprobeInterval"/>, because this runs on every tool call and every Tekla
+    /// bind. True when the folder found now matches this build. Caller holds <see cref="Gate"/>.
+    /// </summary>
+    private static bool ReprobeAfterMismatch()
+    {
+        var now = DateTime.UtcNow;
+        if (now - _lastLocateUtc < MismatchReprobeInterval) return false;
+        _lastLocateUtc = now;
+
+        var dir = LocateBinDir(out var source);
+        if (dir is null || SamePath(dir, BinDir ?? "")) return false;
+
+        var previous = BinDir;
+        BinDir = dir;
+        Source = source;
+        _installedVersion = null;
+        var installed = InstalledVersion();
+        if (installed is null || CompiledVersion is null || installed.Major != CompiledVersion.Major)
+            return false; // yet another version — the caller reports it
+
+        _mismatchLogged = false;
+        Console.Error.WriteLine(
+            $"[tekla] Tekla {CompiledVersion.Major} located after a version mismatch: resolving from " +
+            $"{dir} (via {source}) instead of {previous}.");
+        return true;
     }
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
@@ -129,16 +170,33 @@ public static class TeklaAssemblyResolver
             }
             if (BinDir is null) return null;
 
+            // Never hand the runtime a wrong-version protocol assembly — but never THROW from
+            // this handler either: the CLR caches an exception thrown by an AssemblyResolve
+            // handler for the rest of the AppDomain and never asks the handler again for that
+            // assembly (verified on .NET Framework 4.8), so one bind during a version mismatch
+            // used to break Tekla until the server restarted. Returning null keeps the bind
+            // retryable; the clear "wrong build" message comes from EnsureVersionMatch, which every
+            // tool call runs before touching Tekla. The check may re-probe and move BinDir.
+            try { EnsureVersionMatch(); }
+            catch (TeklaVersionMismatchException) { return null; }
+            if (BinDir is null) return null;
+
             var path = Path.Combine(BinDir, name + ".dll");
             if (!File.Exists(path)) return null;
-
-            // Never hand the runtime a wrong-version protocol assembly — fail fast instead.
-            EnsureVersionMatch();
 
             // LoadFrom (not LoadFile, not Load(bytes)): Assembly.Location stays real, LoadFrom
             // caches by path, and the LoadFrom context resolves the DLL's own dependencies
             // from the same directory without re-entering this handler.
-            return Assembly.LoadFrom(path);
+            try
+            {
+                return Assembly.LoadFrom(path);
+            }
+            catch (Exception ex)
+            {
+                // Same caching rule as above: report it and let the bind fail retryably.
+                Console.Error.WriteLine($"[tekla] could not load {path}: {ErrorText.Flatten(ex)}");
+                return null;
+            }
         }
     }
 
@@ -371,4 +429,15 @@ public static class TeklaAssemblyResolver
         // to the folder that actually holds the Open API.
         return Directory.Exists(raw) ? TeklaBinLayout.FindApiDirectory(raw, File.Exists) : null;
     }
+}
+
+/// <summary>
+/// The located Tekla's major version differs from the one this build was compiled for. A
+/// distinct type so callers can tell "not loadable yet" apart from other failures
+/// (<c>TeklaRemotingChannel.Align</c> retries on it); it stays an
+/// <see cref="InvalidOperationException"/> for every existing catch.
+/// </summary>
+public sealed class TeklaVersionMismatchException : InvalidOperationException
+{
+    public TeklaVersionMismatchException(string message) : base(message) { }
 }
