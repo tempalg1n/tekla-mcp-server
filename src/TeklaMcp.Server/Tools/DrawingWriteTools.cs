@@ -225,7 +225,11 @@ public static class DrawingWriteTools
     [McpServerTool(Name = "tekla_export_drawings_pdf")]
     [Description("Export matched CLOSED drawings to PDF using Tekla printing. outputFile must be " +
                  "an explicit absolute path; for multiple drawings use {mark}/{name} so paths are unique. " +
-                 "Preview unless apply=true.")]
+                 "Preview unless apply=true. WARNING: unlike the file-exchange tools, outputFile is NOT " +
+                 "restricted to TEKLA_MCP_FILE_ROOT — Tekla writes wherever the path points, including " +
+                 "network shares, and overwrite=true replaces ANY existing file there, whatever its type. " +
+                 "Use a folder the user named, show the resolved outputFiles from the preview, and set " +
+                 "overwrite=true only after the user confirmed those exact files may be replaced.")]
     public static DrawingWriteResult ExportDrawingsPdf(
         ITeklaModelService model,
         [Description("Exact opaque keys, comma/semicolon separated.")] string? keyIn = null,
@@ -238,7 +242,8 @@ public static class DrawingWriteTools
         [Description("Auto or Scale.")] string scalingMethod = "Auto",
         [Description("Scale factor when scalingMethod=Scale.")] double scaleFactor = 1.0,
         [Description("Open the generated file after export.")] bool openFileWhenFinished = false,
-        [Description("Allow replacing an existing output file. Default false.")] bool overwrite = false,
+        [Description("Allow replacing an existing output file of ANY type at outputFile. Default false; " +
+                     "only with the user's explicit consent to replace those files.")] bool overwrite = false,
         [Description("Safety cap (default 50).")] int limit = 50,
         [Description("Set true to export; false returns preview only.")] bool apply = false,
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)

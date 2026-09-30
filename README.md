@@ -179,6 +179,13 @@ access at all. The only other tool that writes a file an agent names is `tekla_e
 it prints through Tekla to an explicit absolute `outputFile`, preview-by-default and never
 overwriting unless `overwrite=true` — that path is not checked against this allow-list.
 
+> ⚠️ **PDF export writes wherever you let it.** `tekla_export_drawings_pdf` can write to any folder
+> your Windows account can write to, network shares included, and with `overwrite=true` it replaces
+> an existing file there whatever its type. This is by design: where drawings are printed is the
+> user's decision, and the server does not second-guess it. Check the `outputFiles` in the preview
+> before approving `apply=true`, and never approve `overwrite=true` for files you have not looked
+> at. The tool description asks agents to do the same.
+
 **Timeouts.** MCP clients abort a request after ~60 s and the reply is lost even when the server
 finished, so pass `maxObjects` (~30 000 is a safe page with `solidAabb`) and, while `truncated` is
 true, repeat with `cursor=nextCursor` and `append=true`. Every call also mirrors its counters into

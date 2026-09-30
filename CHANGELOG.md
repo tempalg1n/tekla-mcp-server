@@ -290,6 +290,11 @@ A field-report release: every group below answers a problem observed on a live m
   that folder was found, and the running TeklaStructures processes (PID + start time). A server
   started before the Tekla it should talk to, or built for another Tekla year, is visible at a
   glance — field reports could not tell a stale `tekla_2021` process from a fresh `tekla_2023`.
+- **`tekla_export_drawings_pdf` warns that its `outputFile` is not restricted.** Unlike the
+  file-exchange tools it can write to any folder the user's account can reach, and
+  `overwrite=true` replaces any existing file there. This stays by design — the output location is
+  the user's decision — but the tool description now tells agents to show the resolved
+  `outputFiles` and set `overwrite=true` only with explicit consent, and both READMEs warn users.
 
 ### Fixed
 

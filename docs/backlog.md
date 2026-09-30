@@ -16,6 +16,7 @@ their findings stay here because the open remainder builds on them.
 | 6 | Smaller follow-ups | Shipped. **Open:** why orphaned servers lived |
 | 7 | Found after the first write-up | Fixes shipped. **Open:** AutoFetch snapshot cost, `GetAllObjectsWithType(Type[])` timing, partial version-mismatch recovery |
 | 8 | `tekla_analyze_by_material` is an unpaged whole-model scan | **Open** (found in the v0.8.0 release review) |
+| 9 | `tekla_export_drawings_pdf` writes outside the file allow-list | **By design** (user's responsibility, warned); opt-in restriction possible later |
 
 The per-API verification ledger and the full list of live runs still pending are in
 [docs/tekla-api-notes.md](tekla-api-notes.md) ("Live validation still pending").
@@ -282,3 +283,21 @@ the usual `partsOnly` / `maxObjects` / `cursor` / `truncated` + `nextCursor`, ke
 shape, or deprecate it in favour of `tekla_group_weight_by` (description first, removal in a
 later minor with a CHANGELOG note — tool removals break clients that hard-code schemas). Both
 backends already implement `AggregateBy`, so either option is tool-layer only.
+
+### 9. `tekla_export_drawings_pdf` writes outside the file allow-list
+
+The three file-exchange tools send every path through `FilePathPolicy` (allow-listed roots from
+`TEKLA_MCP_FILE_ROOT`, data extensions only, no UNC/device paths). The PDF export does not:
+`TeklaDrawingService` checks only that `outputFile` is absolute, that the resolved names are
+unique, and that an existing file is kept unless `overwrite=true`; then `PrintDrawing` writes
+there. So with `apply=true` + `overwrite=true` an agent can replace any file the user's account
+can write — a `.docx` included — or write to a network share. `{mark}`/`{name}` are safe
+(`SafeFileToken` replaces path separators).
+
+**Decision (2026-09-30):** keep it unrestricted — where drawings are printed is the user's call.
+Mitigated by preview-by-default, `overwrite=false` by default, a warning in the tool description
+(show the resolved `outputFiles`, `overwrite=true` only with explicit consent) and in both READMEs.
+
+**If it ever needs tightening:** an opt-in variable (e.g. `TEKLA_MCP_PDF_ROOT`) that routes the
+resolved paths through `FilePathPolicy` with `.pdf` allowed, and/or refusing `overwrite=true` for
+an existing file whose extension is not `.pdf`. Both are tool/backend-local; no interface change.
