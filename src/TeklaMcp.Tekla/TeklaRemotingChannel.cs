@@ -167,6 +167,16 @@ public static class TeklaRemotingChannel
         !RemotingChannelNames.NamesItsOwnChannels(TeklaAssemblyResolver.CompiledVersion?.Major);
 
     /// <summary>
+    /// Appended to the 2024+ connection messages. The maintainers have no 2024+ install: everything
+    /// connection-related there (Trimble.Remoting, backlog §3) comes from decompiled assemblies, so
+    /// field reports from users of those versions are the only way it gets verified and extended.
+    /// </summary>
+    private const string UntestedVersionNote =
+        " Tekla 2024+ is not tested by the maintainers (no install available): please tell the user that a report " +
+        "is very welcome — tekla_report_gap drafts a GitHub issue with what happened; include the " +
+        "tekla_get_connection_info output.";
+
+    /// <summary>
     /// Backlog §1: replaces the Open API clients of this process with fresh ones on the SAME channel
     /// names, after Tekla was restarted (a stale client: <c>GetConnectionStatus()</c> still true, every
     /// call a <c>RemotingException</c>) or when a client was created while Tekla was down (2021: a null
@@ -188,7 +198,7 @@ public static class TeklaRemotingChannel
             if (!SupportsReconnect)
             {
                 message = "Reconnecting inside the server is implemented for Tekla 2021–2023 only; restart this " +
-                          "MCP server (reconnect it in the MCP client).";
+                          "MCP server (reconnect it in the MCP client)." + UntestedVersionNote;
                 return false;
             }
 
@@ -478,7 +488,7 @@ public static class TeklaRemotingChannel
                   "its outcome is unknown — read the targets back before repeating it."
                 : "The server was connected earlier, but the Tekla process behind that connection is gone " +
                   "(Tekla was restarted or closed). Reconnecting inside the server is implemented for Tekla " +
-                  "2021–2023 only: restart this MCP server (reconnect it in the MCP client).";
+                  "2021–2023 only: restart this MCP server (reconnect it in the MCP client)." + UntestedVersionNote;
         }
         else
         {

@@ -488,6 +488,22 @@ and are now handled by the tools and documented under
   started before the Tekla it should talk to, or built for another Tekla year, is visible at a
   glance — field reports could not tell a stale `tekla_2021` process from a fresh `tekla_2023`.
 
+### Known limitations
+
+- **Tekla 2024, 2025 and 2026 are built but untested — testers and issue reports wanted.** The
+  maintainers have no 2024+ install. Those versions use Trimble.Remoting instead of named pipes,
+  so the connection guard and the reconnect after a Tekla restart are not active there (a lost
+  connection still needs a server restart), and the channel handling is based on decompiled
+  assemblies only. If you run 2024+, please [open an issue](https://github.com/tempalg1n/tekla-mcp-server/issues)
+  with the `tekla_get_connection_info` output and the server's stderr — `tekla_report_gap`
+  drafts one.
+- Verified on live Tekla only where the entries above say so. Still to be run live with this
+  release: the reconnect on Tekla 2021, the `unknown` write outcome, `tekla_get_part_solid`,
+  `tekla_save_model` / `tekla_open_model`, `tekla_create_component` with a real plugin, and UDA
+  definitions with `details=true` (see [docs/backlog.md](docs/backlog.md)).
+- Choosing between several running Tekla instances of one version is not implemented yet: the
+  server binds to one and never switches to another by itself.
+
 ## [0.7.0] - 2026-07-23
 
 First-class tools for the three biggest gaps observed in a real end-to-end modeling session:

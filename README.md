@@ -429,6 +429,8 @@ Releases ship **one zip per Tekla version** — pick the one matching *your* Tek
 > **Starting the MCP client before Tekla is fine** (Tekla 2021–2023): until Tekla publishes its channel, tools answer "not reachable … nothing was sent to Tekla" and work as soon as the model is open — no server restart. **Restarting Tekla is fine too** (2021–2023): the next tool call notices the dead connection and reconnects on the same channel (`tekla_get_connection_info` shows `lastReconnect`). Only a Tekla that comes back under another Windows session or instance name (e.g. a second instance) needs a server restart, and so does Tekla 2024+ for now.
 >
 > **The server exits with its MCP client** — when the process that launched it is gone, or when a shutdown hangs for 10 s. If your launcher exits while keeping the server's stdio open, set `TEKLA_MCP_EXIT_WITH_PARENT=0`.
+>
+> **Tekla 2024–2026 users: testing and issues are very welcome.** The 2024+ zips are built and compiled against the official Open API packages, but the maintainers have no 2024+ install to run them on. Those versions talk to the server over a different transport (Trimble.Remoting instead of named pipes), so the connection guard and the automatic reconnect are not active there yet, and everything connection-related is untested. If you work with 2024, 2025 or 2026, please [open an issue](https://github.com/tempalg1n/tekla-mcp-server/issues) with what worked and what did not — the `tekla_get_connection_info` output and the server's stderr log help most. Agents can draft the report for you with `tekla_report_gap`.
 
 See [docs/releasing.md](docs/releasing.md) for how maintainers publish releases.
 
@@ -527,10 +529,13 @@ Example for Claude Desktop, Claude Code, or Cursor (`mcpServers`):
 - [ ] Broader object coverage: bolts, assemblies, rebar, geometry
 - [x] Automated tests for Core and Mock layers
 - [x] Per-version build matrix for Tekla 2021–2026
-- [ ] Reconnect after a Tekla restart without restarting the MCP client, and explicit Tekla
-  instance selection — analysed, deferred; see [docs/backlog.md](docs/backlog.md)
-- [ ] Explicit write outcomes and read tools for component development (advanced options,
-  catalogs, plugin components) — see [docs/backlog.md](docs/backlog.md)
+- [x] Reconnect after a Tekla restart without restarting the MCP client (Tekla 2021–2023)
+- [x] Explicit write outcomes (`outcome`, `target`, `expectedModelPath`) and read tools for
+  component development (advanced options, catalogs, part solids, plugin components, model
+  save/open, self-generating API reference)
+- [ ] Explicit Tekla instance selection — analysed, deferred; see [docs/backlog.md](docs/backlog.md)
+- [ ] Connection guard and reconnect for Tekla 2024+ (Trimble.Remoting) — **needs testers with a
+  2024+ install**; see [docs/backlog.md](docs/backlog.md)
 
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

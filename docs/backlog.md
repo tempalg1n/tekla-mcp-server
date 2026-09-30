@@ -114,6 +114,12 @@ therefore sees nothing on these versions; `Align()` no longer touches 2024+ buil
 `RemotingProxyHelper.DisposeService()` look like the recreate path; the behaviour of a stale
 proxy after a restart is unknown — test on a live 2024+ before claiming support.
 
+**Needs testers.** The maintainers have no 2024+ install, so this waits for field reports: README,
+the 0.8.0 known limitations and the server's own 2024+ connection messages ask users of those
+versions for issues (`tekla_report_gap` drafts one). What to ask a reporter for: the
+`tekla_get_connection_info` output with Tekla running and after a Tekla restart, the server's
+stderr, and whether `EventWaitHandle.TryOpenExisting("<model channel>$S")` sees the channel.
+
 ### 4. Write outcomes
 
 Done 2026-09-30 (see CHANGELOG and AGENTS.md "Outcome + target"). Differences from the plan:
