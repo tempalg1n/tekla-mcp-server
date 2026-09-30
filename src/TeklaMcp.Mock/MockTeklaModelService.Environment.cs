@@ -51,6 +51,50 @@ public sealed partial class MockTeklaModelService
         return result;
     }
 
+    /// <summary>
+    /// The mock has no Tekla install; with TEKLA_MCP_SCRIPT_REF_DIR (the folder that also enables
+    /// script compilation) the reference is generated from the Tekla DLLs found there.
+    /// </summary>
+    public ApiReferenceSource? GetApiReferenceSource()
+    {
+        try
+        {
+            var dir = Environment.GetEnvironmentVariable("TEKLA_MCP_SCRIPT_REF_DIR");
+            if (string.IsNullOrWhiteSpace(dir) || !System.IO.Directory.Exists(dir)) return null;
+            var paths = TeklaMcp.Scripting.ApiReference.CoreAssemblyNames
+                .Select(name => System.IO.Path.Combine(dir, name + ".dll"))
+                .Where(System.IO.File.Exists)
+                .ToList();
+            if (paths.Count == 0) return null;
+            var modelDll = System.IO.Path.Combine(dir, "Tekla.Structures.Model.dll");
+            var version = System.IO.File.Exists(modelDll)
+                ? System.Diagnostics.FileVersionInfo.GetVersionInfo(modelDll).FileVersion ?? "unknown"
+                : "unknown";
+            return new ApiReferenceSource
+            {
+                // The folder is part of the key: two folders may hold different builds of one version.
+                VersionKey = "files-" + version + "-" + StableHash(System.IO.Path.GetFullPath(dir).ToLowerInvariant()),
+                AssemblyPaths = paths,
+                XmlDirectories = { dir },
+                Description = "the Tekla DLLs in " + dir,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string StableHash(string text)
+    {
+        unchecked
+        {
+            var hash = 2166136261u; // FNV-1a
+            foreach (var c in text) hash = (hash ^ c) * 16777619u;
+            return hash.ToString("x8", CultureInfo.InvariantCulture);
+        }
+    }
+
     private sealed class MockCatalogItem
     {
         public string Name = "";

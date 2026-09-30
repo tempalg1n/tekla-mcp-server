@@ -512,10 +512,17 @@ dedicated tool exists. Rules for maintaining it:
   drops data must bump a counter in `SafeJsonReport`, which surfaces as
   `ScriptResult.ReturnValueTruncated` / `ReturnValueTruncation`. If you add a cap, report it
   there and test it in `SafeJsonTests`; never rely on an in-band marker alone.
-- **`tekla_search_api`/`tekla_get_api_doc`** read the `tools/TeklaApiDoc` output (git-ignored) found
-  via `TEKLA_MCP_API_REF_DIR` or by probing for `reference/tekla-api`.
-  `tekla_get_api_reference_status` exposes availability/setup explicitly. They must degrade to
-  a "how to generate" hint, never an error.
+- **`tekla_search_api`/`tekla_get_api_doc`** read a Markdown reference produced by
+  `ApiReferenceGenerator` (Scripting; `tools/TeklaApiDoc` is only a CLI over it). Lookup order in
+  `ApiReference.Resolve`: `TEKLA_MCP_API_REF_DIR` → the cache for the backend's
+  `GetApiReferenceSource()` (exact Tekla build, `%LOCALAPPDATA%\TeklaMcp\api-reference\<key>-r<FormatVersion>`)
+  → generate it in the background (metadata-only `MetadataLoadContext`, temp folder + rename, a
+  call waits ≤ 40 s, or not at all when a repository copy can be served meanwhile) → the repository
+  `reference/tekla-api`. A failed generation is reported, not retried per call. Bump
+  `ApiReferenceGenerator.FormatVersion` when the output changes. `GetApiReferenceSource()` must
+  never touch Tekla types or remoting (it reads files only), and `CoreAssemblyNames` stays short —
+  generation has to fit the ~60 s client budget. The generated reference stays on the machine: it
+  is Trimble content. They must degrade to a "how to generate" hint, never an error.
 - **A recurring script is a roadmap signal**: promote it to a first-class tool (interface + both
   backends + dedicated tool) and keep `tekla_report_gap` pointing that way.
 

@@ -4,6 +4,12 @@ A small cross-platform utility that emits a **grep-friendly Markdown reference**
 Open API (signatures + XML-doc summaries) so contributors and AI agents can verify API calls
 offline instead of clicking through the web docs page by page.
 
+> **The server does this by itself now.** The generator lives in `TeklaMcp.Scripting`
+> (`ApiReferenceGenerator`); the live server runs it on first use against the installed Tekla and
+> caches the result per Tekla build under `%LOCALAPPDATA%\TeklaMcp\api-reference`. This CLI is a
+> thin wrapper over the same code — use it for a repository copy (`reference/tekla-api`) or to
+> prepare a folder for `TEKLA_MCP_API_REF_DIR`.
+
 It reads assemblies **metadata-only** via `System.Reflection.MetadataLoadContext`, so it runs on
 any OS and can read the `net40`/`net48` Tekla DLLs from this `net8.0` tool (no Tekla install or
 Windows required).

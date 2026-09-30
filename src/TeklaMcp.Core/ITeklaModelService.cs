@@ -51,6 +51,12 @@ public interface ITeklaModelService
     CatalogListResult ListCatalog(CatalogQuery query);
 
     /// <summary>
+    /// The Tekla Open API assemblies (and XML docs) on this machine that the offline API reference
+    /// can be generated from — without connecting to Tekla. Null when there are none. Never throws.
+    /// </summary>
+    ApiReferenceSource? GetApiReferenceSource();
+
+    /// <summary>
     /// Save the open model (ModelHandler.Save) with <paramref name="comment"/>. Preview unless
     /// <paramref name="apply"/>; the preview reports whether there are unsaved changes.
     /// </summary>

@@ -169,6 +169,15 @@ and are now handled by the tools and documented under
   running Tekla resolves them for the open model, optionally split into paths by Tekla's own
   rules. Requested through `tekla_report_gap` during component development (DEV-005), which had
   to script it.
+- **The offline API reference builds itself.** `tekla_search_api` / `tekla_get_api_doc` /
+  `tekla_get_api_reference_status` used to need a manually generated folder, which release
+  installs never had. The server now generates it on first use from the installed Tekla's Open
+  API assemblies and the XML docs Tekla ships next to them — metadata-only, in the background
+  (~7 s for 1 740 types on Tekla 2021, verified), cached per Tekla build under
+  `%LOCALAPPDATA%\TeklaMcp\api-reference`, published atomically. A repository copy is served
+  meanwhile; the status reports `origin` and `generating`. Nothing from Trimble is bundled. The
+  generator moved from `tools/TeklaApiDoc` into `TeklaMcp.Scripting` (the CLI stays, as a thin
+  wrapper); on Tekla 2021 it also resolves dependencies from `nt\bin`, next to `nt\bin\plugins`.
 - **`tekla_create_component`** — the write primitive component development was missing next to
   `tekla_create_connection`: a plugin, custom or system component with an ORDERED input list
   (objects, single points, point pairs, polygons — the order the component expects), a saved

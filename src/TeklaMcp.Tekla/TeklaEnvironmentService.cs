@@ -84,6 +84,41 @@ public sealed partial class TeklaModelService
         option.ValueType = type;
     }
 
+    /// <summary>
+    /// The installed Tekla's own Open API assemblies (the resolver's folder — 2021: nt\bin\plugins,
+    /// 2023+: bin), where Tekla also installs the XML docs. No Tekla type is touched and no remoting
+    /// happens: the generator reads metadata from the files.
+    /// </summary>
+    public ApiReferenceSource? GetApiReferenceSource()
+    {
+        try
+        {
+            var bin = TeklaAssemblyResolver.BinDir;
+            if (string.IsNullOrWhiteSpace(bin) || !System.IO.Directory.Exists(bin)) return null;
+            var paths = Scripting.ApiReference.CoreAssemblyNames
+                .Select(name => System.IO.Path.Combine(bin, name + ".dll"))
+                .Where(System.IO.File.Exists)
+                .ToList();
+            var modelDll = System.IO.Path.Combine(bin, "Tekla.Structures.Model.dll");
+            if (!paths.Contains(modelDll)) return null;
+            var version = System.Diagnostics.FileVersionInfo.GetVersionInfo(modelDll).FileVersion;
+            if (string.IsNullOrWhiteSpace(version)) version = TeklaAssemblyResolver.CompiledVersion?.ToString() ?? "unknown";
+            return new ApiReferenceSource
+            {
+                VersionKey = "tekla-" + version,
+                AssemblyPaths = paths,
+                XmlDirectories = { bin! },
+                // 2021: some dependencies of nt/bin/plugins live in nt/bin.
+                DependencyDirectories = { System.IO.Path.GetDirectoryName(bin!.TrimEnd('\\', '/')) ?? bin! },
+                Description = "the Tekla " + version + " Open API in " + bin,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public CatalogListResult ListCatalog(CatalogQuery query)
     {
         query ??= new CatalogQuery();
@@ -227,7 +262,7 @@ public sealed partial class TeklaModelService
         {
             info.SubType = item.FieldType.ToString();
             info.Properties["label"] = item.GetLabel() ?? "";
-            info.Properties["level"] = item.Level.ToString(CultureInfo.InvariantCulture);
+            info.Properties["level"] = item.Level.ToString();
             info.Properties["affectsNumbering"] = item.AffectsNumbering ? "true" : "false";
             info.Properties["unique"] = item.Unique ? "true" : "false";
             var objectTypes = new List<TSC.CatalogObjectTypeEnum>();

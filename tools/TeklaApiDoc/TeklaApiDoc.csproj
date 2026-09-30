@@ -3,7 +3,8 @@
   <!--
     Cross-platform Tekla Open API reference generator.
 
-    Reflects (metadata-only, via System.Reflection.MetadataLoadContext) over the
+    CLI over TeklaMcp.Scripting.ApiReferenceGenerator. Reflects (metadata-only, via
+    System.Reflection.MetadataLoadContext) over the
     Tekla.Structures.* assemblies — works on any OS, even reading net48 DLLs from a
     net8 process — and emits Markdown signature docs + an INDEX for grep-based navigation.
 
@@ -20,7 +21,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="8.0.0" />
+    <!-- The generator lives in TeklaMcp.Scripting, shared with the server (which builds the same
+         reference by itself on first use). -->
+    <ProjectReference Include="..\..\src\TeklaMcp.Scripting\TeklaMcp.Scripting.csproj" />
   </ItemGroup>
 
 </Project>

@@ -136,9 +136,11 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
   whether Tekla dialogs (locked model, upgrade) block `Open()`.
 - ~~Part solids~~ — done 2026-09-30: `tekla_get_part_solid` (compiled 2021–2026, not yet live;
   check loop winding and whether `OriginPartId` names cutting parts as documented).
-- API reference without manual generation: reflect over the loaded Tekla assemblies plus the XML
-  docs Tekla installs next to them (present in 2021 `nt\bin\plugins` and 2023 `bin`), cached per
-  version — nothing from Trimble is redistributed.
+- ~~API reference without manual generation~~ — done 2026-09-30: metadata-only generation from the
+  installed Tekla, cached per build (verified in a net48 server against Tekla 2021: 1 740 types,
+  ~7 s, dependencies resolved from `nt\bin` too). Not yet seen on 2024+ installs.
+
+All of §5 is in `release/0.8.0`; what remains is the live run of each tool listed above.
 
 ### 6. Smaller follow-ups
 

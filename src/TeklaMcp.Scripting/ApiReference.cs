@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Scripting;
@@ -18,27 +20,49 @@ public static class ApiReference
     /// <summary>Env var pointing at the generated reference folder (overrides probing).</summary>
     public const string DirEnvVar = "TEKLA_MCP_API_REF_DIR";
 
+    /// <summary>
+    /// The Open API assemblies documented when the server generates the reference itself — the
+    /// ones scripts actually use. Kept short on purpose: generation must fit well inside the MCP
+    /// client's ~60 s request budget (these four took 6 s on a Tekla 2023 install).
+    /// </summary>
+    public static readonly IReadOnlyList<string> CoreAssemblyNames = new[]
+    {
+        "Tekla.Structures", "Tekla.Structures.Model", "Tekla.Structures.Drawing", "Tekla.Structures.Catalogs",
+        "Tekla.Structures.Datatype", "Tekla.Structures.Dialog", "Tekla.Structures.Plugins",
+    };
+
+    /// <summary>How long a tool call waits for a first-time generation before answering "retry".</summary>
+    public static TimeSpan GenerationWait { get; set; } = TimeSpan.FromSeconds(40);
+
     private const string HowToGenerate =
-        "The local API reference is not available. From a source checkout, generate Model + " +
-        "Drawing docs with tools/TeklaApiDoc (see tools/TeklaApiDoc/README.md) into " +
-        "reference/tekla-api. For a release install, generate/download that folder separately " +
-        "and set " + DirEnvVar + " to it. Without it, tekla_check_csharp still reports compiler errors.";
+        "The local API reference is not available: no Tekla Open API assemblies were found to generate it " +
+        "from. With the live backend it is generated automatically from the installed Tekla (on first use, " +
+        "cached per version). On the mock backend set TEKLA_MCP_SCRIPT_REF_DIR to a folder with " +
+        "Tekla.Structures*.dll, or point " + DirEnvVar + " at a folder generated with tools/TeklaApiDoc. " +
+        "Without it, tekla_check_csharp still reports compiler errors.";
 
     private const int MaxLinesPerType = 8;
 
-    public static ApiReferenceStatus GetStatus()
+    private static readonly object GenerationGate = new object();
+    private static readonly Dictionary<string, Task<string>> Generations = new Dictionary<string, Task<string>>(StringComparer.OrdinalIgnoreCase);
+
+    public static ApiReferenceStatus GetStatus(ApiReferenceSource? source = null)
     {
-        var dir = FindDirectory();
+        var dir = Resolve(source, out var origin, out var pending);
         var result = new ApiReferenceStatus
         {
             Available = dir != null,
             Directory = dir ?? "",
+            Origin = origin,
+            Generating = pending != null && !pending.StartsWith("Generating the API reference failed", StringComparison.Ordinal),
+            Source = source?.Description,
         };
         if (dir == null)
         {
-            result.Guidance = HowToGenerate;
+            result.Guidance = pending ?? HowToGenerate;
             return result;
         }
+        if (pending != null) result.Warnings.Add(pending);
 
         try
         {
@@ -70,13 +94,26 @@ public static class ApiReference
         return result;
     }
 
-    /// <summary>Locate the reference folder: env var first, then walking up from the app/current dir.</summary>
-    public static string? FindDirectory()
+    /// <summary>
+    /// Locate an existing reference folder without generating anything: the env var, the cached
+    /// reference for <paramref name="source"/>'s exact Tekla build, then reference/tekla-api next
+    /// to the server or the current directory (a source checkout).
+    /// </summary>
+    public static string? FindDirectory(ApiReferenceSource? source = null) =>
+        FindDirectory(source, out _);
+
+    private static string? FindDirectory(ApiReferenceSource? source, out string origin)
     {
+        origin = "configured";
         var env = Environment.GetEnvironmentVariable(DirEnvVar);
         if (!string.IsNullOrWhiteSpace(env) && HasMarkdownFiles(env))
             return env;
 
+        origin = "generated";
+        if (source != null && HasMarkdownFiles(CacheDirFor(source)))
+            return CacheDirFor(source);
+
+        origin = "repository";
         foreach (var start in new[] { AppContext.BaseDirectory, SafeCurrentDirectory() })
         {
             var dir = start;
@@ -88,17 +125,111 @@ public static class ApiReference
                 dir = Path.GetDirectoryName(dir);
             }
         }
+        origin = "";
         return null;
     }
 
-    public static ApiSearchResult Search(string query, int limit = 10)
+    /// <summary>
+    /// The folder to search, generating the reference for <paramref name="source"/> first when
+    /// there is no configured folder and no cache for this exact Tekla build yet (the generated one
+    /// beats a repository copy of possibly another version). Generation runs in the background: a
+    /// call waits up to <see cref="GenerationWait"/>, then falls back to the repository copy, or
+    /// answers with <paramref name="pending"/> ("retry shortly").
+    /// </summary>
+    private static string? Resolve(ApiReferenceSource? source, out string origin, out string? pending)
+    {
+        pending = null;
+        var existing = FindDirectory(source, out origin);
+        if (existing != null && origin != "repository") return existing;
+        if (source == null || source.AssemblyPaths.Count == 0) return existing;
+
+        var task = StartGeneration(source);
+        try
+        {
+            // With a repository copy to fall back on, never make the caller wait.
+            if (task.Wait(existing != null ? TimeSpan.Zero : GenerationWait))
+            {
+                origin = "generated";
+                return task.Result;
+            }
+            pending = "The API reference for " + source.VersionKey + " is being generated from " + source.Description +
+                      " (first use of this Tekla build; usually 10–30 s). Call again shortly.";
+        }
+        catch (AggregateException ex)
+        {
+            pending = "Generating the API reference failed: " + ErrorText.Flatten(ex.InnerException ?? ex);
+        }
+        return existing; // a repository copy, if any, until the generated one is ready
+    }
+
+    private static Task<string> StartGeneration(ApiReferenceSource source)
+    {
+        lock (GenerationGate)
+        {
+            // A failed generation is not retried for the life of the process: every call would pay
+            // for it again. Its error is reported instead; a server restart retries.
+            if (Generations.TryGetValue(source.VersionKey, out var running))
+                return running;
+            var task = Task.Run(() => GenerateInto(source));
+            Generations[source.VersionKey] = task;
+            return task;
+        }
+    }
+
+    /// <summary>Generate into a temp folder, then rename: a half-written reference is never served.</summary>
+    private static string GenerateInto(ApiReferenceSource source)
+    {
+        var final = CacheDirFor(source);
+        if (HasMarkdownFiles(final)) return final;
+        var temp = final + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            var count = ApiReferenceGenerator.Generate(
+                source.AssemblyPaths, source.XmlDirectories, temp,
+                log: message => Console.Error.WriteLine("[api-reference] " + message),
+                dependencyDirectories: source.DependencyDirectories);
+            if (count == 0)
+                throw new InvalidOperationException(
+                    "No Tekla.Structures types could be read from " + source.Description + " — the files are " +
+                    "not Tekla Open API assemblies, or their dependencies are missing.");
+            File.WriteAllText(Path.Combine(temp, "SOURCE.txt"),
+                source.Description + Environment.NewLine + string.Join(Environment.NewLine, source.AssemblyPaths) +
+                Environment.NewLine + count + " types, generated " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            Directory.CreateDirectory(Path.GetDirectoryName(final)!);
+            try
+            {
+                Directory.Move(temp, final);
+            }
+            catch (IOException) when (HasMarkdownFiles(final))
+            {
+                // Another server process finished first — use its copy.
+            }
+            Console.Error.WriteLine($"[api-reference] generated {count} types for {source.VersionKey} -> {final}");
+            return final;
+        }
+        finally
+        {
+            try { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    private static string CacheDirFor(ApiReferenceSource source)
+    {
+        var root = !string.IsNullOrWhiteSpace(source.CacheRoot)
+            ? source.CacheRoot!
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TeklaMcp", "api-reference");
+        var key = new string((source.VersionKey ?? "").Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray());
+        return Path.Combine(root, (key.Length == 0 ? "unknown" : key) + "-r" + ApiReferenceGenerator.FormatVersion);
+    }
+
+    public static ApiSearchResult Search(string query, int limit = 10, ApiReferenceSource? source = null)
     {
         var result = new ApiSearchResult { Query = query ?? "" };
 
-        var dir = FindDirectory();
+        var dir = Resolve(source, out _, out var pending);
         if (dir == null)
         {
-            result.Guidance = HowToGenerate;
+            result.Guidance = pending ?? HowToGenerate;
             return result;
         }
 
@@ -159,14 +290,14 @@ public static class ApiReference
         return result;
     }
 
-    public static ApiTypeDoc GetTypeDoc(string typeName, int maxChars = 24_000)
+    public static ApiTypeDoc GetTypeDoc(string typeName, int maxChars = 24_000, ApiReferenceSource? source = null)
     {
         var result = new ApiTypeDoc { TypeName = typeName ?? "" };
 
-        var dir = FindDirectory();
+        var dir = Resolve(source, out _, out var pending);
         if (dir == null)
         {
-            result.Guidance = HowToGenerate;
+            result.Guidance = pending ?? HowToGenerate;
             return result;
         }
 

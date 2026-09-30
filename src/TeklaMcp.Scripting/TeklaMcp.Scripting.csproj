@@ -20,6 +20,9 @@
     <!-- Roslyn scripting. 4.9.x is the well-tested line that still targets netstandard2.0
          (5.x drops it), so the same package serves the net8.0 and net48 builds. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.9.2" />
+    <!-- Metadata-only reflection for the generated API reference (ApiReferenceGenerator). 8.0.0
+         matches the System.Reflection.Metadata / Collections.Immutable 8.0.0 Roslyn already uses. -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

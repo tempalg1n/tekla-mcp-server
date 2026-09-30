@@ -157,11 +157,13 @@ public static class ModelScriptTools
         "ALWAYS verify signatures here before writing a tekla_run_csharp script — do not guess API members. " +
         "Good queries are 1-3 short tokens: 'Beam StartPoint', 'GetReportProperty', 'ModelObjectSelector'. " +
         "Follow up with tekla_get_api_doc to read a matched type's full page. " +
-        "Works offline from the generated reference folder; if it is missing, the result says how to generate it.")]
+        "Works offline: the reference is generated from the installed Tekla on first use (cached per Tekla " +
+        "build); if that is still running, the result says to call again shortly.")]
     public static ApiSearchResult SearchApi(
+        ITeklaModelService model,
         [Description("Search keywords (type and/or member name fragments), e.g. 'Beam profile'.")] string query,
         [Description("Max matching types to return (default 10, max 50).")] int limit = 10)
-        => ApiReference.Search(query ?? "", limit);
+        => ApiReference.Search(query ?? "", limit, model.GetApiReferenceSource());
 
     [McpServerTool(Name = "tekla_get_api_doc")]
     [Description(
@@ -169,13 +171,17 @@ public static class ModelScriptTools
         "signature with summaries (Markdown). Accepts a short name ('Beam') or a full name " +
         "('Tekla.Structures.Model.Beam'). Use after tekla_search_api to confirm exact signatures before scripting.")]
     public static ApiTypeDoc GetApiDoc(
+        ITeklaModelService model,
         [Description("Type name, short or fully qualified.")] string typeName,
         [Description("Truncate the page to this many characters (default 24000).")] int maxChars = 24_000)
-        => ApiReference.GetTypeDoc(typeName ?? "", maxChars);
+        => ApiReference.GetTypeDoc(typeName ?? "", maxChars, model.GetApiReferenceSource());
 
     [McpServerTool(Name = "tekla_get_api_reference_status")]
     [Description("Check whether the offline Tekla Open API reference is available and return its " +
-                 "resolved directory or exact setup guidance. Call this before a scripting session.")]
-    public static ApiReferenceStatus GetApiReferenceStatus()
-        => ApiReference.GetStatus();
+                 "resolved directory, origin (generated from the installed Tekla / configured / repository) " +
+                 "or exact setup guidance. Call this before a scripting session — on the first call for a " +
+                 "Tekla build it also starts generating the reference in the background (generating=true: " +
+                 "call again shortly).")]
+    public static ApiReferenceStatus GetApiReferenceStatus(ITeklaModelService model)
+        => ApiReference.GetStatus(model.GetApiReferenceSource());
 }
