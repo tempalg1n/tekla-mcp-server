@@ -348,6 +348,15 @@ public interface ITeklaModelService
     /// </summary>
     WriteResult ModifyConnections(IReadOnlyList<ConnectionModification> modifications, bool apply);
 
+    /// <summary>
+    /// Insert plugins / custom / system components with an ordered input list (objects, points,
+    /// point pairs, polygons) and attributes. Preview unless <paramref name="apply"/>. After the
+    /// commit every created component is read back with its children (<see
+    /// cref="ComponentInfo.ChildCount"/>) — the only evidence that a plugin's Run did anything.
+    /// Specs must pass <see cref="ComponentSpecs.Validate"/>.
+    /// </summary>
+    WriteResult CreateComponents(IReadOnlyList<ComponentSpec> specs, bool apply);
+
     // -- Drawings ---------------------------------------------------------------------------
 
     /// <summary>Probe the Drawing API and return the currently active drawing, if any.</summary>

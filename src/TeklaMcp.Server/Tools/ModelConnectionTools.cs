@@ -295,4 +295,41 @@ public static class ModelConnectionTools
         try { return model.GetConnectionInfo().Backend ?? ""; }
         catch { return ""; }
     }
+
+    [McpServerTool(Name = "tekla_create_component")]
+    [Description("Insert a plugin, custom component or system component with an ORDERED input list — the " +
+                 "way to place what tekla_create_connection (primary + secondaries) cannot: plugins that take " +
+                 "points, point pairs, polygons and objects in a specific order. inputs items: " +
+                 "{type:'object', guid} | {type:'point', points:[p]} | {type:'two_points', points:[p1,p2]} | " +
+                 "{type:'polygon', points:[p1,p2,p3,…]}, GLOBAL mm, in the order the component's input " +
+                 "definition expects. attributesFile loads a saved attribute set first; attributes then " +
+                 "override single values ({name, value, type:'string'|'int'|'double'} — the type must match the " +
+                 "component's). Names come from tekla_list_catalog kind=components. Preview unless apply=true. " +
+                 "After apply every component is read back with its children: childCount=0 means the plugin's Run " +
+                 "created nothing (it is reported as an error) — Tekla does not expose why; check its log.")]
+    public static WriteResult CreateComponent(
+        ITeklaModelService model,
+        [Description("Plugin / custom component name (system components: may be empty).")] string name,
+        [Description("Ordered input items: object / point / two_points / polygon.")] IReadOnlyList<ComponentInputSpec> inputs,
+        [Description("plugin (default), custom, or system.")] string? kind = null,
+        [Description("kind=system only: the component number.")] int? number = null,
+        [Description("Saved attributes file to load first (as in the component dialog).")] string? attributesFile = null,
+        [Description("Attribute overrides: {name, value, type}.")] IReadOnlyList<ComponentAttributeSpec>? attributes = null,
+        [Description("Set true to insert. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+    {
+        var spec = new ComponentSpec
+        {
+            Name = name ?? "",
+            Kind = kind,
+            Number = number,
+            Inputs = (inputs ?? new List<ComponentInputSpec>()).ToList(),
+            AttributesFile = attributesFile,
+            Attributes = (attributes ?? new List<ComponentAttributeSpec>()).ToList(),
+        };
+        var errors = ComponentSpecs.Validate(spec);
+        if (errors.Count > 0)
+            throw new ModelContextProtocol.McpException("Invalid component spec: " + string.Join(" ", errors));
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateComponents(new[] { spec }, apply));
+    }
 }

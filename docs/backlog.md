@@ -128,11 +128,9 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
   `tekla_list_catalog` (profiles, parametric profiles, materials, components, UDA definitions).
   Compiled against all six NuGet versions; not yet run live (TODO(windows) in
   `TeklaEnvironmentService.cs`: whether UDA-definition items need `Select()` for details).
-- Plugin components with input objects and ordered points: `Component` +
-  `ComponentInput.AddInputObject` / `AddInputPolygon` / `AddOneInputPosition` /
-  `AddTwoInputPositions`, then read back children and attributes — one new primitive next to
-  `CreateConnections`. A plugin's `Run` itself is not observable through the Open API; verify
-  by readback.
+- ~~Plugin components with input objects and ordered points~~ — done 2026-09-30:
+  `tekla_create_component` / `CreateComponents`, read back with children. Not yet live: run a
+  real plugin (does Run happen inside `Insert()` or at `CommitChanges()`; attribute types).
 - ~~Save and open without the UI dialog~~ — done 2026-09-30: `tekla_save_model`,
   `tekla_open_model` (refuses on unsaved changes unless discarded explicitly). Not yet live:
   whether Tekla dialogs (locked model, upgrade) block `Open()`.

@@ -228,7 +228,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   during apply → `unknown`; `CommitDrawingChanges` returning false → `unknown`). The mock never
   fails half-way, so counters are exact there.
 - **Small service surface.** Keep backend write methods primitive and batch-oriented:
-  `CreateParts`, `ModifyParts`, `DeleteObjects`, and `CreateConnections`. **Generators, fixers
+  `CreateParts`, `ModifyParts`, `DeleteObjects`, `CreateConnections` and `CreateComponents`
+  (ordered `ComponentInput` for plugins; validated by `Core/ComponentSpecs` in the tool layer
+  AND the backends; read back with children, because a plugin's Run is not observable — zero
+  children is an error). **Generators, fixers
   and replication workflows** (`tekla_generate_frame`, `tekla_straighten_columns`,
   `tekla_fix_column_handles`, future `tekla_replicate_detail`, …) live in the TOOL layer and
   compose those primitives — do NOT add per-generator interface methods.

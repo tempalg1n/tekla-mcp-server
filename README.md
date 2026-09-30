@@ -191,6 +191,7 @@ tekla_set_udas_from_file apply=true  → write
 | `tekla_modify_part` | Edit properties/endpoints/Position, or copy Position from an exemplar. |
 | `tekla_modify_parts` | Batch form of the above — up to 200 parts in one call (whole-axis re-orientation). |
 | `tekla_create_connection` | Create a system/custom Connection (primary, secondaries, UpVector, attributes file); `replaceExisting` swaps an occupied pair. |
+| `tekla_create_component` | Insert a plugin / custom / system component with an ordered input list (objects, points, point pairs, polygons) and typed attributes. After apply each component is read back with its children — `childCount=0` (the plugin created nothing) is an error, not success. |
 | `tekla_copy_connection` | Copy a Connection's exact name/number/orientation to new parts; `replaceExisting` swaps the node type. |
 | `tekla_modify_connections` | Re-orient existing connections (UpVector / auto-direction / attributes file) in bulk, handling the AUTODIR_NA quirk. |
 | `tekla_swap_handles` | Swap start/end handles of matching parts. |
