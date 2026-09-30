@@ -195,6 +195,8 @@ tekla_set_udas_from_file apply=true  → write
 | `tekla_modify_connections` | Re-orient existing connections (UpVector / auto-direction / attributes file) in bulk, handling the AUTODIR_NA quirk. |
 | `tekla_swap_handles` | Swap start/end handles of matching parts. |
 | `tekla_delete_objects` | Delete objects by filter or GUID list. |
+| `tekla_save_model` | Save the open model with a save-history comment (preview says whether there are unsaved changes). |
+| `tekla_open_model` | Switch Tekla to another model folder. Tekla discards unsaved changes on open, so the call is refused while there are any unless `discardUnsavedChanges=true` (only after the user agreed). Reports the model actually open afterwards. |
 | `tekla_create_beam_between_grids` | Create a beam between two grid intersections at an elevation. |
 | `tekla_create_column_grid` | Create columns at every X×Y coordinate intersection. |
 | `tekla_generate_frame` | Generate a full bayed frame (columns + per-story beams). |

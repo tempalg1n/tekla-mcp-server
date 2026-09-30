@@ -181,6 +181,20 @@ internal static class ToolHelpers
         return result;
     }
 
+    /// <summary>Save/open: the target is the model open when the call starts (saved or closed).</summary>
+    public static ModelFileOperationResult Write(
+        ITeklaModelService model, string? expectedModelPath, Func<ModelFileOperationResult> write)
+    {
+        var target = ResolveTarget(model, expectedModelPath);
+        var result = write();
+        result.Target = target;
+        ThrowIfUnknown(result.Outcome, result.Operation, result);
+        if (result.Applied && result.Outcome == WriteOutcome.NotWritten)
+            throw new ModelContextProtocol.McpException(
+                "apply=true failed: nothing was done (operation '" + result.Operation + "'). " + result.Message);
+        return result;
+    }
+
     /// <summary>
     /// Escalates a TOTAL apply-failure into a protocol-level tool error (isError=true).
     /// Field feedback: apply=true answering with createdCount=0 + a populated errors[] as a

@@ -206,6 +206,7 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 |---|---|---|
 | Connection | `new TSM.Model()` + `GetConnectionStatus()` | Verified (Tekla 2023) |
 | Model info | `model.GetInfo()` → `ModelInfo.ModelName`, `ModelPath` | Verified |
+| Save / open model | `new ModelHandler()`: `IsModelSaved()`, `Save(comment, user)`, `IsModelAutoSaved(folder)`, `Open(folder, openAutoSaved)` — Open DISCARDS unsaved changes (API doc); outcome read back from `Model.GetInfo().ModelPath` | Compiles 2021–2026; TODO(windows) live: blocking dialogs |
 | Part solids | `Part.GetSolid(SolidCreationTypeEnum)` (all 7 values exist in 2021) → `MinimumPoint`/`MaximumPoint`, `GetFaceEnumerator()` → `Face.Normal`, `Face.OriginPartId`, `GetLoopEnumerator()` → `Loop.GetVertexEnumerator()`; all "in the current plane" → read inside `InGlobalWorkPlane` | Compiles 2021–2026; TODO(windows) live: loop order/winding |
 | Advanced options | `TeklaStructuresSettings.GetAdvancedOption(name, ref string/bool/int/double)`, `GetAdvancedOptionPaths(name, out List<string>, InvalidPathCallback)` | Compiles 2021–2026; TODO(windows) live |
 | Catalogs | `new CatalogHandler()` + `GetConnectionStatus()`; `GetLibraryProfileItems` / `GetParametricProfileItems` (`ProfileItemEnumerator.SelectInstances`), `GetMaterialItems`, `GetComponentItems`, `GetUserPropertyItems([CatalogObjectTypeEnum])`; `UserPropertyItem.GetLabel()` / `GetObjectTypes(ref List)` | Compiles 2021–2026; TODO(windows) live — own Catalogs channel, see `TeklaEnvironmentService.cs` |

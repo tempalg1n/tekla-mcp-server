@@ -80,8 +80,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
     public ConnectionInfo GetConnectionInfo() => new()
     {
         Connected = true,
-        ModelName = "MockModel",
-        ModelPath = "/virtual/mock/MockModel",
+        ModelName = _modelName,
+        ModelPath = _modelPath,
         TeklaVersion = "2026 (mock)",
         Backend = BackendName,
         Message = "Synthetic data — no Tekla involved.",
@@ -89,8 +89,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
 
     public WriteTarget GetWriteTarget() => new()
     {
-        ModelName = "MockModel",
-        ModelPath = "/virtual/mock/MockModel",
+        ModelName = _modelName,
+        ModelPath = _modelPath,
         Note = "Mock backend — no Tekla process.",
     };
 

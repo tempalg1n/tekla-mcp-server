@@ -51,6 +51,19 @@ public interface ITeklaModelService
     CatalogListResult ListCatalog(CatalogQuery query);
 
     /// <summary>
+    /// Save the open model (ModelHandler.Save) with <paramref name="comment"/>. Preview unless
+    /// <paramref name="apply"/>; the preview reports whether there are unsaved changes.
+    /// </summary>
+    ModelFileOperationResult SaveModel(string? comment, bool apply);
+
+    /// <summary>
+    /// Switch Tekla to the model in <paramref name="modelFolder"/> (ModelHandler.Open — which
+    /// DISCARDS unsaved changes of the current model). Preview unless <paramref name="apply"/>;
+    /// with unsaved changes the call is refused unless <paramref name="discardUnsavedChanges"/>.
+    /// </summary>
+    ModelFileOperationResult OpenModel(string modelFolder, bool openAutoSaved, bool discardUnsavedChanges, bool apply);
+
+    /// <summary>
     /// Aggregate statistics over every object in the model (counts by type/class/
     /// profile/material and total weight). Implementations must stream — never build an
     /// in-memory list of all objects. <paramref name="includeWeights"/> false skips the

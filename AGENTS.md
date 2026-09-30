@@ -213,6 +213,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   mismatch BEFORE the backend is called, stamps `Target`, derives a missing `Outcome` from the
   counters and turns `unknown` into `isError` with the full result in the text. A new write
   tool that bypasses the wrapper is a bug.
+- **Model lifecycle (`tekla_save_model` / `tekla_open_model`).** `ModelHandler.Open` discards
+  unsaved changes — `OpenModel` re-checks `IsModelSaved()` immediately before the call and refuses
+  unless `discardUnsavedChanges`; never weaken that, and never add an implicit save or close to
+  another tool. `expectedModelPath` there means the model being saved or CLOSED.
 - **Outcomes come from what happened, not from counters.** The Open API has no transactions —
   an `Insert`/`Modify`/`Delete`/`SetUserProperty` is in the model when it returns and nothing
   rolls back. Live model writes use `Core/WriteProgress`: `BeginWrite()` right before the first

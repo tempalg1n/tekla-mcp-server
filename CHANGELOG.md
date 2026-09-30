@@ -169,6 +169,13 @@ and are now handled by the tools and documented under
   running Tekla resolves them for the open model, optionally split into paths by Tekla's own
   rules. Requested through `tekla_report_gap` during component development (DEV-005), which had
   to script it.
+- **`tekla_save_model` / `tekla_open_model`**: save the open model, or switch Tekla to another
+  model folder, without the UI dialogs (DEV-005: a component developer reopens the test model
+  after every plugin rebuild). `ModelHandler.Open` discards the current model's unsaved changes,
+  so opening is refused while there are any unless `discardUnsavedChanges=true`; the check runs
+  right before the call. The outcome comes from the model Tekla reports afterwards, not from
+  `Open()`'s bool — a model other than the requested or the previous one is `unknown`.
+  Preview-by-default, `expectedModelPath` names the model being saved or closed.
 - **`tekla_get_part_solid`**: the boundary representation of up to 20 part solids — faces
   (outward normal, originating part: a cut face names the cutting part), loops with the outer
   one picked geometrically (Tekla does not document its loop order) and vertices, in GLOBAL mm,

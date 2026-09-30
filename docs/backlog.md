@@ -133,8 +133,9 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
   `AddTwoInputPositions`, then read back children and attributes — one new primitive next to
   `CreateConnections`. A plugin's `Run` itself is not observable through the Open API; verify
   by readback.
-- Save and open without the UI dialog: `ModelHandler.Save(comment, user)`,
-  `Open(folder, openAutoSaved)`, `IsModelSaved()`.
+- ~~Save and open without the UI dialog~~ — done 2026-09-30: `tekla_save_model`,
+  `tekla_open_model` (refuses on unsaved changes unless discarded explicitly). Not yet live:
+  whether Tekla dialogs (locked model, upgrade) block `Open()`.
 - ~~Part solids~~ — done 2026-09-30: `tekla_get_part_solid` (compiled 2021–2026, not yet live;
   check loop winding and whether `OriginPartId` names cutting parts as documented).
 - API reference without manual generation: reflect over the loaded Tekla assemblies plus the XML
