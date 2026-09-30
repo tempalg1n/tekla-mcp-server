@@ -77,7 +77,7 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **105 tools** in total, including
+All tools use the `tekla_` prefix. The current build exposes **107 tools** in total, including
 **51 drawing-specific tools**.
 
 | Tool | Description |
@@ -112,6 +112,22 @@ All tools use the `tekla_` prefix. The current build exposes **105 tools** in to
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
 | `tekla_set_udas_by_filter` | Bulk UDA update by filter (`apply=false` by default). |
+
+### Seeing the model — pictures for agents
+
+Agents otherwise reason about a model only through property lists and coordinates. These two tools
+answer with an **MCP image block** — the agent actually sees the picture — plus a JSON block that
+maps what is on it back to GUIDs and model millimetres. One picture costs about 1–1.6k tokens.
+
+| Tool | Description |
+|---|---|
+| `tekla_capture_view` | Screenshot of a **live Tekla model view**: exactly what Tekla renders (profiles, bolts, welds, cuts, reference models, class colours). Default: the active view as it is, no side effects. With `guids`/`useSelection` it zooms to the targets, colours them red and ghosts everything else; `labels=true` numbers them; `direction` rotates a 3D view. `restore=true` (default) puts camera and colours back right after the capture. Windows + live Tekla; the mock returns a labelled schematic stand-in. |
+| `tekla_render_schematic` | **Beta.** Numbered schematic drawn by the server itself — plan, elevations or iso — with focus objects (GUIDs, selection or the usual filters) in colour, context parts in grey, grid axes with their real labels, levels, coordinate ticks and a legend (number → GUID, pixel → mm). No Tekla UI involved; works on the mock too. Geometry is simplified (reference lines, contours, bounding boxes) and dense models can look cluttered — narrow the scope with `region` or filters. |
+
+> **What the capture can see.** Only a view that is visible on screen: the active view, or views
+> tiled side by side. A view hidden behind another view, or a minimized Tekla, is refused with the
+> list of open views. Pixels come from Tekla's own view window (`PrintWindow`), never from a screen
+> copy, so no other application's window can end up in the picture.
 
 ### File exchange — bulk data in and out
 
@@ -162,7 +178,7 @@ tekla_set_udas_from_file apply=true  → write
 
 | Tool | Description |
 |---|---|
-| `tekla_list_grids` | List grid lines (axis, label, coordinate). |
+| `tekla_list_grids` | List grid lines and levels with their real Tekla labels: axis (X/Y/Z), label, global coordinate, grid id and end points. Handles several grids with their own origins. |
 | `tekla_resolve_point` | Resolve a point from axis labels + elevation (e.g. `1` × `Д` × `6000`). |
 | `tekla_create_beam` | Create a beam between two points, with optional Plane/Rotation/Depth or Position copied from an exemplar. |
 | `tekla_create_beams` | Create up to 200 beams in one structured batch. |
