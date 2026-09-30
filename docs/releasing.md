@@ -30,29 +30,54 @@ When you push a version tag, the [release workflow](../.github/workflows/release
 
 1. **Update the changelog**
 
-   Move items from `[Unreleased]` to a new version section in [CHANGELOG.md](../CHANGELOG.md).
+   Move items from `[Unreleased]` to a new version section in [CHANGELOG.md](../CHANGELOG.md),
+   leave an empty `[Unreleased]` on top and add the compare link at the bottom.
 
-2. **Add release notes** (optional but recommended)
+2. **Bump the version — three places, in the same commit**
 
-   Create `docs/releases/vX.Y.Z.md` — copy from the previous release and edit.  
-   The workflow uses this file as the release description when the tag matches (e.g. tag `v0.1.0` → `docs/releases/v0.1.0.md`).
+   - `<Version>` in [Directory.Build.props](../Directory.Build.props);
+   - the `client.ServerInfo.Version == "X.Y.Z"` check in
+     [tests/TeklaMcp.Smoke/Program.cs](../tests/TeklaMcp.Smoke/Program.cs);
+   - the fallback `informationalVersion ?? "X.Y.Z"` in
+     [src/TeklaMcp.Server/Program.cs](../src/TeklaMcp.Server/Program.cs).
 
-3. **Commit and push**
+   The release workflow builds everything with the tag's version (`-p:Version`) and the smoke
+   asserts the exact version string, so a tag that does not match the smoke's check fails the
+   release before anything is published. CI (no tag) builds with `Directory.Build.props`, so the
+   props and the smoke must agree too.
+
+3. **Check the smoke's tool count**
+
+   The smoke also asserts the EXACT number of registered tools, passed as the last argument in
+   both [ci.yml](../.github/workflows/ci.yml) and [release.yml](../.github/workflows/release.yml).
+   Every added tool must bump it in both files (the README states the same count).
+
+4. **Add release notes**
+
+   Create `docs/releases/vX.Y.Z.md` — copy from the previous release and edit.
+   The workflow uses this file as the release description (`body_path`, e.g. tag `v0.1.0` →
+   `docs/releases/v0.1.0.md`), so write it before tagging.
+
+5. **Commit and push**
 
    ```bash
-   git add CHANGELOG.md docs/releases/
-   git commit -m "Prepare release v0.1.0"
+   git add -A
+   git commit -m "Prepare release v0.1.0."
    git push origin main
    ```
 
-4. **Create and push the tag**
+   `main` is branch-protected. When the release was developed on a branch (e.g.
+   `release/0.8.0`), commit the preparation there, open a PR, let CI pass and merge it — then
+   tag the merge commit on `main`.
+
+6. **Create and push the tag**
 
    ```bash
    git tag -a v0.1.0 -m "v0.1.0 — first public release"
    git push origin v0.1.0
    ```
 
-5. **Wait for Actions**
+7. **Wait for Actions**
 
    Open **Actions → Release** on GitHub. The matrix builds all Tekla versions in parallel; when every job completes, the release appears under **Releases** with all zip files attached (six Tekla zips + the mock zip).
 
@@ -138,12 +163,19 @@ While the project is in `0.x`, treat every minor release as potentially breaking
 
 ## Checklist before each release
 
-- [ ] [CHANGELOG.md](../CHANGELOG.md) updated
+- [ ] [CHANGELOG.md](../CHANGELOG.md) updated (empty `[Unreleased]`, new compare link)
 - [ ] `docs/releases/vX.Y.Z.md` written
+- [ ] Version bumped in `Directory.Build.props`, the smoke and the `Program.cs` fallback
+- [ ] Smoke tool count in `ci.yml` + `release.yml` = registered tools = the README count
 - [ ] README tool table still accurate
-- [ ] `dotnet build TeklaMcp.sln -c Release` succeeds locally
-  *(close running TeklaMcp.Server processes first)*
+- [ ] Mock build, tests and smoke pass locally:
+  ```bash
+  dotnet build src/TeklaMcp.Server -c Release
+  dotnet test tests/TeklaMcp.Tests -c Release
+  dotnet run --project tests/TeklaMcp.Smoke -c Release -- src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll <tool-count>
+  ```
+- [ ] `dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=<v>` succeeds for every version in
+  the table above (works on macOS/Linux too; close running TeklaMcp.Server processes first)
 - [ ] New Tekla version released since last time? Add it to the release + CI matrices (see "What gets published")
 - [ ] Tag pushed (`vX.Y.Z`)
 - [ ] GitHub Release contains all Tekla zips + the mock zip
-- [ ] Replace `YOUR_ORG` in CHANGELOG compare links with your GitHub username/org

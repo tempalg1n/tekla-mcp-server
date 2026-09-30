@@ -99,7 +99,9 @@ const string serverInstructions =
     "They only accept absolute paths under the configured roots (TEKLA_MCP_FILE_ROOT, default " +
     "%LOCALAPPDATA%\\TeklaMcp\\exchange plus the model folder), page with maxObjects + cursor + " +
     "append, and return counters only — the data stays in the file.\n\n" +
-    "Model and drawing write/UI tools default to apply=false (preview). Drawing points explicitly " +
+    "Model and drawing write tools default to apply=false (preview); only the UI-only tools " +
+    "tekla_select_objects, tekla_select_drawing_objects and tekla_capture_view act immediately. " +
+    "Drawing points explicitly " +
     "distinguish view-local, global model, and sheet/paper-mm coordinate spaces. Show the plan and " +
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +
     "validate the exact script with tekla_check_csharp, show the user the script and what it will " +
@@ -113,7 +115,8 @@ const string serverInstructions =
     "objects back and write only what is missing — never retry blindly. When more than one Tekla " +
     "or model is in play, pass expectedModelPath (the modelPath from tekla_get_connection_info) to " +
     "every write: a different open model refuses the call before anything is written.\n\n" +
-    "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
+    "The DRAWING tool layer (every tool on drawings, views, drawing objects, dimensions and " +
+    "marks) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
     "retrying blindly or scripting around it.\n\n" +
@@ -139,6 +142,10 @@ const string serverInstructions =
     "- Component names differ between the Tekla UI and the API (UI shows '...(1)' where the API " +
     "has '... 1'). Read names from tekla_list_connections / tekla_find_connections; never filter " +
     "on a name copied out of the UI.\n" +
+    "- Custom-component insertion can fail after LoadAttributesFromFile even where the same " +
+    "component inserts fine without it (field report, not yet reduced to a repro). Prefer " +
+    "tekla_copy_connection from a working detail; pass attributesFile only when a specific " +
+    "saved set is genuinely required.\n" +
     "- Prefer the batch tools (tekla_modify_parts, tekla_modify_connections, tekla_create_beams) " +
     "over N single-object calls when editing a whole axis or frame.";
 
@@ -146,7 +153,7 @@ var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
     .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
     .FirstOrDefault()?.InformationalVersion;
-var serverVersion = (informationalVersion ?? "0.7.0").Split('+')[0];
+var serverVersion = (informationalVersion ?? "0.8.0").Split('+')[0];
 
 builder.Services
     .AddMcpServer(options =>

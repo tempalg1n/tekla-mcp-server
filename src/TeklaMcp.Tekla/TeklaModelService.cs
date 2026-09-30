@@ -18,12 +18,10 @@ namespace TeklaMcp.Tekla;
 /// <summary>
 /// REAL implementation of <see cref="ITeklaModelService"/> backed by the Tekla Open API.
 ///
-/// ⚠️  UNTESTED PROTOTYPE. None of this has been compiled or run against a live Tekla
-///     instance yet — it was written from the Tekla 2026 Open API documentation on a
-///     machine without Tekla. Treat every API call below as "needs verification on the
-///     Windows machine". The exact member names (GetReportProperty keys, SelectModelObject,
-///     ModelInfo fields) are the most likely places to need small fixes. See
-///     docs/tekla-api-notes.md for the reference list and the official docs links.
+/// Verification status: compiled against every supported Tekla version (2021–2026); read paths,
+/// part/connection writes and the reconnect are exercised on live Tekla 2021/2023, while other
+/// calls are only signature-checked. <c>// TODO(windows):</c> marks what still needs a live run,
+/// and docs/tekla-api-notes.md is the per-call ledger — check it before trusting a call.
 ///
 /// How the connection works: this runs as a STANDALONE process and connects to an
 /// already-running Tekla Structures with a model open. <c>new TSM.Model()</c> establishes

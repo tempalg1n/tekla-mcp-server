@@ -3,6 +3,9 @@ param(
     [string]$Configuration = "Release",
     [string]$Solution = "TeklaMcp.sln",
     [string]$ServerProject = "src/TeklaMcp.Server/TeklaMcp.Server.csproj",
+    # NuGet version of the installed Tekla (table in docs/releasing.md), e.g. 2023.0.1.
+    # Empty = the project default (2021.0.0), which only talks to Tekla 2021.
+    [string]$TeklaVersion = "",
     [switch]$ServerOnly,
     [switch]$SkipClean,
     [switch]$NoKill,
@@ -77,11 +80,22 @@ else {
     Write-Host "Skipping clean step (-SkipClean)." -ForegroundColor DarkGray
 }
 
-if ($ServerOnly) {
-    Invoke-Dotnet -Arguments @("build", $ServerProject, "-c", $Configuration)
+$versionArgs = @()
+if ($TeklaVersion) {
+    $versionArgs = @("-p:TeklaVersion=$TeklaVersion")
+}
+elseif ($env:TeklaVersion) {
+    Write-Host "Using TeklaVersion from the environment: $($env:TeklaVersion)" -ForegroundColor DarkGray
 }
 else {
-    Invoke-Dotnet -Arguments @("build", $Solution, "-c", $Configuration)
+    Write-Host "No -TeklaVersion given: building for the default Tekla 2021 (2021.0.0)." -ForegroundColor Yellow
+}
+
+if ($ServerOnly) {
+    Invoke-Dotnet -Arguments (@("build", $ServerProject, "-c", $Configuration) + $versionArgs)
+}
+else {
+    Invoke-Dotnet -Arguments (@("build", $Solution, "-c", $Configuration) + $versionArgs)
 }
 
 if ($RunSmokeTest) {

@@ -18,7 +18,9 @@ namespace TeklaMcp.Tekla;
 /// channel, <c>CatalogHandler</c> on the Catalogs channel. Neither is covered by the connection
 /// guard directly, so every call first goes through <c>GetConnectedModel()</c> — the same Tekla
 /// publishes all of its channels, and that check refuses before anything dials a missing one.
-/// Verified against the 2021 NuGet metadata (compile) only. TODO(windows): run live.
+/// Compiled against 2021–2026; advanced options ran live on Tekla 2023 (see the unknown-option
+/// note below). TODO(windows): run the rest of the catalog surface live — UDA definitions with
+/// details=true in particular (docs/tekla-api-notes.md).
 /// </summary>
 public sealed partial class TeklaModelService
 {

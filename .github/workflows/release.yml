@@ -19,8 +19,12 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      # Built with the tag's version, like the zips: the smoke asserts the exact version, so a
+      # tag that does not match the release preparation fails here, before anything is published.
       - name: Build mock server
-        run: dotnet build src/TeklaMcp.Server/TeklaMcp.Server.csproj -c Release
+        run: >-
+          dotnet build src/TeklaMcp.Server/TeklaMcp.Server.csproj -c Release
+          -p:Version=${GITHUB_REF_NAME#v}
 
       - name: Unit tests
         run: dotnet test tests/TeklaMcp.Tests -c Release
@@ -28,7 +32,7 @@ jobs:
       - name: MCP initialize, tools/list and query smoke
         run: >-
           dotnet run --project tests/TeklaMcp.Smoke -c Release --
-          src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 105
+          src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 116
 
   build-tekla:
     name: Build Tekla ${{ matrix.tekla.year }} (net48)

@@ -449,15 +449,10 @@ public sealed partial class TeklaModelService
 
         public void Commit()
         {
-            try
-            {
-                _model.CommitChanges();
-            }
-            catch
-            {
-                // Per-object Modify() already persisted the values; the commit is the batch
-                // flush the other write paths also perform.
-            }
+            // Not swallowed: the per-object writes already reached Tekla, so a throwing commit
+            // (typically a lost connection) is reported by UdaImportRunner as `unknown` — the
+            // same contract as the other write paths, instead of a silent `committed`.
+            _model.CommitChanges();
         }
     }
 

@@ -19,7 +19,8 @@ public static class ModelPropertyTools
     [Description("Read arbitrary properties for one object by GUID. Names can be report properties " +
                  "(e.g. VOLUME, AREA, HEIGHT, WIDTH, PROFILE_TYPE), UDAs, or built-ins (GUID, ID, " +
                  "NAME, CLASS, PROFILE, MATERIAL, WEIGHT, LENGTH, ASSEMBLY_POS). Pass names " +
-                 "comma/semicolon/newline separated, e.g. 'VOLUME;AREA;PHASE'. Unknown names are skipped.")]
+                 "comma/semicolon/newline separated, e.g. 'VOLUME;AREA;PHASE'. Names that resolve to nothing " +
+                 "are listed in notFound, so an empty value is not confused with a wrong name.")]
     public static ObjectUdaResult GetProperties(
         ITeklaModelService model,
         [Description("Object GUID.")] string guid,

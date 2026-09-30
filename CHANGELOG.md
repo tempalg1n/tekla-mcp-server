@@ -7,30 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Fixes for the two v0.7.0 field reports: `tekla_create_beam` failing on apply with a
-`Tekla.Structures.ModuleManager` type-initializer exception, and
-`tekla_get_reference_geometry` unable to deliver world geometry for IFC overlay objects.
-Plus the whole-model analytics rework from the approval-status field report (weight per
-UDA group on a 471k-object model needed ~20 MCP calls and manual scripting).
+## [0.8.0] - 2026-09-30
 
-Plus the file-exchange layer from the KMD reconciliation field report (T_004_KMD_STATUS,
-Tekla 3155): the geometric part of the job is cheap — `GetSolid()` + AABB is ~1.5 ms per part,
-~90 s for the whole model — but there was no channel wide enough to carry ~65 700 parts with
-geometry out, or tens of thousands of GUID→UDA pairs back in. Everything had to pass through the
-tool response, i.e. through an LLM context.
+A field-report release: every group below answers a problem observed on a live model
+(Tekla 2021, 2023 and 2025).
 
-Plus issue #15 (Tekla 2025 field report): exact drawing dimensions for a curved `PolyBeam` were
-impossible — no tool exposed its arcs, a drawing `Part` carries no geometry, and the script
-escape hatch could not compile anything on Tekla 2025.
-
-Plus pictures for agents: they found objects by indirect signs and never saw the model they were
-changing, and the DEV-005 report showed one resorting to its own screen automation.
-
-Plus a connection/orientation pass answering a second field report (axis А/Д fachwerk session):
-mass edits needed 66 single-object calls, connection `UpVector` writes silently did nothing, and
-`Position` round-trips appeared to lose data. All three causes were reproduced on live Tekla 2023
-and are now handled by the tools and documented under
-"Known model-layer quirks" in [docs/tekla-api-notes.md](docs/tekla-api-notes.md).
+- **Whole-model analytics** (approval-status report): weight per UDA group on a 471k-object
+  model needed ~20 MCP calls and manual scripting.
+- **File exchange** (KMD reconciliation report, T_004_KMD_STATUS, model 3155): the geometric part
+  of the job is cheap — `GetSolid()` + AABB is ~1.5 ms per part, ~90 s for the whole model — but
+  there was no channel wide enough to carry ~65 700 parts with geometry out, or tens of thousands
+  of GUID→UDA pairs back in. Everything had to pass through the tool response, i.e. through an
+  LLM context.
+- **Issue #15** (Tekla 2025): exact drawing dimensions for a curved `PolyBeam` were impossible —
+  no tool exposed its arcs, a drawing `Part` carries no geometry, and the script escape hatch
+  could not compile anything on Tekla 2025.
+- **Pictures for agents**: they found objects by indirect signs and never saw the model they were
+  changing, and the DEV-005 report showed one resorting to its own screen automation.
+- **Connections and orientation** (axis А/Д fachwerk session): mass edits needed 66 single-object
+  calls, connection `UpVector` writes silently did nothing, and `Position` round-trips appeared
+  to lose data. All three causes were reproduced on live Tekla 2023 and are now handled by the
+  tools and documented under "Known model-layer quirks" in
+  [docs/tekla-api-notes.md](docs/tekla-api-notes.md).
+- **Connection lifecycle and component development** (DEV-005): a Tekla restart meant an MCP
+  server restart, orphaned servers piled up, writes did not say whether or where they landed, and
+  component work had to script saving/opening models, catalogs, solids and plugin insertion.
 
 ### Added
 
@@ -51,7 +52,6 @@ and are now handled by the tools and documented under
   with a dependency-free rasterizer, 8×8 bitmap font (with Cyrillic capitals for grid labels) and
   PNG encoder. Marked **beta**: the picture is simplified and can look cluttered on dense models.
 - `tekla_list_grids` also returns levels (`axis: "Z"`), the grid id and the end points of each line.
-
 - **File exchange — three tools that move bulk data through a file instead of the response.**
   - `tekla_export_parts_file`: streams matching objects to jsonl/csv. Fields are opt-in —
     identity and bill-of-materials by default, plus `solidAabb` (world AABB of
@@ -71,9 +71,9 @@ and are now handled by the tools and documented under
     objects, NOT one Open API call that never returns — the Open API has no cancellation.
   - Data never enters the tool response: results carry counters, a path and a field list.
 
-  > ⚠️ **Field report, 2026-08-13 (Tekla 2021, model 3155).** The first two tools passed live
-  > acceptance — 45 082 parts with `solidAabb` exported in 3 cursor pages, 216 s, 13.9 MB. The
-  > third one did not: with `includeFaceAabb` on, `GetReferenceModelObjectFaces` across the IFC
+  > ⚠️ **Field report, 2026-08-13 (Tekla 2021, model 3155).** The parts export passed live
+  > acceptance — 45 082 parts with `solidAabb` exported in 3 cursor pages, 216 s, 13.9 MB; the UDA
+  > import has so far run in preview only. The reference export did not: with `includeFaceAabb` on, `GetReferenceModelObjectFaces` across the IFC
   > overlay left **Tekla itself** unresponsive with a core pegged, and killing the MCP client did
   > not release it. `includeFaceAabb` therefore ships OFF, the tool description tells agents to
   > probe with `maxObjects=5` first, and `maxSeconds` is documented as bounding slow scans rather
@@ -131,20 +131,6 @@ and are now handled by the tools and documented under
   is the only way to swap a node type.
 - **`ObjectUdaResult.NotFound`** — `tekla_get_properties` now reports which requested names
   resolved to nothing, instead of silently dropping them, with guidance when none matched.
-- **IFC placement fallback in `tekla_get_reference_geometry`.** When the Tekla API cannot
-  deliver reference-object geometry (the reported case for IFC overlay windows), the server
-  now parses the reference IFC file itself: resolves the `IFCLOCALPLACEMENT` chain by IFC
-  GlobalId, applies the project length unit and the reference-model insertion
-  (Position/Scale/Rotation), and returns world placement `placementOrigin` +
-  `placementX/Y/ZAxis` (GLOBAL mm, `placementSource: "ifc-file"`), plus
-  `OverallWidth`/`OverallHeight`, entity and name when Tekla did not provide them. If no
-  exact face AABB is available, an estimated AABB is derived from placement + overall
-  dimensions and labeled `aabbSource: "ifc-placement-estimate"` (exact face AABBs are
-  labeled `"tekla-faces"`). Agents no longer need to parse IFC files manually.
-- `tekla_get_reference_geometry` accepts `externalGuids` — address reference objects
-  directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
-  `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
-  it.
 - **Restarting Tekla no longer means restarting the MCP server** (Tekla 2021–2023, DEV-005 — the
   most frequent complaint: every tool failed with `RemotingException` until the client was
   restarted). Every tool call now starts with one real `GetInfo()`; a dead connection is
@@ -243,6 +229,67 @@ and are now handled by the tools and documented under
   it instead of estimating them.
 - The mock model gains a curved member — a `PD168.3*6` arch `PolyBeam` (27 parts, 43 objects) —
   and its sample drawing views now carry view/display coordinate systems.
+- **Server instructions spell out the approved-script contract**: check with `tekla_check_csharp`,
+  get the user's go-ahead, then run with `allowMutations=true` and `expectedSha256` = the checked
+  `codeSha256`. The requirement existed, but connecting agents only met it as a refusal.
+- **Server instructions now list the known model-layer quirks** (up-vector auto-direction,
+  Position canonicalization, one connection per pair, UI-vs-API component names, prefer batch
+  tools). The drawing layer was already flagged experimental; the model layer had no equivalent
+  "here is what will surprise you" list, which the field report specifically asked for.
+- **Script policy explains how to replace banned reflection.** The `dynamic`/`GetType` violation
+  message now says to cast to the concrete Tekla type rather than only "rename it", and the
+  `tekla_run_csharp` description documents that `Connection.GetSecondaryObjects()` returns an
+  `ArrayList` (use `foreach`) while `Part.GetComponents()` is an enumerator (use `MoveNext`).
+- **`tekla_run_csharp` return values expand 6 nesting levels (was 4) and mark the cap
+  explicitly.** A container past the cap used to be rendered with `ToString()`, so per-segment
+  coordinate lists came back as the strings ``System.Collections.Generic.List`1[System.Double]``
+  / `System.Double[]` — indistinguishable from real values. It is now an explicit marker such
+  as `"[depth limit reached: List<Double> with 3 items]"`; numbers, strings, enums and GUIDs at
+  the cap are still serialized normally.
+- **`tekla_run_csharp` reports every serializer cap out of band: `returnValueTruncated` +
+  `returnValueTruncation`.** From the KXMp scaffolding field report (MCP-SCF-001, Tekla 2023):
+  a script counted 141 parts, the 100-item cap returned the first 100 rows, and the agent
+  accepted them as the full audit — the JSON stayed valid, so nothing in it said it was cut.
+  Cut strings (with the longest original length), capped lists (with their real size when it is
+  a cheap `Count`), depth markers, the per-object property cap and the 64k size envelope now all
+  set the flag, plus a warning telling the agent not to report the value as complete. The flag,
+  not the JSON's shape, decides: a script that returns `new { truncated = true }` is complete.
+- **`tekla_run_csharp` return values include public fields, so tuples and Tekla points come
+  back as data.** Only public properties were read, with `ToString()` as the fallback: a
+  `ValueTuple` (its items are fields) came back as
+  ``"(B1, System.Collections.Generic.List`1[System.Double])"``, a Tekla `Point`/`Vector` (X/Y/Z
+  are fields) as a rounded current-culture string such as `"(1000,000, 2000,500, 0,000)"`, and a
+  `ContourPoint` as `{"Chamfer":{…}}` with its coordinates dropped (all seen on a live Tekla
+  2023). Public instance fields now follow the properties within the same 25-member cap, which
+  still sets `returnValueTruncated`: `{"X":1000,"Y":2000.5,"Z":0}`,
+  `{"Item1":"B1","Item2":[1,2]}`. Tuple element names are compile-time only, so tuples always
+  use `Item1..ItemN` (the 8th element onwards continues as `Item8`, … instead of a nested
+  `Rest`); return an anonymous object for named keys. `ToString()` remains only for objects
+  without public members. Anything that parsed the old point strings must read `X`/`Y`/`Z`
+  instead.
+- **Catalog imports and model switching count as mutations in the script policy.**
+  `CatalogHandler.Import*Items` (bolts, custom components, drawings, library/parametric profiles,
+  materials, meshes, rebars, shapes) and `SaveProfileDatabase` overwrite environment catalogs;
+  a field report ran `ImportCustomComponentItems` through `tekla_check_csharp` with an empty
+  `detectedMutatingMembers`. `ModelHandler.Open/Close/CreateNew*UserModel` are gated too.
+- **`tekla_get_connection_info` explains a lost connection instead of echoing the raw IPC error.**
+  After a Tekla restart the Open API proxy still reports connected (`GetConnectionStatus()` is a
+  local null check) and the first real call fails with a `RemotingException`; a proxy whose first
+  touch happened before Tekla was up fails with a cached `TypeInitializationException`. Both are
+  now classified by exception type (the .NET messages are localized), with the action — restart
+  the MCP server, restarting Tekla again does not help — plus the running Tekla PIDs/start times
+  and the channel diagnostics (MCP-SCF-011).
+- **Mutating scripts are bound to the approved source: `tekla_run_csharp` takes
+  `expectedSha256`.** It is required with `allowMutations=true` and must equal the `codeSha256`
+  that `tekla_check_csharp` returned for the script the user approved; a missing or stale hash
+  is rejected before anything compiles or runs. Previously nothing stopped an agent from editing
+  an approved mutation script and running the edited version. Read-only runs may pass it too.
+  **Breaking** for clients that ran mutating scripts without the check step.
+- **`tekla_get_connection_info` says which server answered**: server version, runtime, PID and
+  start time, the Tekla version the build targets, where the Tekla assemblies load from and how
+  that folder was found, and the running TeklaStructures processes (PID + start time). A server
+  started before the Tekla it should talk to, or built for another Tekla year, is visible at a
+  glance — field reports could not tell a stale `tekla_2021` process from a fresh `tekla_2023`.
 
 ### Fixed
 
@@ -286,7 +333,6 @@ and are now handled by the tools and documented under
   put metres off. Grids now use the real labels, each grid's own coordinate system, Tekla's
   semantics (X/Y spacings, Z absolute levels) and, for repeated labels, a pair from the same grid —
   shared by both backends in `TeklaMcp.Core.Geometry.GridMath`.
-
 - **Script escape hatch dead on Tekla 2025 (issue #15).** `tekla_check_csharp` /
   `tekla_run_csharp` failed EVERY script with `CS0009` because the reference set is globbed from
   `Tekla.Structures*.dll` and Tekla 2025 ships a native `Tekla.Structures.Native.DbvDatabase.dll`
@@ -295,7 +341,6 @@ and are now handled by the tools and documented under
   admitted only when the PE image carries managed metadata and an assembly manifest (checked
   with `PEReader`, the assembly is never loaded); on a Tekla 2023 bin that check agrees with
   `AssemblyName.GetAssemblyName` for all 374 DLLs (95 native).
-
 - **`string.Split(...)` no longer trips the script mutation policy.** `Split` was in the
   mutating-member list for `Operation.Split`, which the `Operation` token already catches, so
   the only thing the bare name ever did was reject ordinary string parsing with
@@ -305,7 +350,6 @@ and are now handled by the tools and documented under
   named `Process` is still rejected — the check is syntax-only and cannot tell it apart from
   `System.Diagnostics.Process` once the name is in scope — but the message now says "reserved
   capability name … rename it" instead of accusing the script of reaching for process access.
-
 - **Write results echoed the in-memory object instead of the committed model.** `ModifyParts`
   and `CreateConnections` mapped the object they had just written, so the tool answered with
   values the model did not agree with — a `tekla_modify_part` preview showed
@@ -318,6 +362,176 @@ and are now handled by the tools and documented under
   the identical write under `AUTODIR_NA` persists. `ModifyConnections` switches to `AUTODIR_NA`
   whenever an explicit vector is supplied without a caller-named mode, and the connection tools
   warn when a caller pins a non-NA mode *and* passes a vector.
+- **`tekla_run_csharp` could return invalid JSON when a returned value failed half-way.** A
+  member whose lazy value (LINQ over model objects, a Tekla enumerator) threw after its first
+  items kept the written fragment in front of the error marker — `{"Items":[1"<threw: …>"}`.
+  The member is now replaced as a whole by `"<threw: …>"`.
+- **Script escape hatch dead on Tekla 2021 with `TEKLA_BIN_DIR` at `nt\bin` (DEV-005 field
+  report).** Connecting and reading worked, but `tekla_check_csharp` could not resolve
+  `Tekla.Structures.Model`, `Geometry3d`, `Filtering` or `TeklaStructuresInfo`: script references
+  were taken ONLY from the resolver's folder whenever it held any `Tekla.Structures*.dll`, and
+  2021's `nt\bin` holds seven unrelated ones (the API is in `nt\bin\plugins`; the connection bound
+  the core API from the GAC). Script references now start from the Tekla assemblies the server has
+  actually loaded, the folder only adds what is missing, and duplicates and other Tekla years are
+  rejected. `tekla_check_csharp` returns `referenceSummary` plus every reference with version,
+  path and the reason it was used or left out; a compile without the core API says it is an
+  installation problem, not a script error. Reproduced and verified on a Tekla 2021 install.
+- **Open API folder detection.** `TEKLA_BIN_DIR` may point at the API folder, its parent or the
+  install root, and a value without `Tekla.Structures.Model.dll` is ignored with a warning
+  instead of being trusted. The process probe understands 2021's `nt\bin\plugins` and prefers
+  the Tekla whose version matches the build (a 2021 build next to a running 2023 used to report
+  "wrong build"). The registry fallback now reads the key current installs actually write,
+  `SOFTWARE\Trimble\Tekla Structures\<version>\setup` — the legacy key it probed does not exist
+  there.
+- **Tool errors carry their cause.** The MCP SDK sends only "An error occurred invoking '…'." for
+  every exception except `McpException`, so e.g. the lost-connection diagnostics built by the
+  backend never reached the agent (DEV-005: `tekla_get_model_summary` "general tool error" after
+  a Tekla restart). A call-tool filter now returns the flattened exception text.
+- **Tekla 2024+ builds broke their own connection when an older Tekla ran alongside.** The
+  channel fix-up aligned to the pipes of ANY Tekla version and wrote 2021–2023-style names
+  (`{Assembly}-{session}:{version}`) into the 2024+ Remoters. Those use Trimble.Remoting and name
+  their channels `{Assembly}-{Product}-{SESSIONNAME|Console}:{FileVersion}`, so the proxies were
+  poisoned on first use. 2024+ builds are now never aligned — they name their channels
+  themselves — and `TEKLA_MCP_CHANNEL` on 2024+ patches exact names without touching
+  `SESSIONNAME`. From decompiled 2024–2026 assemblies; no 2024+ install was available to run it
+  live.
+- **2021–2023 builds no longer align to another Tekla version's session.** With only a different
+  Tekla running, the server used to adopt that Tekla's session suffix and stop aligning for the
+  rest of the process. It now waits for its own version's pipes.
+- **"Wrong build" stuck for the process lifetime.** The resolver kept a mismatched Open API folder
+  and re-probed only while none was set. It now re-probes on a mismatch. It also no longer throws
+  from `AssemblyResolve`: the CLR caches such an exception for the AppDomain and never asks again
+  (verified on .NET Framework 4.8), so one bind during a mismatch used to break Tekla until a
+  restart. The backend is constructed only after the version check passes
+  (`TeklaBackendFactory`), because a failed static initializer is cached the same way; every tool
+  call then reports the plain "wrong build" message instead of a type-load error.
+- **`tekla_run_csharp` description: `GetAllObjectsWithType(System.Type[])` exists** (2021
+  included). The description used to say there is no multi-type overload; the per-type chain stays
+  the recommended, measured path.
+
+### Known limitations
+
+- **Tekla 2024, 2025 and 2026 are built but untested — testers and issue reports wanted.** The
+  maintainers have no 2024+ install. Those versions use Trimble.Remoting instead of named pipes,
+  so the connection guard and the reconnect after a Tekla restart are not active there (a lost
+  connection still needs a server restart), and the channel handling is based on decompiled
+  assemblies only. If you run 2024+, please [open an issue](https://github.com/tempalg1n/tekla-mcp-server/issues)
+  with the `tekla_get_connection_info` output and the server's stderr — `tekla_report_gap`
+  drafts one.
+- Verified on live Tekla only where the entries above say so. Still to be run live with this
+  release: the reconnect on Tekla 2021, the `unknown` write outcome, `tekla_set_udas_from_file`
+  with `apply=true`, `tekla_get_part_solid`, `tekla_save_model` / `tekla_open_model`,
+  `tekla_create_component` with a real plugin, UDA definitions with `details=true`, and the
+  drawing-view coordinates of `tekla_get_part_curve_geometry` (see [docs/backlog.md](docs/backlog.md)).
+  The Tekla 2025 script fix (issue #15) awaits the reporter's confirmation.
+- UDA writes report their outcome more coarsely than part and connection writes: a `Modify()`
+  after `SetUserProperty` is not checked, and the single/by-filter UDA tools do not commit
+  (backlog §4).
+- Choosing between several running Tekla instances of one version is not implemented yet: the
+  server binds to one and never switches to another by itself.
+
+## [0.7.0] - 2026-07-23
+
+First-class tools for the three biggest gaps observed in a real end-to-end modeling session:
+IFC/reference geometry, beam Position, and custom Connections. The same release adds batched
+beam creation, explicit native-geometry helpers, a broad first-class Drawing API surface, and
+a hardened `tekla_run_csharp` workflow so routine modeling and drawing work no longer depends
+on ad-hoc scripts.
+
+The v0.7.0 tag also carried the fixes for this release's first two field reports —
+`tekla_create_beam` failing on apply with a `Tekla.Structures.ModuleManager` type-initializer
+exception, and `tekla_get_reference_geometry` unable to deliver world geometry for IFC overlay
+objects. They were listed as unreleased until 0.8.0 and are recorded here under **Fixed**
+and at the end of **Added**.
+
+### Added
+
+- `tekla_get_reference_geometry` — selected or integer-ID-addressed
+  `ReferenceModelObject` metadata and geometry: external/IFC GUID, entity/object type,
+  `OverallWidth`/`OverallHeight`, reference model source, world AABB, capped face polygons and
+  capped custom attributes. Reference objects no longer rely on their commonly empty Tekla GUID.
+- First-class part Position (`Plane`, `Rotation`, `Depth` and all offsets) in
+  `ModelObjectInfo`, `PartSpec` and `PartModification`.
+  - `tekla_create_beam` and `tekla_modify_part` accept explicit Position fields.
+  - `matchPositionGuid` copies the complete Position from an exemplar before explicit overrides.
+- Real connection/component primitives:
+  - `tekla_list_connections(partGuid)` reads exact Unicode name/number, primary/secondaries,
+    `UpVector`, auto-direction and status.
+  - `tekla_create_connection` creates system/custom connections with optional attributes file.
+  - `tekla_copy_connection` copies identity/orientation from an existing connection.
+  - Component writes commit pending geometry once before resolving GUIDs, avoiding the common
+    freshly-created-part insertion race.
+- `tekla_create_beams` — structured, capped batch creation (up to 200 beams per call).
+- `tekla_get_solid_bbox` — explicit native-part solid bounding-box helper.
+- `tekla_list_control_lines` — ControlLine start/end coordinates.
+- `tekla_get_api_reference_status` — explicit offline-reference availability/setup diagnostics.
+- `tekla_check_csharp` — policy-check and compile the exact escape-hatch source without live
+  execution; returns a stable SHA-256 and detected mutating API members so scripted writes can
+  be verified before user approval.
+- Drawing-list discovery and QA:
+  - `tekla_get_drawing_status`, `tekla_get_active_drawing`, `tekla_list_drawings`,
+    `tekla_get_selected_drawings`, `tekla_get_drawing_summary`, and
+    `tekla_find_drawing_issues`.
+  - `tekla_get_drawing_model_objects` returns full model ID/ID2/GUID identifiers represented by
+    one drawing.
+- Drawing-editor discovery:
+  - `tekla_get_drawing_sheet` returns active-sheet paper dimensions/origins and the configured
+    layout size/mode so agents can place views and sheet annotations inside known bounds.
+  - `tekla_list_drawing_views` returns paper frames, scale, restriction box, coordinate systems,
+    and best-effort DrawingInternal ID/ID2 values.
+  - `tekla_list_drawing_objects`, `tekla_get_selected_drawing_objects`, and
+    `tekla_select_drawing_objects` cover type/view/model GUID/text filters, geometry, UDAs, and
+    editor selection.
+- Preview-by-default drawing lifecycle/output:
+  - open/save/close and batch create/modify/delete;
+  - assembly, single-part, cast-unit, and GA drawings plus saved AutoDrawing rules;
+  - issue/unissue/update, automatic view placement, and PDF export.
+- Preview-by-default active-drawing content editing:
+  - front/top/back/bottom/3D, straight/curved section, and detail views;
+  - GA model views from explicit global view/display coordinate systems and a restriction box;
+  - text, line, rectangle, circle, arc, polyline, polygon, revision cloud, and symbol graphics;
+  - straight/angle/radius/radial/orthogonal curved dimensions, object marks, and level marks;
+  - batch object creation plus text/relative-move/visibility/attribute edits, deletion, and
+    merge/split operations for compatible marks.
+- Explicit drawing coordinate-space contract: view-local, global-model-to-view transformation,
+  and sheet/paper millimetres.
+- Mock coverage for drawing discovery, preview/apply state, Position merge/copy, reference
+  geometry, connections, scripting hardening, and API-reference status (79 tests total).
+- The v0.7 MCP surface contains 100 registered tools, 51 of them drawing-specific.
+- **IFC placement fallback in `tekla_get_reference_geometry`.** When the Tekla API cannot
+  deliver reference-object geometry (the reported case for IFC overlay windows), the server
+  now parses the reference IFC file itself: resolves the `IFCLOCALPLACEMENT` chain by IFC
+  GlobalId, applies the project length unit and the reference-model insertion
+  (Position/Scale/Rotation), and returns world placement `placementOrigin` +
+  `placementX/Y/ZAxis` (GLOBAL mm, `placementSource: "ifc-file"`), plus
+  `OverallWidth`/`OverallHeight`, entity and name when Tekla did not provide them. If no
+  exact face AABB is available, an estimated AABB is derived from placement + overall
+  dimensions and labeled `aabbSource: "ifc-placement-estimate"` (exact face AABBs are
+  labeled `"tekla-faces"`). Agents no longer need to parse IFC files manually.
+- `tekla_get_reference_geometry` accepts `externalGuids` — address reference objects
+  directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
+  `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
+  it.
+
+### Changed
+
+- `TeklaMcp.Tekla` now references the version-matched `Tekla.Structures.Drawing` package/assembly
+  for every per-Tekla build (2021 baseline through 2026).
+- `ModelObjectInfo` now maps part Position, selected reference-object semantic summary, and
+  ControlLine coordinates.
+- Type-prefiltering now recognizes `ControlLine` and `ReferenceModelObject`.
+- `WriteResult` can return created integer IDs and component previews.
+- Mock part previews no longer consume IDs or expose fake committed GUIDs.
+- Drawing model-object links are bounded and paginated; summaries report truncation. Drawing
+  deletion refuses an empty scope, object/view IDs fail closed, and PDF/enum inputs are
+  validated instead of silently selecting defaults.
+- `tekla_run_csharp` now compiles against every installed managed `Tekla.Structures*.dll`
+  (Drawing/Dialog included when present), while Drawing stays an explicit script alias to avoid
+  `Part`/`View` ambiguity. Script results expose honest execution-attempt semantics and
+  partial-mutation warnings; `Print` storage is private and total-size capped, return values are
+  serialized inside the execution deadline, and truncated results remain valid JSON.
+
+### Fixed
 
 - **Drawing-object enumeration died on non-serializable objects (e.g. `DetailMark`).**
   After a detail view was created, every `tekla_select_drawing_objects` /
@@ -374,216 +588,6 @@ and are now handled by the tools and documented under
   normal-looking result with `createdCount: 0`. Previews and partial successes are
   unchanged. (The requested `tekla_create_beams_batch` already exists as
   `tekla_create_beams` — up to 200 beams in one commit.)
-- **`tekla_run_csharp` could return invalid JSON when a returned value failed half-way.** A
-  member whose lazy value (LINQ over model objects, a Tekla enumerator) threw after its first
-  items kept the written fragment in front of the error marker — `{"Items":[1"<threw: …>"}`.
-  The member is now replaced as a whole by `"<threw: …>"`.
-- **Script escape hatch dead on Tekla 2021 with `TEKLA_BIN_DIR` at `nt\bin` (DEV-005 field
-  report).** Connecting and reading worked, but `tekla_check_csharp` could not resolve
-  `Tekla.Structures.Model`, `Geometry3d`, `Filtering` or `TeklaStructuresInfo`: script references
-  were taken ONLY from the resolver's folder whenever it held any `Tekla.Structures*.dll`, and
-  2021's `nt\bin` holds seven unrelated ones (the API is in `nt\bin\plugins`; the connection bound
-  the core API from the GAC). Script references now start from the Tekla assemblies the server has
-  actually loaded, the folder only adds what is missing, and duplicates and other Tekla years are
-  rejected. `tekla_check_csharp` returns `referenceSummary` plus every reference with version,
-  path and the reason it was used or left out; a compile without the core API says it is an
-  installation problem, not a script error. Reproduced and verified on a Tekla 2021 install.
-- **Open API folder detection.** `TEKLA_BIN_DIR` may point at the API folder, its parent or the
-  install root, and a value without `Tekla.Structures.Model.dll` is ignored with a warning
-  instead of being trusted. The process probe understands 2021's `nt\bin\plugins` and prefers
-  the Tekla whose version matches the build (a 2021 build next to a running 2023 used to report
-  "wrong build"). The registry fallback now reads the key current installs actually write,
-  `SOFTWARE\Trimble\Tekla Structures\<version>\setup` — the legacy key it probed does not exist
-  there.
-- **Tool errors carry their cause.** The MCP SDK sends only "An error occurred invoking '…'." for
-  every exception except `McpException`, so e.g. the lost-connection diagnostics built by the
-  backend never reached the agent (DEV-005: `tekla_get_model_summary` "general tool error" after
-  a Tekla restart). A call-tool filter now returns the flattened exception text.
-- **Tekla 2024+ builds broke their own connection when an older Tekla ran alongside.** The
-  channel fix-up aligned to the pipes of ANY Tekla version and wrote 2021–2023-style names
-  (`{Assembly}-{session}:{version}`) into the 2024+ Remoters. Those use Trimble.Remoting and name
-  their channels `{Assembly}-{Product}-{SESSIONNAME|Console}:{FileVersion}`, so the proxies were
-  poisoned on first use. 2024+ builds are now never aligned — they name their channels
-  themselves — and `TEKLA_MCP_CHANNEL` on 2024+ patches exact names without touching
-  `SESSIONNAME`. From decompiled 2024–2026 assemblies; no 2024+ install was available to run it
-  live.
-- **2021–2023 builds no longer align to another Tekla version's session.** With only a different
-  Tekla running, the server used to adopt that Tekla's session suffix and stop aligning for the
-  rest of the process. It now waits for its own version's pipes.
-- **"Wrong build" stuck for the process lifetime.** The resolver kept a mismatched Open API folder
-  and re-probed only while none was set. It now re-probes on a mismatch. It also no longer throws
-  from `AssemblyResolve`: the CLR caches such an exception for the AppDomain and never asks again
-  (verified on .NET Framework 4.8), so one bind during a mismatch used to break Tekla until a
-  restart. The backend is constructed only after the version check passes
-  (`TeklaBackendFactory`), because a failed static initializer is cached the same way; every tool
-  call then reports the plain "wrong build" message instead of a type-load error.
-- **`tekla_run_csharp` description: `GetAllObjectsWithType(System.Type[])` exists** (2021
-  included). The description used to say there is no multi-type overload; the per-type chain stays
-  the recommended, measured path.
-
-### Changed
-
-- **Server instructions spell out the approved-script contract**: check with `tekla_check_csharp`,
-  get the user's go-ahead, then run with `allowMutations=true` and `expectedSha256` = the checked
-  `codeSha256`. The requirement existed, but connecting agents only met it as a refusal.
-- **Server instructions now list the known model-layer quirks** (up-vector auto-direction,
-  Position canonicalization, one connection per pair, UI-vs-API component names, prefer batch
-  tools). The drawing layer was already flagged experimental; the model layer had no equivalent
-  "here is what will surprise you" list, which the field report specifically asked for.
-- **Script policy explains how to replace banned reflection.** The `dynamic`/`GetType` violation
-  message now says to cast to the concrete Tekla type rather than only "rename it", and the
-  `tekla_run_csharp` description documents that `Connection.GetSecondaryObjects()` returns an
-  `ArrayList` (use `foreach`) while `Part.GetComponents()` is an enumerator (use `MoveNext`).
-
-### Changed
-
-- **`tekla_run_csharp` return values expand 6 nesting levels (was 4) and mark the cap
-  explicitly.** A container past the cap used to be rendered with `ToString()`, so per-segment
-  coordinate lists came back as the strings ``System.Collections.Generic.List`1[System.Double]``
-  / `System.Double[]` — indistinguishable from real values. It is now an explicit marker such
-  as `"[depth limit reached: List<Double> with 3 items]"`; numbers, strings, enums and GUIDs at
-  the cap are still serialized normally.
-- **`tekla_run_csharp` reports every serializer cap out of band: `returnValueTruncated` +
-  `returnValueTruncation`.** From the KXMp scaffolding field report (MCP-SCF-001, Tekla 2023):
-  a script counted 141 parts, the 100-item cap returned the first 100 rows, and the agent
-  accepted them as the full audit — the JSON stayed valid, so nothing in it said it was cut.
-  Cut strings (with the longest original length), capped lists (with their real size when it is
-  a cheap `Count`), depth markers, the per-object property cap and the 64k size envelope now all
-  set the flag, plus a warning telling the agent not to report the value as complete. The flag,
-  not the JSON's shape, decides: a script that returns `new { truncated = true }` is complete.
-- **`tekla_run_csharp` return values include public fields, so tuples and Tekla points come
-  back as data.** Only public properties were read, with `ToString()` as the fallback: a
-  `ValueTuple` (its items are fields) came back as
-  ``"(B1, System.Collections.Generic.List`1[System.Double])"``, a Tekla `Point`/`Vector` (X/Y/Z
-  are fields) as a rounded current-culture string such as `"(1000,000, 2000,500, 0,000)"`, and a
-  `ContourPoint` as `{"Chamfer":{…}}` with its coordinates dropped (all seen on a live Tekla
-  2023). Public instance fields now follow the properties within the same 25-member cap, which
-  still sets `returnValueTruncated`: `{"X":1000,"Y":2000.5,"Z":0}`,
-  `{"Item1":"B1","Item2":[1,2]}`. Tuple element names are compile-time only, so tuples always
-  use `Item1..ItemN` (the 8th element onwards continues as `Item8`, … instead of a nested
-  `Rest`); return an anonymous object for named keys. `ToString()` remains only for objects
-  without public members. Anything that parsed the old point strings must read `X`/`Y`/`Z`
-  instead.
-- **Catalog imports and model switching count as mutations in the script policy.**
-  `CatalogHandler.Import*Items` (bolts, custom components, drawings, library/parametric profiles,
-  materials, meshes, rebars, shapes) and `SaveProfileDatabase` overwrite environment catalogs;
-  a field report ran `ImportCustomComponentItems` through `tekla_check_csharp` with an empty
-  `detectedMutatingMembers`. `ModelHandler.Open/Close/CreateNew*UserModel` are gated too.
-- **`tekla_get_connection_info` explains a lost connection instead of echoing the raw IPC error.**
-  After a Tekla restart the Open API proxy still reports connected (`GetConnectionStatus()` is a
-  local null check) and the first real call fails with a `RemotingException`; a proxy whose first
-  touch happened before Tekla was up fails with a cached `TypeInitializationException`. Both are
-  now classified by exception type (the .NET messages are localized), with the action — restart
-  the MCP server, restarting Tekla again does not help — plus the running Tekla PIDs/start times
-  and the channel diagnostics (MCP-SCF-011).
-- **Mutating scripts are bound to the approved source: `tekla_run_csharp` takes
-  `expectedSha256`.** It is required with `allowMutations=true` and must equal the `codeSha256`
-  that `tekla_check_csharp` returned for the script the user approved; a missing or stale hash
-  is rejected before anything compiles or runs. Previously nothing stopped an agent from editing
-  an approved mutation script and running the edited version. Read-only runs may pass it too.
-  **Breaking** for clients that ran mutating scripts without the check step.
-- **`tekla_get_connection_info` says which server answered**: server version, runtime, PID and
-  start time, the Tekla version the build targets, where the Tekla assemblies load from and how
-  that folder was found, and the running TeklaStructures processes (PID + start time). A server
-  started before the Tekla it should talk to, or built for another Tekla year, is visible at a
-  glance — field reports could not tell a stale `tekla_2021` process from a fresh `tekla_2023`.
-
-### Known limitations
-
-- **Tekla 2024, 2025 and 2026 are built but untested — testers and issue reports wanted.** The
-  maintainers have no 2024+ install. Those versions use Trimble.Remoting instead of named pipes,
-  so the connection guard and the reconnect after a Tekla restart are not active there (a lost
-  connection still needs a server restart), and the channel handling is based on decompiled
-  assemblies only. If you run 2024+, please [open an issue](https://github.com/tempalg1n/tekla-mcp-server/issues)
-  with the `tekla_get_connection_info` output and the server's stderr — `tekla_report_gap`
-  drafts one.
-- Verified on live Tekla only where the entries above say so. Still to be run live with this
-  release: the reconnect on Tekla 2021, the `unknown` write outcome, `tekla_get_part_solid`,
-  `tekla_save_model` / `tekla_open_model`, `tekla_create_component` with a real plugin, and UDA
-  definitions with `details=true` (see [docs/backlog.md](docs/backlog.md)).
-- Choosing between several running Tekla instances of one version is not implemented yet: the
-  server binds to one and never switches to another by itself.
-
-## [0.7.0] - 2026-07-23
-
-First-class tools for the three biggest gaps observed in a real end-to-end modeling session:
-IFC/reference geometry, beam Position, and custom Connections. The same release adds batched
-beam creation, explicit native-geometry helpers, a broad first-class Drawing API surface, and
-a hardened `tekla_run_csharp` workflow so routine modeling and drawing work no longer depends
-on ad-hoc scripts.
-
-### Added
-
-- `tekla_get_reference_geometry` — selected or integer-ID-addressed
-  `ReferenceModelObject` metadata and geometry: external/IFC GUID, entity/object type,
-  `OverallWidth`/`OverallHeight`, reference model source, world AABB, capped face polygons and
-  capped custom attributes. Reference objects no longer rely on their commonly empty Tekla GUID.
-- First-class part Position (`Plane`, `Rotation`, `Depth` and all offsets) in
-  `ModelObjectInfo`, `PartSpec` and `PartModification`.
-  - `tekla_create_beam` and `tekla_modify_part` accept explicit Position fields.
-  - `matchPositionGuid` copies the complete Position from an exemplar before explicit overrides.
-- Real connection/component primitives:
-  - `tekla_list_connections(partGuid)` reads exact Unicode name/number, primary/secondaries,
-    `UpVector`, auto-direction and status.
-  - `tekla_create_connection` creates system/custom connections with optional attributes file.
-  - `tekla_copy_connection` copies identity/orientation from an existing connection.
-  - Component writes commit pending geometry once before resolving GUIDs, avoiding the common
-    freshly-created-part insertion race.
-- `tekla_create_beams` — structured, capped batch creation (up to 200 beams per call).
-- `tekla_get_solid_bbox` — explicit native-part solid bounding-box helper.
-- `tekla_list_control_lines` — ControlLine start/end coordinates.
-- `tekla_get_api_reference_status` — explicit offline-reference availability/setup diagnostics.
-- `tekla_check_csharp` — policy-check and compile the exact escape-hatch source without live
-  execution; returns a stable SHA-256 and detected mutating API members so scripted writes can
-  be verified before user approval.
-- Drawing-list discovery and QA:
-  - `tekla_get_drawing_status`, `tekla_get_active_drawing`, `tekla_list_drawings`,
-    `tekla_get_selected_drawings`, `tekla_get_drawing_summary`, and
-    `tekla_find_drawing_issues`.
-  - `tekla_get_drawing_model_objects` returns full model ID/ID2/GUID identifiers represented by
-    one drawing.
-- Drawing-editor discovery:
-  - `tekla_get_drawing_sheet` returns active-sheet paper dimensions/origins and the configured
-    layout size/mode so agents can place views and sheet annotations inside known bounds.
-  - `tekla_list_drawing_views` returns paper frames, scale, restriction box, coordinate systems,
-    and best-effort DrawingInternal ID/ID2 values.
-  - `tekla_list_drawing_objects`, `tekla_get_selected_drawing_objects`, and
-    `tekla_select_drawing_objects` cover type/view/model GUID/text filters, geometry, UDAs, and
-    editor selection.
-- Preview-by-default drawing lifecycle/output:
-  - open/save/close and batch create/modify/delete;
-  - assembly, single-part, cast-unit, and GA drawings plus saved AutoDrawing rules;
-  - issue/unissue/update, automatic view placement, and PDF export.
-- Preview-by-default active-drawing content editing:
-  - front/top/back/bottom/3D, straight/curved section, and detail views;
-  - GA model views from explicit global view/display coordinate systems and a restriction box;
-  - text, line, rectangle, circle, arc, polyline, polygon, revision cloud, and symbol graphics;
-  - straight/angle/radius/radial/orthogonal curved dimensions, object marks, and level marks;
-  - batch object creation plus text/relative-move/visibility/attribute edits, deletion, and
-    merge/split operations for compatible marks.
-- Explicit drawing coordinate-space contract: view-local, global-model-to-view transformation,
-  and sheet/paper millimetres.
-- Mock coverage for drawing discovery, preview/apply state, Position merge/copy, reference
-  geometry, connections, scripting hardening, and API-reference status (79 tests total).
-- The v0.7 MCP surface contains 100 registered tools, 51 of them drawing-specific.
-
-### Changed
-
-- `TeklaMcp.Tekla` now references the version-matched `Tekla.Structures.Drawing` package/assembly
-  for every per-Tekla build (2021 baseline through 2026).
-- `ModelObjectInfo` now maps part Position, selected reference-object semantic summary, and
-  ControlLine coordinates.
-- Type-prefiltering now recognizes `ControlLine` and `ReferenceModelObject`.
-- `WriteResult` can return created integer IDs and component previews.
-- Mock part previews no longer consume IDs or expose fake committed GUIDs.
-- Drawing model-object links are bounded and paginated; summaries report truncation. Drawing
-  deletion refuses an empty scope, object/view IDs fail closed, and PDF/enum inputs are
-  validated instead of silently selecting defaults.
-- `tekla_run_csharp` now compiles against every installed managed `Tekla.Structures*.dll`
-  (Drawing/Dialog included when present), while Drawing stays an explicit script alias to avoid
-  `Part`/`View` ambiguity. Script results expose honest execution-attempt semantics and
-  partial-mutation warnings; `Print` storage is private and total-size capped, return values are
-  serialized inside the execution deadline, and truncated results remain valid JSON.
 
 ### Known limitations
 
@@ -796,7 +800,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.4.0...v0.5.0

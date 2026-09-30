@@ -66,7 +66,7 @@ static void PrintUsage()
 
 Example:
   dotnet run --project tools/TeklaApiDoc -- \
-    --dll-dir ~/.nuget/packages/tekla.structures.model/2023.0.0/lib/net48 \
-    --dll-dir ~/.nuget/packages/tekla.structures/2023.0.0/lib/net48 \
+    --dll-dir ~/.nuget/packages/tekla.structures.model/2023.0.1/lib/net40 \
+    --dll-dir ~/.nuget/packages/tekla.structures/2023.0.1/lib/net40 \
     --namespace Tekla.Structures --out reference/tekla-api");
 }

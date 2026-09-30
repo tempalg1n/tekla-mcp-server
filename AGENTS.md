@@ -15,7 +15,9 @@ An MCP server exposing Tekla Structures model data to AI assistants.
 Written in **C#**, because the Tekla Open API is a Windows/.NET assembly set.
 
 The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`net48`**
-(real Tekla backend on Windows). The Tekla integration project builds only on Windows.
+(real Tekla backend on Windows). The Tekla integration project only RUNS on Windows; it
+compiles on any OS through `TeklaMcp.sln` (see §5), but the server pulls it in only in its
+Windows `net48` build.
 
 ---
 
@@ -71,16 +73,68 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve geometry math, grid semantics, schematic renderer + PNG encoder) |
-| `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend (synthetic frame) |
-| `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, engine, SafeJson) + API reference search. No Tekla references — Tekla assemblies are supplied at runtime |
-| `src/TeklaMcp.Tekla/` | net48 | real Tekla Open API backend (Windows) |
-| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host + `tekla_*` tools |
-| `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla) |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve/solid/grid math, schematic renderer + PNG encoder, write outcomes, connection-error classification) |
+| `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend: synthetic frame + arch PolyBeam, stateful drawings; one partial file per area |
+| `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, approval gate, reference selection, engine, SafeJson) + API reference generation and search. References Core; no Tekla references — Tekla assemblies are supplied at runtime |
+| `src/TeklaMcp.Tekla/` | net48 (x64) | real Tekla Open API backend (runs on Windows only; compiles anywhere) — `TeklaModelService` split into one partial file per area, plus assembly loading and the remoting channel |
+| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host (`Program.cs`, `ToolErrorFilter`, `ShutdownGuard`) + `tekla_*` tools in `Tools/` |
+| `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla). References Core/Mock/Scripting — NOT the Server, so the tool layer is covered only by the smoke |
+| `tests/TeklaMcp.Smoke/` | net8.0 exe | MCP stdio smoke: launches the built server DLL as a real MCP client, checks initialize + `tools/list` + a few calls. Not in `TeklaMcp.sln` |
+| `tools/TeklaApiDoc/` | net8.0 exe | CLI over `ApiReferenceGenerator` (writes `reference/tekla-api/`). Not in `TeklaMcp.sln` |
 
 Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
-`$(OS) != Windows_NT`, so non-Windows builds never pull in the Tekla project. The
-`#if NET48` block in `Program.cs` selects the real backend only in that build.
+`$(OS) != Windows_NT`, so non-Windows builds of the SERVER never pull in the Tekla project
+(`TeklaMcp.sln` still compiles it). The `#if NET48` block in `Program.cs` selects the real
+backend only in that build: `TeklaAssemblyResolver.Register()` → `TeklaRemotingChannel.Align()` →
+`TeklaBackendFactory.Create()` (unless `TEKLA_MCP_USE_MOCK=1`).
+
+Where to find things (verify with `ls` — this list is a map, not a contract):
+
+| Area | Core (Tekla-free) | Mock partial | Tekla partial / helper |
+|---|---|---|---|
+| queries, analytics, UDAs, writes, connections, grids | `Aggregation`, `WriteOutcome.cs` (`WriteOutcome` + `WriteProgress`), `ModelPaths` (write-target check), `Geometry/GridMath` | `MockTeklaModelService.cs` | `TeklaModelService.cs` |
+| components | `ComponentSpecs` | `.Components.cs` | `TeklaComponentService.cs` |
+| model save/open | `ModelPaths` | `.ModelFile.cs` | `TeklaModelFileService.cs` |
+| environment (advanced options, catalogs, API-reference source) | `CatalogListing` | `.Environment.cs` | `TeklaEnvironmentService.cs` |
+| part solids | `Geometry/SolidMath.cs` (`SolidMath`, `SolidBuilder`) | `.Solid.cs` | `TeklaSolidService.cs` |
+| curve geometry | `Geometry/CurveMath` | `.CurveGeometry.cs` | `TeklaCurveGeometryService.cs` |
+| file exchange | `FileExchange/*` (`FilePathPolicy`, `ExportRunner`, `UdaImportRunner`, readers/writers) | `.FileExchange.cs` | `TeklaFileExchangeService.cs` |
+| reference models / IFC | `Ifc/IfcPlacementReader` | `MockTeklaModelService.cs` | `TeklaModelService.cs` |
+| schematic + view capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
+| drawings | `Models/DrawingInfo.cs`, `Models/DrawingWriteModels.cs` | `MockTeklaModelService.cs` | `TeklaDrawingService.cs`, `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs` |
+| connection lifecycle, assembly loading | `ConnectionErrors`, `ErrorText`, `RemotingChannelNames`, `TeklaBinLayout` | — | `TeklaAssemblyResolver.cs`, `TeklaBackendFactory.cs`, `TeklaRemotingChannel.cs` |
+
+Scripting: `ScriptPolicy` (syntax gate), `ScriptApprovalGate` (`expectedSha256` binding),
+`ScriptReferenceSelector` (which Tekla DLLs a script compiles against), `ScriptEngine`,
+`ScriptGlobals`, `SafeJson` + `SafeJsonReport` (return values and their caps), `ApiReference`
+(search) + `ApiReferenceGenerator` (Markdown reference from the installed Tekla).
+
+Tool files (`src/TeklaMcp.Server/Tools/`):
+
+| File | Tools / role |
+|---|---|
+| `ModelInfoTools.cs` | `tekla_get_connection_info`, `tekla_get_model_summary` |
+| `ModelQueryTools.cs` | list/find/get-by-GUID/selected objects, solid bbox, control lines |
+| `ModelWorkflowTools.cs` | count, `sum_weight`, `group_weight_by`, `list_distinct_values`, `select_objects`, `export_objects` |
+| `ModelAnalysisTools.cs` | `tekla_analyze_by_material` |
+| `ModelAssemblyTools.cs` | assembly list/count/parts |
+| `ModelAttributeTools.cs` | `tekla_find_attributes_by_value`, `tekla_discover_udas` |
+| `ModelPropertyTools.cs` | `tekla_get_properties` |
+| `ModelQaTools.cs` | `tekla_find_modeling_issues` |
+| `ModelUdaTools.cs` | get/set object UDAs, `tekla_set_udas_by_filter` |
+| `ModelWriteTools.cs` | create beam(s)/column/plate, modify part(s), swap handles, delete |
+| `ModelGeneratorTools.cs` | grid-based generators and fixers (`generate_frame`, `straighten_columns`, …) |
+| `ModelConnectionTools.cs` | list/find/modify/create/copy connections, `tekla_create_component`, profile-connection analysis |
+| `ModelGeometryTools.cs` | grids, `resolve_point`, `get_part_curve_geometry`, `get_part_solid` |
+| `ModelReferenceTools.cs` | `tekla_get_reference_geometry` |
+| `ModelFileExchangeTools.cs` | `export_parts_file`, `set_udas_from_file`, `export_reference_objects_file` |
+| `ModelEnvironmentTools.cs` | `tekla_get_advanced_options`, `tekla_list_catalog` |
+| `ModelLifecycleTools.cs` | `tekla_save_model`, `tekla_open_model` |
+| `ModelVisualTools.cs` | `tekla_capture_view`, `tekla_render_schematic` (image + JSON answers) |
+| `ModelScriptTools.cs` | `run_csharp`, `check_csharp`, `search_api`, `get_api_doc`, `get_api_reference_status` |
+| `ModelMetaTools.cs` | `tekla_report_gap` |
+| `DrawingQueryTools.cs` / `DrawingWriteTools.cs` / `DrawingContentTools.cs` | drawing reads / drawing lifecycle + batch writes / views, annotations, dimensions, marks |
+| `ToolHelpers.cs`, `DrawingToolHelpers.cs` | shared parsing, `BuildQuery`, the `Write(...)` wrappers (target + outcome) |
 
 ---
 
@@ -90,10 +144,20 @@ Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
    with XML docs describing behavior and the "not found" contract.
 2. Implement it in `MockTeklaModelService` (make the synthetic result believable).
 3. Implement it in `TeklaModelService` using the Tekla Open API.
+   A new AREA gets its own partial file on both sides (`MockTeklaModelService.<Area>.cs`,
+   `Tekla<Area>Service.cs` — see the map in §3), and derived logic that both backends need goes
+   into Core, where it is unit-tested.
 4. Expose it as a tool in `src/TeklaMcp.Server/Tools/` with `[McpServerTool(Name = "tekla_...")]`
    and a clear `[Description]`. First parameter is `ITeklaModelService model` (DI-injected,
    not shown to the LLM). Remaining parameters become tool inputs — give each a `[Description]`.
-5. Update the tool table in [README.md](README.md).
+5. Update the tool table AND the tool count in [README.md](README.md) ("exposes **N tools**",
+   drawing-specific count included).
+6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
+   tools, passed as its second argument in BOTH `.github/workflows/ci.yml` and
+   `.github/workflows/release.yml` (currently `116`). Adding or removing a tool without changing
+   both fails CI. Keep workflows, README count and `tools/list` equal.
+7. Add the user-facing change to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md), and tests in
+   `tests/TeklaMcp.Tests` for any Core/Mock/Scripting logic.
 
 Tool naming: `tekla_<verb>_<noun>`, snake_case. **Do not add write/mutating tools**
 without an explicit request and a safety gate (see existing UDA tools for the preview pattern).
@@ -171,7 +235,9 @@ blow the MCP client timeout. In `TeklaModelService`:
 - **`GetSolid()` is the most expensive call in the API** — only `Enrich(..., includeSolid: true)`
   results that need coordinates, never count/summary paths.
 - **Counting**: use `ITeklaModelService.CountObjects` (enumerator `GetSize()` when unfiltered);
-  don't count via `FindObjects(...).Count`.
+  don't count via `FindObjects(...).Count`. Caveat (`docs/backlog.md` §7): with `AutoFetch` the
+  enumerator may snapshot the whole source up front — one unfiltered count took ~20 s on a live
+  Tekla 2023 model. Measure before assuming `GetSize()` or cursor pages are cheap.
 - When a query filters by a known type, `EnumerateSource` pre-filters with
   `GetAllObjectsWithType` (see `TypeEnumMap`) — extend the map when you add type-heavy tools.
 
@@ -179,7 +245,7 @@ blow the MCP client timeout. In `TeklaModelService`:
 
 - **A few GUIDs, never a filter** — `GetSolid()` is the most expensive read; the tool caps at 20
   parts. Bulk boxes go through `tekla_export_parts_file` (`solidAabb`).
-- **Caps live in `Core/Geometry/SolidBuilder`**: faces beyond `maxFaces` are counted, a face that
+- **Caps live in `SolidBuilder` (`Core/Geometry/SolidMath.cs`)**: faces beyond `maxFaces` are counted, a face that
   would cross `maxPoints` is left out WHOLE, and `truncated` + reason say the list is not the
   shape. Feed loops lazily (`Func<IEnumerable<…>>`) so a full builder stops remoting reads.
 - **Geometry-derived facts only**: the outer loop is the largest by area (`LoopArea`), because
@@ -212,7 +278,8 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   output is findable and reversible. Keep this behavior.
 - **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
 - **Outcome + target on every write result** (`WriteResult`, `UdaOperationResult`,
-  `UdaFileWriteResult`, `DrawingWriteResult`; `ScriptResult` gets the target). Every mutating
+  `UdaFileWriteResult`, `DrawingWriteResult`, `ModelFileOperationResult`; `ScriptResult` gets the
+  target via `ToolHelpers.ResolveTarget`). Every mutating
   tool goes through a `ToolHelpers.Write(model, expectedModelPath, () => …)` wrapper and takes the
   optional `expectedModelPath` parameter (`ToolHelpers.ExpectedModelPathDescription`): the
   wrapper resolves `ITeklaModelService.GetWriteTarget()` (model path + Tekla PID), refuses a
@@ -225,19 +292,22 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   another tool. `expectedModelPath` there means the model being saved or CLOSED.
 - **Outcomes come from what happened, not from counters.** The Open API has no transactions —
   an `Insert`/`Modify`/`Delete`/`SetUserProperty` is in the model when it returns and nothing
-  rolls back. Live model writes use `Core/WriteProgress`: `BeginWrite()` right before the first
-  mutating call, `Complete()` after the final commit, `Fail(ex)` / `ItemFailed(ex)` in the
-  catches, `Stamp(...)` on every return. A failure between the first write and the commit is
-  `unknown` — never "not written". Count an object right after its write succeeded (not before,
-  not after follow-up reads), and treat a `false` from `Modify()`/`Delete()` as a refusal with
+  rolls back. Live model writes use `WriteProgress` (`Core/WriteOutcome.cs`): `BeginWrite()`
+  right before the first mutating call, `Complete()` after the final commit, `Fail(ex)` /
+  `ItemFailed(ex)` in the catches, and the backend's `Stamp(result, progress, …)` on every
+  return. A failure between the first write and the commit is `unknown` — never "not
+  written". Count an object right after its write succeeded (not before, not after follow-up
+  reads), and treat a `false` from `Modify()`/`Delete()` as a refusal with
   an error, never silently. Drawing writes are coarse (`DrawingFailure`: a lost connection
   during apply → `unknown`; `CommitDrawingChanges` returning false → `unknown`). The mock never
   fails half-way, so counters are exact there.
 - **Small service surface.** Keep backend write methods primitive and batch-oriented:
-  `CreateParts`, `ModifyParts`, `DeleteObjects`, `CreateConnections` and `CreateComponents`
-  (ordered `ComponentInput` for plugins; validated by `Core/ComponentSpecs` in the tool layer
-  AND the backends; read back with children, because a plugin's Run is not observable — zero
-  children is an error). **Generators, fixers
+  `CreateParts`, `ModifyParts`, `DeleteObjects`, `CreateConnections`, `ModifyConnections` and
+  `CreateComponents` (ordered `ComponentInput` for plugins; validated by `Core/ComponentSpecs` in
+  the tool layer AND the backends; read back with children, because a plugin's Run is not
+  observable — zero children is an error). The other mutating members are the UDA writers
+  (`SetObjectUdas`, `SetUdas`, `SetUdasFromFile`), `SaveModel`/`OpenModel`, the drawing batches
+  and `ExecuteScript`. **Generators, fixers
   and replication workflows** (`tekla_generate_frame`, `tekla_straighten_columns`,
   `tekla_fix_column_handles`, future `tekla_replicate_detail`, …) live in the TOOL layer and
   compose those primitives — do NOT add per-generator interface methods.
@@ -268,9 +338,12 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
 - Shared parsing/query helpers for write tools live in `ToolHelpers.cs`.
 
 New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTools.cs`,
-`ModelReferenceTools.cs`.
-The live-Tekla write path (`CreateParts`/`ModifyParts`/`DeleteObjects`/`CreateConnections`,
-grid parsing) is the most under-verified code in the repo — see `docs/tekla-api-notes.md`.
+`ModelReferenceTools.cs`, `ModelConnectionTools.cs`, `ModelLifecycleTools.cs`.
+The live-Tekla write path is still the least-verified code in the repo. Verified live on Tekla
+2023: the Position/UpVector/one-connection-per-pair behavior of `ModifyParts`/`ModifyConnections`/
+`CreateConnections`. NOT yet run live: the `unknown` outcome end to end, `CreateComponents` with a
+real plugin, `SaveModel`/`OpenModel` — see "Known limitations" in `CHANGELOG.md`,
+`docs/backlog.md` and `docs/tekla-api-notes.md`.
 
 ### Conventions for reference-model / IFC geometry
 
@@ -287,8 +360,13 @@ grid parsing) is the most under-verified code in the repo — see `docs/tekla-ap
 
 `tekla_export_parts_file`, `tekla_set_udas_from_file`, `tekla_export_reference_objects_file`.
 
-These three are the ONLY file access in the server — `ScriptPolicy` still bans `File`/`Path`/
-`Directory` outright, and that stays true. They exist because a geometric reconciliation moves
+These three are the ONLY tools where the server itself reads or writes a data file at a path the
+agent chooses — `ScriptPolicy` still bans `File`/`Path`/`Directory` outright, and that stays true.
+Other file touches are fixed server-owned locations (`tekla_report_gap`'s
+`%LOCALAPPDATA%\TeklaMcp\capability-requests.log`, the API-reference cache) or are done by Tekla
+itself (`tekla_export_drawings_pdf` hands its absolute output path to Tekla's print, NOT through
+`FilePathPolicy`; model save/open). A new tool that writes where the agent says goes through
+`FilePathPolicy`. They exist because a geometric reconciliation moves
 tens of MB of geometry out and tens of thousands of GUID→UDA pairs back in, and a tool response is
 an LLM context: the wrong pipe by one to two orders of magnitude.
 
@@ -557,8 +635,10 @@ version, see the table in `docs/releasing.md`; the default `2021.0.0` build only
 Tekla 2021):
 ```powershell
 dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=2023.0.1
-dotnet run --project src/TeklaMcp.Server -f net48 -c Release   # Tekla must be open
+dotnet run --no-build --project src/TeklaMcp.Server -f net48 -c Release   # Tekla must be open
 ```
+`--no-build` matters: a plain `dotnet run` rebuilds first WITHOUT your `-p:TeklaVersion`, i.e.
+against the 2021 default, and the resolver then refuses the running Tekla as a wrong build.
 
 The net48 projects also COMPILE on macOS/Linux (`dotnet build TeklaMcp.sln`) — useful for
 checking all `-p:TeklaVersion` values build, they just can't run there.
@@ -569,15 +649,45 @@ dotnet test tests/TeklaMcp.Tests
 ```
 Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8.0`, mock-only).
 
+**MCP stdio smoke (any OS, after a Release build of the server):**
+```bash
+dotnet build src/TeklaMcp.Server -c Release
+dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
+  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 116
+```
+It is what CI and the release workflow run after the unit tests, and it asserts EXACT values:
+
+- **tool count** = the second argument, hard-coded in `.github/workflows/ci.yml` AND
+  `.github/workflows/release.yml`. Adding/removing a tool means changing both (and the README
+  count) in the same change.
+- **server version** = the string hard-coded in `tests/TeklaMcp.Smoke/Program.cs`. A version bump
+  touches three places: `<Version>` in `Directory.Build.props`, the smoke's version check, and
+  the `?? "x.y.z"` fallback in `src/TeklaMcp.Server/Program.cs`.
+- plus: server name `tekla-mcp`, non-empty server instructions, no duplicate names, a few
+  required tools with descriptions/schemas, `tekla_get_connection_info` reporting the server
+  identity, and `tekla_run_csharp` refusing a mutating run without `expectedSha256`.
+
+**Compile check of every Tekla version (any OS):** CI builds `TeklaMcp.sln` once per
+`TeklaVersion` in the matrix (2021.0.0, 2022.0.10715, 2023.0.1, 2024.0.4, 2025.0.0, 2026.0.3 —
+table in `docs/releasing.md`). Before a PR that touches `src/TeklaMcp.Tekla/`, run
+`dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=<v>` for each; the build has 0 warnings,
+keep it that way.
+
+All executables and the test project set `<RollForward>Major</RollForward>`, so a machine with
+only a newer .NET runtime (e.g. .NET 10) runs the `net8.0` outputs without extra settings.
+
 ---
 
 ## 6. Reference docs
 
 - **Verify Tekla API calls against the local reference before writing them.** Generate a
-  grep-friendly Markdown reference with `tools/TeklaApiDoc` (reflects over the Tekla assemblies,
-  any OS) into `reference/tekla-api/` (git-ignored — Trimble content), then
+  grep-friendly Markdown reference with `tools/TeklaApiDoc` (a CLI over
+  `ApiReferenceGenerator`; reflects metadata-only over the Tekla assemblies, any OS) into
+  `reference/tekla-api/` (git-ignored — Trimble content), then
   `grep -rl "<Member>" reference/tekla-api`. Faster and more reliable than the web docs for
   confirming signatures/overloads/enums. See [tools/TeklaApiDoc/README.md](tools/TeklaApiDoc/README.md).
+  (The live server builds the same reference by itself for `tekla_search_api`, cached under
+  `%LOCALAPPDATA%\TeklaMcp\api-reference` — see the script conventions in §4.)
 - Tekla Open API 2026: https://developer.tekla.com/doc/tekla-structures/2026
 - MCP C# SDK: https://github.com/modelcontextprotocol/csharp-sdk
 - Local: [docs/architecture.md](docs/architecture.md), [docs/tekla-api-notes.md](docs/tekla-api-notes.md)

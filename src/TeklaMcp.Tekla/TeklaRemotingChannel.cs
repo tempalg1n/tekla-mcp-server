@@ -189,7 +189,8 @@ public static class TeklaRemotingChannel
     /// leaves the old client in place, so the next call can try again (Tekla may still be starting).
     /// Never switches to a channel with another name — that may be a different Tekla (§2).
     /// A client whose type initializer failed cannot be recreated; that still needs a server restart.
-    /// TODO(windows): acceptance = three real restarts each of Tekla 2021 and 2023.
+    /// Acceptance passed on Tekla 2023 with three real restarts (docs/backlog.md §1).
+    /// TODO(windows): the same three restarts on Tekla 2021.
     /// </summary>
     public static bool TryReconnect(string reason, out string message)
     {

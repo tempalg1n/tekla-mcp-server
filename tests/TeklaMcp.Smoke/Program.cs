@@ -1,15 +1,15 @@
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
-if (args.Length < 1)
+if (args.Length < 2)
 {
     Console.Error.WriteLine(
-        "Usage: dotnet run --project tests/TeklaMcp.Smoke -- <server.dll> [expected-tool-count]");
+        "Usage: dotnet run --project tests/TeklaMcp.Smoke -- <server.dll> <expected-tool-count>");
     return 2;
 }
 
 var serverDll = Path.GetFullPath(args[0]);
-var expectedToolCount = args.Length > 1 ? int.Parse(args[1]) : 100;
+var expectedToolCount = int.Parse(args[1]);
 if (!File.Exists(serverDll))
 {
     Console.Error.WriteLine("Server assembly not found: " + serverDll);
@@ -39,7 +39,7 @@ var tools = await client.ListToolsAsync(
 
 Require(client.ServerInfo.Name == "tekla-mcp",
     "initialize returned unexpected server name: " + client.ServerInfo.Name);
-Require(client.ServerInfo.Version == "0.7.0",
+Require(client.ServerInfo.Version == "0.8.0",
     "initialize returned unexpected server version: " + client.ServerInfo.Version);
 Require(!string.IsNullOrWhiteSpace(client.ServerInstructions),
     "initialize returned no server instructions.");
