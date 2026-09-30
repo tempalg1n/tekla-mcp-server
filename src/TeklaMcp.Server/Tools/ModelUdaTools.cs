@@ -30,8 +30,10 @@ public static class ModelUdaTools
         ITeklaModelService model,
         [Description("Object GUID.")] string guid,
         [Description("UDA updates: 'KEY=VALUE;KEY2=VALUE2' (semicolon/newline separated).")] string updates,
-        [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false)
-        => model.SetObjectUdas(guid, ParseKeyValuePairs(updates), apply);
+        [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath,
+            () => model.SetObjectUdas(guid, ParseKeyValuePairs(updates), apply));
 
     [McpServerTool(Name = "tekla_set_udas_by_filter")]
     [Description("Set UDA fields on objects matching filters. " +
@@ -46,8 +48,9 @@ public static class ModelUdaTools
         [Description("Material substring, e.g. 'S355' or 'C245'.")] string? material = null,
         [Description("Substring of object name.")] string? nameContains = null,
         [Description("Safety limit on number of matched objects. Default 200.")] int limit = 200,
-        [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false)
-        => model.SetUdas(
+        [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.SetUdas(
             new ObjectQuery
             {
                 Type = type,
@@ -58,7 +61,7 @@ public static class ModelUdaTools
             },
             ParseKeyValuePairs(updates),
             apply,
-            limit);
+            limit));
 
     private static IReadOnlyList<string> ParseList(string raw)
     {

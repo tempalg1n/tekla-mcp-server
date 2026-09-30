@@ -31,7 +31,8 @@ public static class ModelGeneratorTools
         [Description("Material grade. Empty = default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = default.")] string name = "",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var a = model.ResolvePoint(gridXFrom, gridY, z);
         var b = model.ResolvePoint(gridXTo, gridY, z);
@@ -42,7 +43,7 @@ public static class ModelGeneratorTools
                 Message = $"Could not resolve grids. {a.Message} {b.Message}".Trim(),
             };
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -67,7 +68,8 @@ public static class ModelGeneratorTools
         [Description("Material grade. Empty = default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = 'COLUMN'.")] string name = "COLUMN",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var xs = ToolHelpers.ParseNums(xCoords);
         var ys = ToolHelpers.ParseNums(yCoords);
@@ -81,7 +83,7 @@ public static class ModelGeneratorTools
                     End = new Point3D(x, y, topZ),
                     Profile = profile, Material = material, Class = @class, Name = name,
                 });
-        return ToolHelpers.FailIfNothingApplied(model.CreateParts(specs, apply));
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(specs, apply));
     }
 
     [McpServerTool(Name = "tekla_generate_frame")]
@@ -103,7 +105,8 @@ public static class ModelGeneratorTools
         [Description("Beam profile, e.g. 'IPE300'.")] string beamProfile,
         [Description("Material grade. Empty = default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         baysX = Math.Max(0, baysX);
         baysY = Math.Max(0, baysY);
@@ -139,9 +142,12 @@ public static class ModelGeneratorTools
                     specs.Add(Beam(x, ys[j], z, x, ys[j + 1], z, beamProfile, material, @class));
         }
 
-        var result = model.CreateParts(specs, apply);
-        result.Operation = "generate_frame";
-        return ToolHelpers.FailIfNothingApplied(result);
+        return ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var result = model.CreateParts(specs, apply);
+            result.Operation = "generate_frame";
+            return result;
+        });
     }
 
     [McpServerTool(Name = "tekla_straighten_columns")]
@@ -157,7 +163,8 @@ public static class ModelGeneratorTools
         [Description("Out-of-plumb tolerance (mm). Members within this are left alone. Default 5.")] double toleranceMm = 5,
         [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
         [Description("Safety cap. Default 500.")] int limit = 500,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var targets = model.FindObjects(
             ToolHelpers.BuildQuery(type, @class, profile, nameContains: nameContains, useSelection: useSelection),
@@ -182,9 +189,12 @@ public static class ModelGeneratorTools
             });
         }
 
-        var result = model.ModifyParts(mods, apply);
-        result.Operation = "straighten_columns";
-        return ToolHelpers.FailIfNothingApplied(result);
+        return ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var result = model.ModifyParts(mods, apply);
+            result.Operation = "straighten_columns";
+            return result;
+        });
     }
 
     [McpServerTool(Name = "tekla_fix_column_handles")]
@@ -201,7 +211,8 @@ public static class ModelGeneratorTools
                      "horizontal run. Default heuristic; no extra param needed.")] double verticalRatio = 1.0,
         [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
         [Description("Safety cap. Default 500.")] int limit = 500,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var targets = model.FindObjects(
             ToolHelpers.BuildQuery(type, @class, profile, nameContains: nameContains, useSelection: useSelection),
@@ -219,9 +230,12 @@ public static class ModelGeneratorTools
             mods.Add(new PartModification { Guid = o.Guid, SwapHandles = true });
         }
 
-        var result = model.ModifyParts(mods, apply);
-        result.Operation = "fix_column_handles";
-        return ToolHelpers.FailIfNothingApplied(result);
+        return ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var result = model.ModifyParts(mods, apply);
+            result.Operation = "fix_column_handles";
+            return result;
+        });
     }
 
     private static PartSpec Beam(double x1, double y1, double z1, double x2, double y2, double z2,

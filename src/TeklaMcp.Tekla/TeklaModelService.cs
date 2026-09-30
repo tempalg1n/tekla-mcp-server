@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSM = Tekla.Structures.Model;
@@ -17,12 +18,10 @@ namespace TeklaMcp.Tekla;
 /// <summary>
 /// REAL implementation of <see cref="ITeklaModelService"/> backed by the Tekla Open API.
 ///
-/// ⚠️  UNTESTED PROTOTYPE. None of this has been compiled or run against a live Tekla
-///     instance yet — it was written from the Tekla 2026 Open API documentation on a
-///     machine without Tekla. Treat every API call below as "needs verification on the
-///     Windows machine". The exact member names (GetReportProperty keys, SelectModelObject,
-///     ModelInfo fields) are the most likely places to need small fixes. See
-///     docs/tekla-api-notes.md for the reference list and the official docs links.
+/// Verification status: compiled against every supported Tekla version (2021–2026); read paths,
+/// part/connection writes and the reconnect are exercised on live Tekla 2021/2023, while other
+/// calls are only signature-checked. <c>// TODO(windows):</c> marks what still needs a live run,
+/// and docs/tekla-api-notes.md is the per-call ledger — check it before trusting a call.
 ///
 /// How the connection works: this runs as a STANDALONE process and connects to an
 /// already-running Tekla Structures with a model open. <c>new TSM.Model()</c> establishes
@@ -42,11 +41,20 @@ public sealed partial class TeklaModelService : ITeklaModelService
         "PHASE",
         "USER_PHASE",
         "RU_FN1_MRK",
+        // The generic user fields are the most common UDAs in real models (approval status,
+        // checker names, ...) — their absence here made value searches return false negatives.
+        "USER_FIELD_1",
+        "USER_FIELD_2",
+        "USER_FIELD_3",
+        "USER_FIELD_4",
+        "COMMENT",
     };
 
     private static bool _oneTimeInitDone;
 
-    private static void EnsureTeklaReady()
+    /// <param name="channel">The Open API client the caller is about to create (Model, or
+    /// Drawing for the drawing tools) — the one whose channel must be published.</param>
+    private static void EnsureTeklaReady(TeklaChannel channel = TeklaChannel.Model)
     {
         // Per-version build (issue #11): refuse to talk to a Tekla whose major version differs
         // from the one this build was compiled for — BEFORE any remoting call can fail with
@@ -57,6 +65,10 @@ public sealed partial class TeklaModelService : ITeklaModelService
         // Align() caches its own result and keeps retrying while Tekla publishes no pipes yet,
         // so calling it per-operation makes "start server first, open Tekla later" work.
         TeklaRemotingChannel.Align();
+
+        // ...but only if nothing dials a missing channel in the meantime: a proxy created then is
+        // dead for the process. Throws a plain "not running, nothing touched" error instead.
+        TeklaRemotingChannel.EnsurePublished(channel);
 
         if (_oneTimeInitDone) return;
         _oneTimeInitDone = true;
@@ -87,35 +99,61 @@ public sealed partial class TeklaModelService : ITeklaModelService
         // All Tekla-touching init lives in EnsureTeklaReady(), called lazily per operation.
     }
 
-    public ConnectionInfo GetConnectionInfo()
+    public ConnectionInfo GetConnectionInfo() => WithTeklaIdentity(ProbeConnection());
+
+    public WriteTarget GetWriteTarget()
+    {
+        var model = GetConnectedModel();
+        var info = model.GetInfo();
+        var target = new WriteTarget
+        {
+            ModelName = info.ModelName ?? "",
+            ModelPath = info.ModelPath ?? "",
+        };
+        TeklaRemotingChannel.IdentifyInstance(target);
+        return target;
+    }
+
+    /// <summary>Build/binding facts the tool layer cannot know; filled on every outcome.</summary>
+    private static ConnectionInfo WithTeklaIdentity(ConnectionInfo info)
+    {
+        try { info.CompiledTeklaVersion = TeklaAssemblyResolver.CompiledVersion?.ToString(); } catch { }
+        try
+        {
+            info.TeklaBinDir = TeklaAssemblyResolver.BinDir;
+            info.TeklaBinDirSource = TeklaAssemblyResolver.Source;
+        }
+        catch { }
+        info.TeklaProcesses = TeklaRemotingChannel.ListTeklaProcesses();
+        return info;
+    }
+
+    private static ConnectionInfo ProbeConnection()
     {
         try
         {
-            EnsureTeklaReady();
-            var model = new TSM.Model();
-            if (!model.GetConnectionStatus())
-            {
-                return new ConnectionInfo
-                {
-                    Connected = false,
-                    Backend = BackendName,
-                    Message = "Not connected. Is Tekla Structures running with a model open? " +
-                              "(" + TeklaRemotingChannel.Describe() + ")",
-                };
-            }
-
-            var info = model.GetInfo();
+            ConnectModel(out var info); // reconnects after a Tekla restart, like every other tool
             return new ConnectionInfo
             {
                 Connected = true,
                 Backend = BackendName,
                 ModelName = info.ModelName ?? "",
                 ModelPath = info.ModelPath ?? "",
+                LastReconnect = TeklaRemotingChannel.LastReconnect,
             };
         }
         catch (Exception ex)
         {
-            return new ConnectionInfo { Connected = false, Backend = BackendName, Message = ErrorText.Flatten(ex) };
+            // GetConnectionStatus() is only a local null check on the proxy, so a Tekla restart
+            // surfaces here, as a RemotingException from GetInfo(). Say what broke and what the
+            // user must restart instead of echoing the raw IPC error (field report MCP-SCF-011).
+            return new ConnectionInfo
+            {
+                Connected = false,
+                Backend = BackendName,
+                Message = TeklaRemotingChannel.DiagnoseConnectionFailure(ex),
+                LastReconnect = TeklaRemotingChannel.LastReconnect,
+            };
         }
     }
 
@@ -123,6 +161,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     {
         var model = GetConnectedModel();
         var summary = new ModelSummary { Backend = BackendName };
+        var totalWeight = 0.0;
 
         // Streaming aggregation over cheap reads only: type + direct Part properties and
         // (optionally) the WEIGHT report property. No Map(), no solids, no LENGTH/ASSEMBLY_POS —
@@ -155,7 +194,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     double weight = 0;
                     if (part.GetReportProperty("WEIGHT", ref weight))
                     {
-                        summary.TotalWeightKg += weight;
+                        totalWeight += weight;
                         summary.WeightByMaterialKg[Key(material)] =
                             summary.WeightByMaterialKg.TryGetValue(Key(material), out var cur) ? cur + weight : weight;
                     }
@@ -171,7 +210,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
         if (!includeWeights)
             summary.Message = (summary.Message + " Weights skipped (includeWeights=false).").TrimStart();
-        summary.TotalWeightKg = Math.Round(summary.TotalWeightKg, 1);
+        // null (not 0) when weights were skipped — 0 kg would read as a real measurement.
+        summary.TotalWeightKg = includeWeights ? Math.Round(totalWeight, 1) : (double?)null;
         return summary;
     }
 
@@ -266,7 +306,14 @@ public sealed partial class TeklaModelService : ITeklaModelService
             {
                 if (string.IsNullOrWhiteSpace(name)) continue;
                 if (TryGetAttributeValue(mo, name, out var value)) result.Udas[name] = value;
+                else result.NotFound.Add(name);
             }
+
+            if (result.NotFound.Count > 0 && result.Udas.Count == 0)
+                result.Message =
+                    "None of the requested names resolved on this " + result.Type +
+                    ". Report-property names are template names (VOLUME, AREA, ASSEMBLY_POS); " +
+                    "use tekla_find_attributes_by_value to discover where a known value lives.";
         }
         catch (Exception ex)
         {
@@ -452,30 +499,39 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
-    public IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    public AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50)
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false)
     {
+        var search = new AttributeSearchResult { Backend = BackendName };
         var result = new Dictionary<string, AttributeValueMatch>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(value)) return new List<AttributeValueMatch>();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            search.Message = "Empty search value — nothing scanned.";
+            return search;
+        }
 
         try
         {
             var model = GetConnectedModel();
             var candidates = BuildAttributeCandidateList(candidateAttributeNames);
-            var en = model.GetModelObjectSelector().GetAllObjects();
-            var scanned = 0;
+            search.CandidatesTried = candidates.Count;
+            var query = new ObjectQuery { UseSelection = useSelection };
+            var stoppedEarly = false;
 
-            while (en.MoveNext())
+            foreach (var mo in EnumerateSource(model, query, partsFallback: partsOnly))
             {
-                if (objectLimit is int maxObjects && maxObjects > 0 && scanned >= maxObjects) break;
-                scanned++;
-
-                var mo = en.Current;
-                if (mo is null) continue;
+                if (objectLimit is int maxObjects && maxObjects > 0 && search.ScannedObjects >= maxObjects)
+                {
+                    stoppedEarly = true;
+                    break;
+                }
+                search.ScannedObjects++;
 
                 foreach (var attrName in candidates)
                 {
@@ -496,10 +552,21 @@ public sealed partial class TeklaModelService : ITeklaModelService
                         row.SampleGuids.Add(mo.Identifier.GUID.ToString());
                 }
             }
+
+            search.Truncated = stoppedEarly;
+            var scope = useSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+            search.Message = search.Truncated
+                ? $"Scanned the first {search.ScannedObjects} {scope} (objectLimit) against {search.CandidatesTried} candidate names; " +
+                  "an empty result means NOT FOUND IN THIS SAMPLE, not absent — raise objectLimit or narrow the query to be sure."
+                : $"Scanned all {search.ScannedObjects} {scope} against {search.CandidatesTried} candidate names.";
+            if (result.Count == 0 && !search.Truncated)
+                search.Message += " The value is absent from the tried candidates in this scope — " +
+                                  "tekla_discover_udas can enumerate the fields that actually exist.";
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort tool: return accumulated results or empty on failure.
+            // A failed scan must never masquerade as "value not found".
+            search.Message = "Scan failed: " + ErrorText.Flatten(ex);
         }
 
         var ordered = new List<AttributeValueMatch>(result.Values);
@@ -512,7 +579,236 @@ public sealed partial class TeklaModelService : ITeklaModelService
         if (resultLimit is int maxRows && maxRows > 0 && ordered.Count > maxRows)
             ordered = ordered.GetRange(0, maxRows);
 
-        return ordered;
+        search.Matches = ordered;
+        return search;
+    }
+
+    public AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true)
+    {
+        var result = new AggregationResult { Backend = BackendName };
+        if (!Aggregation.TryParseGroupKey(groupBy, out var mode, out var keyName, out var normalized, out var error))
+        {
+            result.Message = error;
+            return result;
+        }
+        result.GroupBy = normalized;
+
+        if (!Aggregation.TryParseCursor(cursor, out var skip, out var cursorError))
+        {
+            result.Message = cursorError;
+            return result;
+        }
+
+        try
+        {
+            var model = GetConnectedModel();
+            query = query ?? new ObjectQuery();
+            // count, weightSum, withWeight per group key.
+            var agg = new Dictionary<string, double[]>(StringComparer.Ordinal);
+            long skipped = 0;
+            var stoppedEarly = false;
+
+            foreach (var mo in EnumerateSource(model, query, partsFallback: partsOnly))
+            {
+                // Cursor skip: consume the enumerator without touching any property — on live
+                // Tekla a bare MoveNext is ~50x cheaper than a property-reading iteration.
+                if (skipped < skip) { skipped++; continue; }
+
+                if (maxObjects is int cap && cap > 0 && result.ScannedObjects >= cap)
+                {
+                    stoppedEarly = true;
+                    break;
+                }
+                result.ScannedObjects++;
+
+                var info = MapBasic(mo);
+                if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+                result.MatchedObjects++;
+
+                var key = Aggregation.NormalizeKey(ReadGroupKey(mo, info, mode, keyName));
+                double weight = 0;
+                var hasWeight = mo.GetReportProperty("WEIGHT", ref weight);
+
+                Aggregation.Accumulate(agg, key, hasWeight ? weight : (double?)null);
+                if (hasWeight)
+                {
+                    result.ObjectsWithWeight++;
+                    result.TotalWeightKg += weight;
+                }
+            }
+
+            result.TotalWeightKg = Math.Round(result.TotalWeightKg, 2);
+            result.Rows = Aggregation.BuildRows(agg, limit, result);
+            result.Truncated = stoppedEarly;
+            if (stoppedEarly)
+            {
+                result.NextCursor = (skip + result.ScannedObjects).ToString(CultureInfo.InvariantCulture);
+                result.Message = AppendMessage(result.Message,
+                    $"Partial page: stopped after {result.ScannedObjects} source objects (maxObjects). " +
+                    "Repeat the call with cursor=NextCursor and the SAME filters, then merge rows by key — pages cover disjoint slices.");
+            }
+            else if (skip > 0 && result.ScannedObjects == 0)
+            {
+                result.Message = AppendMessage(result.Message,
+                    "Cursor points at or beyond the end of the source — nothing left to scan.");
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Message = AppendMessage(result.Message, "Aggregation failed: " + ErrorText.Flatten(ex));
+        }
+
+        return result;
+    }
+
+    public UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true)
+    {
+        var result = new UdaDiscoveryResult { Backend = BackendName };
+        if (sampleSize <= 0) sampleSize = 200;
+        if (topValuesPerField <= 0) topValuesPerField = 5;
+
+        try
+        {
+            var model = GetConnectedModel();
+            query = query ?? new ObjectQuery();
+            var valueCounts = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+            var readFailures = 0;
+
+            // Reading all UDAs of one object is a single expensive remoting call (~100+ ms on
+            // live models), so the scan is strictly sample-bounded. When the scan covers the
+            // whole model, split the budget across part types — plain enumeration order is
+            // clustered by type, and a sequential sample would see only beams.
+            var chunked = !query.UseSelection && string.IsNullOrWhiteSpace(query.Type) && partsOnly;
+            var sources = chunked
+                ? PartTypeEnums.Select(t => (IEnumerable<TSM.ModelObject>)Drain(
+                      model.GetModelObjectSelector().GetAllObjectsWithType(t))).ToList()
+                : new List<IEnumerable<TSM.ModelObject>>
+                  {
+                      EnumerateSource(model, query, partsFallback: partsOnly),
+                  };
+
+            for (var i = 0; i < sources.Count; i++)
+            {
+                // Equal share of the remaining budget per remaining source; leftovers roll over.
+                var budget = (sampleSize - result.SampledObjects) / (sources.Count - i);
+                if (budget <= 0) budget = sampleSize - result.SampledObjects;
+                if (budget <= 0) { result.Truncated = true; break; }
+
+                var taken = 0;
+                foreach (var mo in sources[i])
+                {
+                    if (taken >= budget) { result.Truncated = true; break; }
+                    var info = MapBasic(mo);
+                    if (info is null || !Matches(info, query) || !MatchesUda(mo, query)) continue;
+                    taken++;
+                    result.SampledObjects++;
+
+                    var udas = new Hashtable();
+                    try
+                    {
+                        mo.GetAllUserProperties(ref udas);
+                    }
+                    catch
+                    {
+                        readFailures++;
+                        continue;
+                    }
+
+                    foreach (DictionaryEntry entry in udas)
+                    {
+                        var name = entry.Key?.ToString() ?? "";
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        var value = FormatUdaValue(entry.Value);
+                        if (value.Length == 0) continue; // empty string = unset field
+
+                        if (!valueCounts.TryGetValue(name, out var counts))
+                        {
+                            counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                            valueCounts[name] = counts;
+                        }
+                        counts[value] = counts.TryGetValue(value, out var c) ? c + 1 : 1;
+                    }
+                }
+            }
+
+            result.Fields = valueCounts
+                .Select(kv => new UdaFieldStat
+                {
+                    Name = kv.Key,
+                    ObjectCount = kv.Value.Values.Sum(),
+                    DistinctValueCount = kv.Value.Count,
+                    TopValues = kv.Value
+                        .OrderByDescending(v => v.Value)
+                        .ThenBy(v => v.Key, StringComparer.OrdinalIgnoreCase)
+                        .Take(topValuesPerField)
+                        .Select(v => new UdaValueCount { Value = v.Key, Count = v.Value })
+                        .ToList(),
+                })
+                .OrderByDescending(f => f.ObjectCount)
+                .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var scope = query.UseSelection ? "current UI selection"
+                : chunked ? $"parts, budget split across {PartTypeEnums.Length} part types"
+                : partsOnly ? "parts" : "all objects";
+            result.Message = $"Sampled {result.SampledObjects} objects ({scope}).";
+            if (result.Truncated)
+                result.Message += " SAMPLE ONLY — fields carried exclusively by unsampled objects are invisible here; " +
+                                  "verify a specific field with a filtered count before concluding it is absent.";
+            if (readFailures > 0)
+                result.Message += $" {readFailures} object(s) failed the UDA read and were skipped.";
+        }
+        catch (Exception ex)
+        {
+            result.Message = "Discovery failed: " + ErrorText.Flatten(ex);
+        }
+
+        return result;
+    }
+
+    private static string ReadGroupKey(
+        TSM.ModelObject mo, ModelObjectInfo info, GroupKeyMode mode, string keyName)
+    {
+        switch (mode)
+        {
+            case GroupKeyMode.All: return "(all)";
+            case GroupKeyMode.Type: return info.Type;
+            case GroupKeyMode.Class: return info.Class;
+            case GroupKeyMode.Profile: return info.Profile;
+            case GroupKeyMode.Material: return info.Material;
+            case GroupKeyMode.Name: return info.Name;
+            case GroupKeyMode.Assembly:
+                var pos = "";
+                mo.GetReportProperty("ASSEMBLY_POS", ref pos);
+                return pos ?? "";
+            case GroupKeyMode.Uda:
+                return TryGetUserPropertyAsString(mo, keyName, out var udaValue) ? udaValue : "";
+            case GroupKeyMode.Attribute:
+                return TryGetAttributeValue(mo, keyName, out var attrValue) ? attrValue : "";
+            default: return "";
+        }
+    }
+
+    private static string FormatUdaValue(object? value)
+    {
+        switch (value)
+        {
+            case null: return "";
+            case string s: return s.Trim();
+            case double d: return d.ToString("G", CultureInfo.InvariantCulture);
+            case int i: return i.ToString(CultureInfo.InvariantCulture);
+            default: return value.ToString() ?? "";
+        }
     }
 
     public ProfileConnectionSummary AnalyzeConnectionsForProfile(string profile, double toleranceMm = 50, int? limit = 1000)
@@ -605,6 +901,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
 
         try
         {
@@ -613,27 +910,30 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (mo is null)
             {
                 result.Message = "Object not found.";
-                return result;
+                return Stamp(result, progress);
             }
 
             var preview = Map(mo);
             if (preview != null) result.Preview.Add(preview);
             result.MatchedObjects = 1;
 
-            if (!apply) return result;
+            if (!apply) return Stamp(result, progress);
 
+            progress.BeginWrite(); // SetUserProperty writes straight to the model
             if (ApplyUdaUpdates(mo, updates, out var changedFields))
             {
                 result.UpdatedObjects = 1;
                 result.UpdatedFields = changedFields;
             }
+            progress.Complete();
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
 
-        return result;
+        return Stamp(result, progress);
     }
 
     public UdaOperationResult SetUdas(
@@ -647,6 +947,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
 
         try
         {
@@ -665,122 +966,76 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
 
                 if (!apply) continue;
+                progress.BeginWrite();
                 if (ApplyUdaUpdates(mo, updates, out var changedFields))
                 {
                     result.UpdatedObjects++;
                     result.UpdatedFields += changedFields;
                 }
             }
+            progress.Complete();
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
 
+        return Stamp(result, progress);
+    }
+
+    // -- Write outcomes (backlog §4): every result says what happened, see WriteProgress ------
+
+    private static UdaOperationResult Stamp(UdaOperationResult result, WriteProgress progress)
+    {
+        // An object that matched but accepted none of its values counts as a refused item.
+        var refused = result.Applied ? Math.Max(0, result.MatchedObjects - result.UpdatedObjects) : 0;
+        result.Outcome = progress.Outcome(result.Applied, result.UpdatedObjects, refused);
+        return result;
+    }
+
+    private static WriteResult Stamp(WriteResult result, WriteProgress progress)
+    {
+        result.Outcome = progress.Outcome(
+            result.Applied,
+            result.CreatedCount + result.ModifiedCount + result.DeletedCount,
+            result.Errors.Count);
+        if (result.Outcome == WriteOutcome.Unknown)
+            result.Message = (string.IsNullOrWhiteSpace(result.Message) ? "" : result.Message + " ") +
+                "The call failed after writing began, and Tekla does not roll back: the model may hold " +
+                "some, all or none of these changes. Read the targets back before retrying.";
         return result;
     }
 
     // -- Geometry / grids ---------------------------------------------------------------
     //
-    // ⚠️ UNTESTED. Grid coordinate-string parsing and label generation are the most fragile
-    //    part here. Tekla grid coordinate strings may be absolute or relative, and custom
-    //    labels (incl. Cyrillic) are NOT read yet — labels are generated by convention
-    //    (X => 1,2,3…; Y => А,Б,В…). Verify and adjust on the live model.
-
-    private static readonly string[] CyrillicLabels =
-        { "А", "Б", "В", "Г", "Д", "Е", "Ж", "И", "К", "Л", "М", "Н", "П", "Р", "С", "Т" };
+    // Real labels (LabelX/LabelY/LabelZ), each grid's own origin and axes
+    // (GetCoordinateSystem) and Tekla's semantics — X/Y spacings, Z absolute levels — parsed by
+    // Core's GridMath (ReadGridDefinitions lives in TeklaSchematicService.cs). Verified live on
+    // Tekla 2023 (model 3219, 2026-09-29); see docs/tekla-api-notes.md.
 
     public IReadOnlyList<GridLineInfo> GetGrids()
     {
-        var grids = new List<GridLineInfo>();
+        // Outside the try: no connection is a tool error, never an empty grid list (seen in the
+        // §1 acceptance run — tekla_list_grids answered [] while Tekla was closed).
+        var model = GetConnectedModel();
         try
         {
-            var model = GetConnectedModel();
-            var en = model.GetModelObjectSelector()
-                          .GetAllObjectsWithType(TSM.ModelObject.ModelObjectEnum.GRID);
-            while (en.MoveNext())
-            {
-                if (!(en.Current is TSM.Grid grid)) continue;
-                AddGridLines("X", grid.CoordinateX, grids);
-                AddGridLines("Y", grid.CoordinateY, grids);
-            }
+            return InGlobalWorkPlane(model,
+                () => (IReadOnlyList<GridLineInfo>)GridMath.Flatten(ReadGridDefinitions(model, null)));
         }
-        catch
+        catch (Exception ex)
         {
-            // TODO(windows): verify Grid type + CoordinateX/Y parsing.
-        }
-        return grids;
-    }
-
-    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z)
-    {
-        var result = new PointResult { AxisX = axisXLabel, AxisY = axisYLabel, Z = z };
-        var grids = GetGrids();
-        var gx = grids.FirstOrDefault(g => g.Axis == "X" &&
-                    string.Equals(g.Label, axisXLabel, StringComparison.OrdinalIgnoreCase));
-        var gy = grids.FirstOrDefault(g => g.Axis == "Y" &&
-                    string.Equals(g.Label, axisYLabel, StringComparison.OrdinalIgnoreCase));
-        if (gx is null || gy is null)
-        {
-            result.Message = $"Grid label not found (X='{axisXLabel}': {gx != null}, Y='{axisYLabel}': {gy != null}).";
-            return result;
-        }
-        result.Resolved = true;
-        result.X = gx.Coordinate;
-        result.Y = gy.Coordinate;
-        return result;
-    }
-
-    private static void AddGridLines(string axis, string coordString, List<GridLineInfo> sink)
-    {
-        if (string.IsNullOrWhiteSpace(coordString)) return;
-        var coords = ParseGridCoordinates(coordString);
-        for (var index = 0; index < coords.Count; index++)
-        {
-            sink.Add(new GridLineInfo { Axis = axis, Label = LabelFor(axis, index), Coordinate = coords[index] });
+            Console.Error.WriteLine("[tekla] grids unavailable: " + ErrorText.Flatten(ex));
+            return new List<GridLineInfo>();
         }
     }
 
-    private static List<double> ParseGridCoordinates(string coordString)
-    {
-        var coords = new List<double>();
-        var tokens = coordString.Split(new[] { ' ', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries);
-        foreach (var rawToken in tokens)
-        {
-            var token = rawToken.Trim();
-            var starIndex = token.IndexOf('*');
-
-            // Tekla grids often use repeat syntax such as "4*6000".
-            if (starIndex > 0 &&
-                starIndex < token.Length - 1 &&
-                int.TryParse(token.Substring(0, starIndex), NumberStyles.Integer, CultureInfo.InvariantCulture, out var repeat) &&
-                repeat > 0 &&
-                TryParseInvariantDouble(token.Substring(starIndex + 1), out var step))
-            {
-                if (coords.Count == 0) coords.Add(0d);
-                var current = coords[coords.Count - 1];
-                for (var i = 0; i < repeat; i++)
-                {
-                    current += step;
-                    coords.Add(current);
-                }
-                continue;
-            }
-
-            if (TryParseInvariantDouble(token, out var absoluteCoord))
-                coords.Add(absoluteCoord);
-        }
-        return coords;
-    }
+    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z) =>
+        GridMath.Resolve(GetGrids(), axisXLabel, axisYLabel, z);
 
     private static bool TryParseInvariantDouble(string token, out double value)
         => double.TryParse(token.Replace(",", "."), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
-
-    private static string LabelFor(string axis, int index)
-    {
-        if (axis == "X") return (index + 1).ToString(CultureInfo.InvariantCulture);
-        return index < CyrillicLabels.Length ? CyrillicLabels[index] : "Y" + (index + 1);
-    }
 
     // -- Mutations (create / modify / delete) -------------------------------------------
     //
@@ -793,7 +1048,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public WriteResult CreateParts(IReadOnlyList<PartSpec> specs, bool apply)
     {
         var result = new WriteResult { Operation = "create", Applied = apply, Backend = BackendName };
-        if (specs == null || specs.Count == 0) { result.Message = "No specs provided."; return result; }
+        var progress = new WriteProgress();
+        if (specs == null || specs.Count == 0) { result.Message = "No specs provided."; return Stamp(result, progress); }
 
         if (!apply)
         {
@@ -802,7 +1058,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 result.PlannedCount++;
                 if (result.Preview.Count < 20) result.Preview.Add(PreviewInfo(spec));
             }
-            return result;
+            return Stamp(result, progress);
         }
 
         try
@@ -818,10 +1074,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     result.PlannedCount++;
                     try
                     {
+                        progress.BeginWrite(); // CreateOne inserts
                         var created = CreateOne(model, spec);
                         if (created is null) { result.Errors.Add("Create failed for kind=" + spec.Kind); continue; }
-                        created.SetUserProperty("MCP_ORIGIN", "mcp:create");
+                        // Counted right after the insert: anything failing below must not make
+                        // an object that IS in the model look uncreated.
                         result.CreatedCount++;
+                        created.SetUserProperty("MCP_ORIGIN", "mcp:create");
                         var info = Map(created);
                         if (info != null)
                         {
@@ -829,20 +1088,30 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             if (result.Preview.Count < 20) result.Preview.Add(info);
                         }
                     }
-                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                    catch (Exception exItem)
+                    {
+                        progress.ItemFailed(exItem);
+                        result.Errors.Add(ErrorText.Flatten(exItem));
+                    }
                 }
                 model.CommitChanges();
+                progress.Complete();
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public WriteResult ModifyParts(IReadOnlyList<PartModification> modifications, bool apply)
     {
         var result = new WriteResult { Operation = "modify", Applied = apply, Backend = BackendName };
-        if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return result; }
+        var progress = new WriteProgress();
+        if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return Stamp(result, progress); }
 
         try
         {
@@ -858,7 +1127,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     var info = Map(moPrev);
                     if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
                 }
-                return result;
+                return Stamp(result, progress);
             }
 
             var wph = model.GetWorkPlaneHandler();
@@ -866,6 +1135,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             wph.SetCurrentTransformationPlane(new TSM.TransformationPlane()); // global
             try
             {
+                var writtenGuids = new List<string>();
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
@@ -893,25 +1163,54 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             if (mod.NewStart != null) beam.StartPoint = ToPoint(mod.NewStart);
                             if (mod.NewEnd != null) beam.EndPoint = ToPoint(mod.NewEnd);
                         }
+                        progress.BeginWrite(); // SetUserProperty writes straight to the model
                         mo.SetUserProperty("MCP_ORIGIN", "mcp:modify");
-                        mo.Modify();
+                        // The return value used to be ignored, so a refused Modify() counted as a
+                        // modification. TODO(windows): confirm live that a no-op Modify() of an
+                        // unchanged part still returns true.
+                        if (!mo.Modify())
+                            throw new InvalidOperationException(
+                                "Tekla rejected Modify() for " + mod.Guid + " — the geometry/properties were not changed.");
                         result.ModifiedCount++;
-                        var info = Map(mo);
-                        if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
+                        var writtenGuid = ModelGuid(mo);
+                        if (!string.IsNullOrWhiteSpace(writtenGuid) && writtenGuids.Count < 20)
+                            writtenGuids.Add(writtenGuid);
                     }
-                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                    catch (Exception exItem)
+                    {
+                        progress.ItemFailed(exItem);
+                        result.Errors.Add(ErrorText.Flatten(exItem));
+                    }
                 }
                 model.CommitChanges();
+                progress.Complete();
+
+                // Report what the DATABASE holds, not the object we just wrote to. Tekla
+                // canonicalizes Position on commit — TOP+180° comes back as BELOW+0°, LEFT
+                // flips to RIGHT (verified live, Tekla 2023) — so echoing the in-memory object
+                // would hand the caller values the model does not actually agree with, and a
+                // follow-up read looks like the write was lost.
+                foreach (var guid in writtenGuids)
+                {
+                    var fresh = TrySelectObjectByGuid(model, guid);
+                    var info = fresh is null ? null : Map(fresh);
+                    if (info != null) result.Preview.Add(info);
+                }
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
     {
         var result = new WriteResult { Operation = "delete", Applied = apply, Backend = BackendName };
+        var progress = new WriteProgress();
         try
         {
             var model = GetConnectedModel();
@@ -930,17 +1229,31 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.PlannedCount = matched.Count;
-            if (!apply) return result;
+            if (!apply) return Stamp(result, progress);
 
             foreach (var mo in matched)
             {
-                try { if (mo.Delete()) result.DeletedCount++; }
-                catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                try
+                {
+                    progress.BeginWrite();
+                    if (mo.Delete()) result.DeletedCount++;
+                    else result.Errors.Add("Tekla refused to delete " + ModelGuid(mo) + " (" + mo.GetType().Name + ").");
+                }
+                catch (Exception exItem)
+                {
+                    progress.ItemFailed(exItem);
+                    result.Errors.Add(ErrorText.Flatten(exItem));
+                }
             }
             model.CommitChanges();
+            progress.Complete();
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public IReadOnlyList<ComponentInfo> GetConnections(string partGuid)
@@ -974,10 +1287,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
         if (specs == null || specs.Count == 0)
         {
             result.Message = "No connection specs provided.";
-            return result;
+            return Stamp(result, progress);
         }
 
         try
@@ -988,6 +1302,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             // race where freshly-created primary/secondary parts are not selectable yet.
             if (apply) model.CommitChanges();
 
+            var plannedReplacements = 0;
             foreach (var spec in specs)
             {
                 result.PlannedCount++;
@@ -1011,6 +1326,14 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     if (secondaries.Count == 0)
                         throw new InvalidOperationException("At least one secondary object is required.");
 
+                    // Tekla refuses a SECOND connection on a primary/secondary pair that already
+                    // carries one (verified live, Tekla 2023), so swapping a node type is a
+                    // delete + insert rather than an insert.
+                    var doomed = spec.ReplaceExisting
+                        ? FindComponentsOnPair(primary, secondaries)
+                        : new List<TSM.BaseComponent>();
+                    plannedReplacements += doomed.Count;
+
                     var preview = new ComponentInfo
                     {
                         Guid = "(preview)",
@@ -1026,6 +1349,17 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     if (result.ComponentPreview.Count < 20)
                         result.ComponentPreview.Add(preview);
                     if (!apply) continue;
+
+                    progress.BeginWrite(); // replace-mode deletes, then the insert
+                    foreach (var existing in doomed)
+                    {
+                        if (existing.Delete()) result.DeletedCount++;
+                        else result.Errors.Add(
+                            "Could not delete existing component id " +
+                            existing.Identifier.ID + " occupying this pair.");
+                    }
+                    // The pair must be free in the DATABASE before the replacement is inserted.
+                    if (doomed.Count > 0) model.CommitChanges();
 
                     var connection = new TSM.Connection
                     {
@@ -1072,17 +1406,245 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
                 catch (Exception exItem)
                 {
+                    progress.ItemFailed(exItem);
                     result.Errors.Add(ErrorText.Flatten(exItem));
                 }
             }
 
-            if (apply) model.CommitChanges();
+            if (apply)
+            {
+                model.CommitChanges();
+                progress.Complete();
+                RefreshComponentPreview(model, result);
+            }
+
+            if (plannedReplacements > 0)
+                result.Message = apply
+                    ? "Replace mode: deleted " + result.DeletedCount +
+                      " existing component(s) on the targeted pair(s) before inserting."
+                    : "Replace mode: " + plannedReplacements +
+                      " existing component(s) on the targeted pair(s) would be deleted first.";
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
-        return result;
+        return Stamp(result, progress);
+    }
+
+    public WriteResult ModifyConnections(
+        IReadOnlyList<ConnectionModification> modifications, bool apply)
+    {
+        var result = new WriteResult
+        {
+            Operation = "modify_connections",
+            Applied = apply,
+            Backend = BackendName,
+        };
+        var progress = new WriteProgress();
+        if (modifications == null || modifications.Count == 0)
+        {
+            result.Message = "No connection modifications provided.";
+            return Stamp(result, progress);
+        }
+
+        try
+        {
+            var model = GetConnectedModel();
+            var writtenGuids = new List<string>();
+
+            foreach (var mod in modifications)
+            {
+                result.PlannedCount++;
+                try
+                {
+                    var component = TrySelectComponent(model, mod.Guid, mod.Id);
+                    if (component == null)
+                    {
+                        result.Errors.Add(
+                            "Connection not found: " +
+                            (string.IsNullOrWhiteSpace(mod.Guid)
+                                ? "id " + (mod.Id ?? 0)
+                                : mod.Guid));
+                        continue;
+                    }
+
+                    if (!apply)
+                    {
+                        if (result.ComponentPreview.Count < 20)
+                            result.ComponentPreview.Add(PlanComponentChange(component, mod));
+                        continue;
+                    }
+
+                    ApplyConnectionModification(component, mod);
+                    progress.BeginWrite(); // SetUserProperty writes straight to the model
+                    component.SetUserProperty("MCP_ORIGIN", "mcp:modify_connection");
+                    if (!component.Modify())
+                        throw new InvalidOperationException(
+                            "Tekla rejected the connection modify.");
+
+                    result.ModifiedCount++;
+                    var guid = ModelGuid(component);
+                    if (!string.IsNullOrWhiteSpace(guid) && writtenGuids.Count < 20)
+                        writtenGuids.Add(guid);
+                }
+                catch (Exception exItem)
+                {
+                    progress.ItemFailed(exItem);
+                    result.Errors.Add(ErrorText.Flatten(exItem));
+                }
+            }
+
+            if (apply)
+            {
+                model.CommitChanges();
+                progress.Complete();
+                // Same reason as ModifyParts: read back the committed component so the caller
+                // sees the orientation Tekla actually stored, not the one we asked for.
+                foreach (var guid in writtenGuids)
+                {
+                    if (TrySelectObjectByGuid(model, guid) is TSM.BaseComponent fresh)
+                        result.ComponentPreview.Add(MapComponent(fresh));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
+    }
+
+    /// <summary>
+    /// Apply an orientation/attribute change to a live component.
+    ///
+    /// Tekla only PERSISTS an explicitly written <c>UpVector</c> when the component's
+    /// auto-direction is <c>AUTODIR_NA</c>. Verified live (Tekla 2023): under
+    /// <c>AUTODIR_BASIC</c> the write is silently discarded even though <c>Modify()</c>
+    /// returns true; the identical write under <c>AUTODIR_NA</c> sticks. So an explicit
+    /// vector switches the mode unless the caller named one.
+    /// </summary>
+    private static void ApplyConnectionModification(
+        TSM.BaseComponent component, ConnectionModification mod)
+    {
+        if (component is TSM.Connection connection)
+        {
+            if (!string.IsNullOrWhiteSpace(mod.AutoDirection))
+                connection.AutoDirectionType = ParseAutoDirection(mod.AutoDirection);
+            else if (mod.UpVector != null)
+                connection.AutoDirectionType = TS.AutoDirectionTypeEnum.AUTODIR_NA;
+
+            if (mod.UpVector != null)
+                connection.UpVector = new TSG.Vector(
+                    mod.UpVector.X, mod.UpVector.Y, mod.UpVector.Z);
+        }
+        else if (mod.UpVector != null || !string.IsNullOrWhiteSpace(mod.AutoDirection))
+        {
+            throw new InvalidOperationException(
+                "Up vector / auto direction can only be set on a Connection; this component is a " +
+                component.GetType().Name + ".");
+        }
+
+        if (!string.IsNullOrWhiteSpace(mod.AttributesFile) &&
+            !component.LoadAttributesFromFile(mod.AttributesFile))
+            throw new InvalidOperationException(
+                "Connection attributes file could not be loaded: " + mod.AttributesFile);
+    }
+
+    /// <summary>Preview DTO showing the intended post-change orientation, without writing.</summary>
+    private static ComponentInfo PlanComponentChange(
+        TSM.BaseComponent component, ConnectionModification mod)
+    {
+        var info = MapComponent(component);
+        if (mod.UpVector != null) info.UpVector = mod.UpVector;
+        if (!string.IsNullOrWhiteSpace(mod.AutoDirection))
+            info.AutoDirection = NormalizeAutoDirection(mod.AutoDirection);
+        else if (mod.UpVector != null)
+            info.AutoDirection = "AUTODIR_NA";
+        return info;
+    }
+
+    private static TSM.BaseComponent? TrySelectComponent(TSM.Model model, string? guid, int? id)
+    {
+        if (!string.IsNullOrWhiteSpace(guid) &&
+            TrySelectObjectByGuid(model, guid!) is TSM.BaseComponent byGuid)
+            return byGuid;
+
+        if (id.HasValue && id.Value != 0)
+        {
+            try
+            {
+                return model.SelectModelObject(
+                    new global::Tekla.Structures.Identifier(id.Value)) as TSM.BaseComponent;
+            }
+            catch
+            {
+                // Fall through to "not found" — the caller reports it per item.
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Components already attached to <paramref name="primary"/> that share at least one of
+    /// <paramref name="secondaries"/> — i.e. the ones occupying the pair we want to insert on.
+    /// </summary>
+    private static List<TSM.BaseComponent> FindComponentsOnPair(
+        TSM.ModelObject primary, ArrayList secondaries)
+    {
+        var hits = new List<TSM.BaseComponent>();
+        if (!(primary is TSM.Part part)) return hits;
+
+        var primaryGuid = ModelGuid(primary);
+        var secondaryGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in secondaries)
+        {
+            if (!(item is TSM.ModelObject secondary)) continue;
+            var guid = ModelGuid(secondary);
+            if (!string.IsNullOrWhiteSpace(guid)) secondaryGuids.Add(guid);
+        }
+        if (string.IsNullOrWhiteSpace(primaryGuid) || secondaryGuids.Count == 0) return hits;
+
+        try
+        {
+            var components = part.GetComponents();
+            while (components.MoveNext())
+            {
+                if (!(components.Current is TSM.BaseComponent component)) continue;
+                if (!(component is TSM.Connection connection)) continue;
+                if (!string.Equals(
+                        ModelGuid(connection.GetPrimaryObject()),
+                        primaryGuid,
+                        StringComparison.OrdinalIgnoreCase)) continue;
+
+                foreach (var item in connection.GetSecondaryObjects())
+                {
+                    if (!(item is TSM.ModelObject secondary)) continue;
+                    if (!secondaryGuids.Contains(ModelGuid(secondary))) continue;
+                    hits.Add(component);
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // A part that cannot enumerate its components simply has nothing to replace.
+        }
+        return hits;
+    }
+
+    /// <summary>Replace committed component previews with a fresh read from the database.</summary>
+    private static void RefreshComponentPreview(TSM.Model model, WriteResult result)
+    {
+        for (var i = 0; i < result.ComponentPreview.Count; i++)
+        {
+            var guid = result.ComponentPreview[i].Guid;
+            if (string.IsNullOrWhiteSpace(guid) || guid == "(preview)") continue;
+            if (TrySelectObjectByGuid(model, guid) is TSM.BaseComponent fresh)
+                result.ComponentPreview[i] = MapComponent(fresh);
+        }
     }
 
     // -- Script escape hatch --------------------------------------------------------------
@@ -1112,12 +1674,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             // A compile-only check is intentionally remoting-free: it is safe before user
-            // approval and can work even when no model is open. Live execution still aligns
-            // the Tekla remoting channel before the script's `new Model()`.
+            // approval and can work even when no model is open. Live execution connects first —
+            // guard, alignment and a reconnect after a Tekla restart — so the script's own
+            // `new Model()` gets a live client.
             if (compileOnly)
                 TeklaAssemblyResolver.EnsureVersionMatch();
             else
-                EnsureTeklaReady();
+                GetConnectedModel();
 
             var policy = Scripting.ScriptPolicy.Analyze(code, allowMutations);
             result.DetectedMutatingMembers.AddRange(policy.MutatingMembers);
@@ -1129,18 +1692,23 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.Stage = "compile";
-            var script = Scripting.ScriptEngine.Create(code, BuildScriptReferences());
+            var references = SelectScriptReferences();
+            result.ReferenceSummary = references.Summary;
+            var script = Scripting.ScriptEngine.Create(
+                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: references.Paths));
             result.CompilationAttempted = true;
             result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
             if (result.CompileErrors.Count > 0)
             {
-                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                result.References.AddRange(references.Report);
+                result.Guidance = Scripting.ScriptReferenceSelector.CompileFailureGuidance(references);
                 return result;
             }
             result.Compiled = true;
 
             if (compileOnly)
             {
+                result.References.AddRange(references.Report);
                 result.Success = true;
                 result.Guidance =
                     "Compile-only validation succeeded. The script was NOT executed and no Tekla model/drawing " +
@@ -1165,53 +1733,63 @@ public sealed partial class TeklaModelService : ITeklaModelService
     }
 
     /// <summary>
-    /// Metadata references for script compilation. Prefer every managed Tekla.Structures*.dll
-    /// available in the resolver's bin directory over a hand-maintained shortlist: this gives
-    /// the escape hatch the Drawing, Dialog, Datatype, Plugins and future Open API surfaces
-    /// when installed, without taking compile-time dependencies in TeklaMcp.Scripting.
+    /// Tekla references for script compilation. The assemblies this process has actually loaded
+    /// are authoritative — they are what the live connection binds, possibly from the GAC — and
+    /// the resolver's Open API folder only adds what nobody loaded yet (Drawing, Dialog,
+    /// Datatype, Plugins, …). ScriptReferenceSelector drops non-managed files, duplicates and
+    /// other Tekla years, and records every decision for tekla_check_csharp. (The folder used to
+    /// be the ONLY source whenever it held any Tekla.Structures*.dll, which broke every script on
+    /// Tekla 2021 with the folder at nt\bin — DEV-005 field report.)
     /// </summary>
-    private static IReadOnlyList<Microsoft.CodeAnalysis.MetadataReference> BuildScriptReferences()
+    private static Scripting.ScriptReferenceSelection SelectScriptReferences()
     {
+        var loaded = new List<string>();
+        void AddLoaded(System.Reflection.Assembly? assembly)
+        {
+            try
+            {
+                if (assembly != null && !assembly.IsDynamic && !string.IsNullOrEmpty(assembly.Location))
+                    loaded.Add(assembly.Location);
+            }
+            catch
+            {
+                // no usable location — cannot be a metadata reference
+            }
+        }
+
+        // The core API first: typeof() binds it (metadata only, no remoting) even when no tool
+        // has touched Tekla yet, e.g. a compile-only check right after startup.
+        AddLoaded(typeof(TSM.Model).Assembly);
+        AddLoaded(typeof(global::Tekla.Structures.Identifier).Assembly);
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var name = assembly.GetName().Name ?? "";
+            if (name.StartsWith("Tekla.Structures", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("Tekla.Dialog", StringComparison.OrdinalIgnoreCase))
+                AddLoaded(assembly);
+        }
+
+        var folderFiles = new List<string>();
         var bin = TeklaAssemblyResolver.BinDir;
         if (bin != null)
         {
             try
             {
-                var paths = System.IO.Directory
+                folderFiles.AddRange(System.IO.Directory
                     .GetFiles(bin, "Tekla.Structures*.dll", System.IO.SearchOption.TopDirectoryOnly)
                     .Concat(System.IO.Directory
                         .GetFiles(bin, "Tekla.Dialog*.dll", System.IO.SearchOption.TopDirectoryOnly))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
-                if (paths.Length > 0)
-                    return Scripting.ScriptEngine.BuildReferences(teklaDllPaths: paths);
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
             }
             catch
             {
-                // TODO(windows): an unusual locked/protected Tekla bin should degrade to the
-                // loaded-assembly fallback below, not make the escape hatch unavailable.
+                // TODO(windows): a locked/protected Tekla folder degrades to the loaded assemblies.
             }
         }
 
-        // No resolver bin located (unusual), or it could not be enumerated: fall back to every
-        // already-loaded managed Tekla API assembly with a readable Location.
-        var loaded = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(assembly =>
-            {
-                var name = assembly.GetName().Name ?? "";
-                return name.StartsWith("Tekla.Structures", StringComparison.OrdinalIgnoreCase)
-                       || name.StartsWith("Tekla.Dialog", StringComparison.OrdinalIgnoreCase);
-            })
-            .ToArray();
-        return Scripting.ScriptEngine.BuildReferences(
-            teklaAssemblies: loaded.Length > 0
-                ? loaded
-                : new[]
-                {
-                    typeof(TSM.Model).Assembly,
-                    typeof(global::Tekla.Structures.Identifier).Assembly,
-                });
+        return Scripting.ScriptReferenceSelector.Select(
+            loaded, folderFiles, TeklaAssemblyResolver.CompiledVersion?.Major);
     }
 
     private static TSM.ModelObject? CreateOne(TSM.Model model, PartSpec spec)
@@ -1961,14 +2539,40 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     // ---------------------------------------------------------------- internals ----
 
-    private static TSM.Model GetConnectedModel()
+    private static TSM.Model GetConnectedModel() => ConnectModel(out _);
+
+    /// <summary>
+    /// A Model client that has just answered a real call. <c>GetConnectionStatus()</c> is only a
+    /// local null check, so a Tekla restart used to surface as a RemotingException in the middle of
+    /// a tool; now one cheap <c>GetInfo()</c> at the start of every call finds it, and the stale
+    /// clients are recreated once (backlog §1) — BEFORE the tool reads or writes anything, so no
+    /// write is ever repeated. A second failure propagates and is diagnosed by the tool-error filter.
+    /// </summary>
+    private static TSM.Model ConnectModel(out TSM.ModelInfo info)
     {
         EnsureTeklaReady();
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
-            throw new InvalidOperationException(
-                "No connection to Tekla Structures. Start Tekla and open a model first. " +
-                "(" + TeklaRemotingChannel.Describe() + ")");
+        {
+            // A null client: created while Tekla was down (2021), or never connected.
+            if (!TeklaRemotingChannel.TryReconnect("the client had no connection", out var why))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model) + " Reconnect attempt: " + why);
+            model = new TSM.Model();
+        }
+
+        try
+        {
+            info = model.GetInfo();
+        }
+        catch (Exception ex) when (ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            if (!TeklaRemotingChannel.TryReconnect("Tekla was restarted", out var why))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.DiagnoseConnectionFailure(ex) + " Reconnect attempt: " + why, ex);
+            model = new TSM.Model();
+            info = model.GetInfo();
+        }
 
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,
@@ -2004,29 +2608,78 @@ public sealed partial class TeklaModelService : ITeklaModelService
             ["Beam"] = TSM.ModelObject.ModelObjectEnum.BEAM,
             ["PolyBeam"] = TSM.ModelObject.ModelObjectEnum.POLYBEAM,
             ["ContourPlate"] = TSM.ModelObject.ModelObjectEnum.CONTOURPLATE,
+            ["BentPlate"] = TSM.ModelObject.ModelObjectEnum.BENT_PLATE,
+            ["LoftedPlate"] = TSM.ModelObject.ModelObjectEnum.LOFTED_PLATE,
+            ["SpiralBeam"] = TSM.ModelObject.ModelObjectEnum.SPIRAL_BEAM,
+            ["Brep"] = TSM.ModelObject.ModelObjectEnum.BREP,
+            ["CustomPart"] = TSM.ModelObject.ModelObjectEnum.CUSTOM_PART,
+            ["Assembly"] = TSM.ModelObject.ModelObjectEnum.ASSEMBLY,
+            ["BoltArray"] = TSM.ModelObject.ModelObjectEnum.BOLT_ARRAY,
+            ["BoltCircle"] = TSM.ModelObject.ModelObjectEnum.BOLT_CIRCLE,
+            ["BoltXYList"] = TSM.ModelObject.ModelObjectEnum.BOLT_XYLIST,
+            ["Weld"] = TSM.ModelObject.ModelObjectEnum.WELD,
+            ["PolygonWeld"] = TSM.ModelObject.ModelObjectEnum.POLYGON_WELD,
+            ["Connection"] = TSM.ModelObject.ModelObjectEnum.CONNECTION,
+            ["Component"] = TSM.ModelObject.ModelObjectEnum.COMPONENT,
+            ["Detail"] = TSM.ModelObject.ModelObjectEnum.DETAIL,
+            ["Seam"] = TSM.ModelObject.ModelObjectEnum.SEAM,
+            ["Fitting"] = TSM.ModelObject.ModelObjectEnum.FITTING,
             ["Grid"] = TSM.ModelObject.ModelObjectEnum.GRID,
             ["ControlLine"] = TSM.ModelObject.ModelObjectEnum.CONTROL_LINE,
+            ["ControlPoint"] = TSM.ModelObject.ModelObjectEnum.CONTROL_POINT,
             ["ReferenceModelObject"] = TSM.ModelObject.ModelObjectEnum.REFERENCE_MODEL_OBJECT,
         };
 
     /// <summary>
+    /// Every enum value that materializes as a physical <see cref="TSM.Part"/>. Enumerating
+    /// these type-by-type replaces a full-model walk: on a live 470k-object model that is the
+    /// difference between ~5 s (parts chain) and ~52 s (GetAllObjects) before any property is
+    /// read. A GetAllObjectsWithType(System.Type[]) overload does exist (2021 included — an
+    /// earlier note here said it did not); the chain stays because it is the measured path.
+    /// </summary>
+    private static readonly TSM.ModelObject.ModelObjectEnum[] PartTypeEnums =
+    {
+        TSM.ModelObject.ModelObjectEnum.BEAM,
+        TSM.ModelObject.ModelObjectEnum.POLYBEAM,
+        TSM.ModelObject.ModelObjectEnum.CONTOURPLATE,
+        TSM.ModelObject.ModelObjectEnum.BENT_PLATE,
+        TSM.ModelObject.ModelObjectEnum.LOFTED_PLATE,
+        TSM.ModelObject.ModelObjectEnum.SPIRAL_BEAM,
+        TSM.ModelObject.ModelObjectEnum.BREP,
+        TSM.ModelObject.ModelObjectEnum.CUSTOM_PART,
+    };
+
+    /// <summary>
     /// Yield the objects a query should operate on: the current UI selection
     /// (<see cref="ObjectQuery.UseSelection"/>), the type-filtered subset when the queried
-    /// type maps to a Tekla enum (lets Tekla skip non-candidates), or every object.
+    /// type maps to a Tekla enum (lets Tekla skip non-candidates), the physical-parts chain
+    /// when the caller opted into <paramref name="partsFallback"/>, or every object.
     /// AutoFetch (enabled process-wide in the static constructor) batches object data during
     /// enumeration instead of one remoting round-trip per property read.
     /// </summary>
-    private static IEnumerable<TSM.ModelObject> EnumerateSource(TSM.Model model, ObjectQuery query)
+    private static IEnumerable<TSM.ModelObject> EnumerateSource(
+        TSM.Model model, ObjectQuery query, bool partsFallback = false)
     {
-        TSM.ModelObjectEnumerator en;
         if (query != null && query.UseSelection)
-            en = new TSMUI.ModelObjectSelector().GetSelectedObjects();
-        else if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
-                 TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
-            en = model.GetModelObjectSelector().GetAllObjectsWithType(objectType);
-        else
-            en = model.GetModelObjectSelector().GetAllObjects();
+            return Drain(new TSMUI.ModelObjectSelector().GetSelectedObjects());
+        if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
+            TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
+            return Drain(model.GetModelObjectSelector().GetAllObjectsWithType(objectType));
+        if (partsFallback && (query is null || string.IsNullOrWhiteSpace(query.Type)))
+            return EnumerateParts(model);
+        return Drain(model.GetModelObjectSelector().GetAllObjects());
+    }
 
+    /// <summary>Chain the per-type enumerators for every physical part type.</summary>
+    private static IEnumerable<TSM.ModelObject> EnumerateParts(TSM.Model model)
+    {
+        foreach (var partType in PartTypeEnums)
+            foreach (var mo in Drain(model.GetModelObjectSelector().GetAllObjectsWithType(partType)))
+                yield return mo;
+    }
+
+    private static IEnumerable<TSM.ModelObject> Drain(TSM.ModelObjectEnumerator en)
+    {
         while (en.MoveNext())
         {
             if (en.Current != null) yield return en.Current;
@@ -2187,7 +2840,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     private static bool MatchesUda(TSM.ModelObject mo, ObjectQuery q)
     {
-        if (!string.IsNullOrWhiteSpace(q.UdaName) && !string.IsNullOrWhiteSpace(q.UdaEquals))
+        if (!string.IsNullOrWhiteSpace(q.UdaName) && q.UdaIsEmpty)
+        {
+            // "Not processed yet": the UDA is absent or blank. Distinct from UdaEquals, which
+            // ignores a blank expected value and so could never express this.
+            if (TryGetUserPropertyAsString(mo, q.UdaName!, out var current) &&
+                !string.IsNullOrWhiteSpace(current))
+                return false;
+        }
+        else if (!string.IsNullOrWhiteSpace(q.UdaName) && !string.IsNullOrWhiteSpace(q.UdaEquals))
         {
             var udaName = q.UdaName!;
             if (!TryGetUserPropertyAsString(mo, udaName, out var udaValue))

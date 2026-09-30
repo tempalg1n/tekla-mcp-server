@@ -36,8 +36,9 @@ public static class ModelWriteTools
         [Description("Depth: MIDDLE, FRONT, BEHIND. Empty = default/matched.")] string? depth = null,
         [Description("Depth offset (mm).")] double? depthOffset = null,
         [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -58,11 +59,12 @@ public static class ModelWriteTools
     public static WriteResult CreateBeams(
         ITeklaModelService model,
         [Description("Beam specifications (maximum 200).")] IReadOnlyList<PartSpec> beams,
-        [Description("Set true to commit the whole batch. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit the whole batch. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var specs = (beams ?? new List<PartSpec>()).Take(200).ToList();
         foreach (var spec in specs) spec.Kind = "beam";
-        var result = ToolHelpers.FailIfNothingApplied(model.CreateParts(specs, apply));
+        var result = ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(specs, apply));
         if (beams != null && beams.Count > 200)
             result.Message = "Batch capped at 200 of " + beams.Count + " beam specs.";
         return result;
@@ -80,8 +82,9 @@ public static class ModelWriteTools
         [Description("Material grade. Empty = default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = 'COLUMN'.")] string name = "COLUMN",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -102,8 +105,9 @@ public static class ModelWriteTools
         [Description("Material grade. Empty = default.")] string material = "",
         [Description("Tekla class. Empty = default.")] string @class = "",
         [Description("Object name. Empty = default.")] string name = "",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => ToolHelpers.FailIfNothingApplied(model.CreateParts(new[]
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(new[]
         {
             new PartSpec
             {
@@ -132,8 +136,9 @@ public static class ModelWriteTools
         [Description("Depth: MIDDLE, FRONT, BEHIND. Empty = keep/matched.")] string? depth = null,
         [Description("Depth offset (mm), or omitted to keep/match.")] double? depthOffset = null,
         [Description("Copy the complete Position from this existing part GUID, then apply explicit overrides.")] string? matchPositionGuid = null,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => ToolHelpers.FailIfNothingApplied(model.ModifyParts(new[]
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.ModifyParts(new[]
         {
             new PartModification
             {
@@ -150,6 +155,28 @@ public static class ModelWriteTools
             }
         }, apply));
 
+    [McpServerTool(Name = "tekla_modify_parts")]
+    [Description("Modify up to 200 parts in ONE batch — the batch form of tekla_modify_part. Each " +
+                 "item addresses a part by GUID and may set profile/material/class/name, move " +
+                 "endpoints, swap handles, and set Position (plane/rotation/depth + offsets) or " +
+                 "copy it from matchPositionGuid. Use this instead of N separate calls when " +
+                 "re-orienting a whole axis or frame. Preview unless apply=true. NOTE: Tekla " +
+                 "canonicalizes Position on commit (TOP+180 is stored as BELOW+0), so the returned " +
+                 "preview reads back from the model and may name the rotation differently than you " +
+                 "asked — the physical orientation is what you requested.")]
+    public static WriteResult ModifyParts(
+        ITeklaModelService model,
+        [Description("Part modifications (maximum 200).")] IReadOnlyList<PartModification> modifications,
+        [Description("Set true to commit the whole batch. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+    {
+        var mods = (modifications ?? new List<PartModification>()).Take(200).ToList();
+        var result = ToolHelpers.Write(model, expectedModelPath, () => model.ModifyParts(mods, apply));
+        if (modifications != null && modifications.Count > 200)
+            result.Message = "Batch capped at 200 of " + modifications.Count + " modifications.";
+        return result;
+    }
+
     [McpServerTool(Name = "tekla_swap_handles")]
     [Description("Swap the start/end handles of parts matching filters (re-orient wrongly-modeled " +
                  "members). Preview unless apply=true. Capped by limit.")]
@@ -163,13 +190,14 @@ public static class ModelWriteTools
         [Description("Explicit GUID list (comma/semicolon/newline).")] string? guidIn = null,
         [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
         [Description("Safety cap. Default 200.")] int limit = 200,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var targets = model.FindObjects(
             ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, guidIn: guidIn, useSelection: useSelection),
             limit);
         var mods = targets.Select(o => new PartModification { Guid = o.Guid, SwapHandles = true }).ToList();
-        return ToolHelpers.FailIfNothingApplied(model.ModifyParts(mods, apply));
+        return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyParts(mods, apply));
     }
 
     [McpServerTool(Name = "tekla_delete_objects")]
@@ -187,8 +215,9 @@ public static class ModelWriteTools
         [Description("Explicit GUID list (comma/semicolon/newline).")] string? guidIn = null,
         [Description("Scope to current UI selection. Default false.")] bool useSelection = false,
         [Description("Safety cap. Default 200.")] int limit = 200,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
-        => ToolHelpers.FailIfNothingApplied(model.DeleteObjects(
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.DeleteObjects(
             ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, guidIn, useSelection),
             apply,
             limit));

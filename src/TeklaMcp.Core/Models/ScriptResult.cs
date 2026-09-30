@@ -37,6 +37,12 @@ public sealed class ScriptResult
     public string Backend { get; set; } = "";
 
     /// <summary>
+    /// The model (and Tekla process) an executed script ran against. Null for compile-only
+    /// checks, which never touch Tekla.
+    /// </summary>
+    public WriteTarget? Target { get; set; }
+
+    /// <summary>
     /// SHA-256 of the exact UTF-8 script text, for approval/audit without echoing the code.
     /// </summary>
     public string CodeSha256 { get; set; } = "";
@@ -53,8 +59,32 @@ public sealed class ScriptResult
     /// <summary>C# compiler errors — fix the script and retry.</summary>
     public List<string> CompileErrors { get; set; } = new List<string>();
 
+    /// <summary>
+    /// One line describing the Tekla reference set the compile used: count, Tekla version and
+    /// origin. When it says the core API is missing, compile errors are a server/installation
+    /// problem, not a script mistake.
+    /// </summary>
+    public string? ReferenceSummary { get; set; }
+
+    /// <summary>
+    /// Every Tekla assembly the compiler considered, with version, path and why it was used or
+    /// left out. Filled by compile-only checks and on compile failures; empty on normal runs to
+    /// keep results small.
+    /// </summary>
+    public List<ScriptReferenceInfo> References { get; set; } = new List<ScriptReferenceInfo>();
+
     /// <summary>The script's return value (its last expression), rendered as JSON. Capped.</summary>
     public string? ReturnValueJson { get; set; }
+
+    /// <summary>
+    /// True when a serializer cap dropped part of the return value (long strings, lists over
+    /// the item cap, nesting past the depth cap, the total-size envelope). The JSON stays valid
+    /// either way, so this flag — not the JSON's own shape — decides whether it is complete.
+    /// </summary>
+    public bool ReturnValueTruncated { get; set; }
+
+    /// <summary>One line per serializer cap that fired; empty when the value is complete.</summary>
+    public List<string> ReturnValueTruncation { get; set; } = new List<string>();
 
     /// <summary>Lines the script emitted via Print(...). Capped.</summary>
     public List<string> PrintedOutput { get; set; } = new List<string>();

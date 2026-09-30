@@ -37,6 +37,8 @@ builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogL
 // net48 build (Windows): real Tekla, unless TEKLA_MCP_USE_MOCK=1 forces the mock
 // (handy for smoke-testing the server on Windows without a model open).
 var forceMock = Environment.GetEnvironmentVariable("TEKLA_MCP_USE_MOCK") == "1";
+// Turns a lost-connection exception from any tool into cause + action (see ToolErrorFilter).
+Func<Exception, string>? connectionDiagnoser = null;
 
 #if NET48
 if (forceMock)
@@ -45,12 +47,16 @@ if (forceMock)
 }
 else
 {
+    connectionDiagnoser = TeklaMcp.Tekla.TeklaRemotingChannel.DiagnoseConnectionFailure;
     // Per-version build: this artifact is compiled for ONE Tekla version. The resolver
     // loads the Tekla Open API assemblies from the installed/running Tekla and fails fast
     // on a version mismatch. Must run before the first Tekla type is touched.
     TeklaMcp.Tekla.TeklaAssemblyResolver.Register();
     TeklaMcp.Tekla.TeklaRemotingChannel.Align();
-    builder.Services.AddSingleton<ITeklaModelService, TeklaMcp.Tekla.TeklaModelService>();
+    // Via a factory, not the type: the backend is constructed only after the version check
+    // passes, because a failed static initializer would be cached for the process (see
+    // TeklaBackendFactory).
+    builder.Services.AddSingleton<ITeklaModelService>(_ => TeklaMcp.Tekla.TeklaBackendFactory.Create());
 }
 #else
 _ = forceMock; // mock is the only option on this TFM
@@ -75,22 +81,79 @@ const string serverInstructions =
     "Never use EXTERNAL automation (files, macros outside this server) and never fabricate or " +
     "guess model data. On the Mock backend scripts are validated but not executed — say so " +
     "instead of inventing results.\n\n" +
-    "Model and drawing write/UI tools default to apply=false (preview). Drawing points explicitly " +
+    "WHOLE-MODEL ANALYTICS: use the streaming tools (tekla_group_weight_by / tekla_sum_weight / " +
+    "tekla_list_distinct_values) — they support grouping by user fields ('uda:USER_FIELD_1') and " +
+    "never read solids. Unknown field layout? tekla_discover_udas first, then " +
+    "tekla_find_attributes_by_value — and always check its scannedObjects/truncated before " +
+    "declaring a value absent. Models can exceed 400k objects while MCP clients abort requests " +
+    "after ~60 s and the result is lost even if the server finishes: cap heavy scans with " +
+    "maxObjects and continue via cursor=nextCursor instead of raising timeouts. Before a " +
+    "scripting session, call tekla_get_api_reference_status once — it tells you whether " +
+    "tekla_search_api can verify signatures on this machine.\n\n" +
+    "BULK DATA IN AND OUT goes through a file, never through your context: tekla_export_parts_file " +
+    "(objects with optional solidAabb/coordSystem/contourPoints/cog/uda:NAME), " +
+    "tekla_export_reference_objects_file (IFC objects with world AABB + placement) and " +
+    "tekla_set_udas_from_file (GUID-keyed UDA writes). Reach for them as soon as the job involves " +
+    "more than a few hundred objects or per-object geometry — do NOT page thousands of rows through " +
+    "tekla_find_objects/tekla_get_reference_geometry, and do NOT put long GUID lists in a script. " +
+    "They only accept absolute paths under the configured roots (TEKLA_MCP_FILE_ROOT, default " +
+    "%LOCALAPPDATA%\\TeklaMcp\\exchange plus the model folder), page with maxObjects + cursor + " +
+    "append, and return counters only — the data stays in the file.\n\n" +
+    "Model and drawing write tools default to apply=false (preview); only the UI-only tools " +
+    "tekla_select_objects, tekla_select_drawing_objects and tekla_capture_view act immediately. " +
+    "Drawing points explicitly " +
     "distinguish view-local, global model, and sheet/paper-mm coordinate spaces. Show the plan and " +
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +
-    "show the user the script and what it will change, get their explicit go-ahead, only then " +
-    "rerun with allowMutations=true — and keep changes traceable (MCP_ORIGIN UDA) and " +
-    "reversible (Tekla Ctrl+Z).\n\n" +
-    "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
+    "validate the exact script with tekla_check_csharp, show the user the script and what it will " +
+    "change, get their explicit go-ahead, only then run it with allowMutations=true and " +
+    "expectedSha256 = the codeSha256 the check returned (any edit after approval changes the hash " +
+    "and the run is refused — check and approve again) — and keep changes traceable (MCP_ORIGIN " +
+    "UDA) and reversible (Tekla Ctrl+Z).\n\n" +
+    "WRITE RESULTS say what happened: outcome = planned (preview) / not_written / committed / " +
+    "partial (see errors) / unknown, plus target = the model path and Tekla PID the write went to. " +
+    "'unknown' means the call failed AFTER writing began and Tekla does not roll back: read the " +
+    "objects back and write only what is missing — never retry blindly. When more than one Tekla " +
+    "or model is in play, pass expectedModelPath (the modelPath from tekla_get_connection_info) to " +
+    "every write: a different open model refuses the call before anything is written.\n\n" +
+    "The DRAWING tool layer (every tool on drawings, views, drawing objects, dimensions and " +
+    "marks) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
-    "retrying blindly or scripting around it.";
+    "retrying blindly or scripting around it.\n\n" +
+    "CURVED PARTS: radius and curved dimensions need exact arc points. Get them from " +
+    "tekla_get_part_curve_geometry (bends with radius/chord/sagitta/arc length, inner/outer arcs " +
+    "of round tubes and bars, optional view coordinates) — never estimate them from bounding " +
+    "boxes or from the segmented polyline of a drawing part.\n\n" +
+    "SEEING THE MODEL: look instead of guessing from coordinates. tekla_capture_view returns a " +
+    "screenshot of the live Tekla view, optionally zoomed to and highlighting given GUIDs (a brief, " +
+    "restored change on the user's screen). tekla_render_schematic (BETA — an early, simplified " +
+    "sketch that can look cluttered on dense models) draws a numbered plan/elevation/iso with real " +
+    "grid labels and a legend with GUIDs, without touching Tekla. Use them to orient yourself, to " +
+    "identify what the user points at, and to check what a write created before you report success.\n\n" +
+    "KNOWN MODEL-LAYER QUIRKS (verified on live Tekla — trust the tools over a raw script here):\n" +
+    "- Connection.UpVector is only STORED under auto-direction NA. Under BASIC the Open API " +
+    "returns success and silently recomputes the vector. Use tekla_modify_connections, which " +
+    "switches to NA for you, rather than scripting UpVector + Modify.\n" +
+    "- Tekla canonicalizes Part.Position on commit: writing rotation TOP + 180 deg reads back as " +
+    "BELOW + 0 (and LEFT can flip to RIGHT). The orientation IS correct — a RotationOffset of 0 " +
+    "is not evidence the write failed, so do not retry it in a loop.\n" +
+    "- Only ONE connection may exist per primary/secondary pair; a second insert is rejected. To " +
+    "swap a node type pass replaceExisting=true (delete + insert), do not just insert again.\n" +
+    "- Component names differ between the Tekla UI and the API (UI shows '...(1)' where the API " +
+    "has '... 1'). Read names from tekla_list_connections / tekla_find_connections; never filter " +
+    "on a name copied out of the UI.\n" +
+    "- Custom-component insertion can fail after LoadAttributesFromFile even where the same " +
+    "component inserts fine without it (field report, not yet reduced to a repro). Prefer " +
+    "tekla_copy_connection from a working detail; pass attributesFile only when a specific " +
+    "saved set is genuinely required.\n" +
+    "- Prefer the batch tools (tekla_modify_parts, tekla_modify_connections, tekla_create_beams) " +
+    "over N single-object calls when editing a whole axis or frame.";
 
 var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
     .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
     .FirstOrDefault()?.InformationalVersion;
-var serverVersion = (informationalVersion ?? "0.7.0").Split('+')[0];
+var serverVersion = (informationalVersion ?? "0.8.0").Split('+')[0];
 
 builder.Services
     .AddMcpServer(options =>
@@ -104,7 +167,13 @@ builder.Services
         options.ServerInstructions = serverInstructions;
     })
     .WithStdioServerTransport()
-    .WithToolsFromAssembly(); // discovers [McpServerToolType] classes in this assembly
+    .WithToolsFromAssembly() // discovers [McpServerToolType] classes in this assembly
+    // Pass the real exception text to the agent instead of the SDK's bare
+    // "An error occurred invoking '<tool>'." (see ToolErrorFilter).
+    .WithRequestFilters(filters => filters.AddCallToolFilter(
+        next => TeklaMcp.Server.ToolErrorFilter.Create(next, connectionDiagnoser)));
 
 var app = builder.Build();
+// End with the MCP client and never hang in shutdown (orphaned servers, see ShutdownGuard).
+TeklaMcp.Server.ShutdownGuard.Start(app.Services.GetRequiredService<IHostApplicationLifetime>());
 await app.RunAsync();

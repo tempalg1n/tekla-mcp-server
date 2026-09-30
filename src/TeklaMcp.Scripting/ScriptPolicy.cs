@@ -101,12 +101,29 @@ public static class ScriptPolicy
         // Operations/macros/export helpers. Qualified Operation.* calls are caught by the
         // "Operation" token; explicit names also cover `using static` and wrapper helpers.
         "Operation", "RunMacro", "RunMacroAndWait", "RunCommand", "PlaceComponents",
-        "MoveObject", "CopyObject", "Split", "SplitSlab",
+        // NOT "Split": the mutating call is Operation.Split, and the "Operation" token above
+        // already catches it. Listing the bare name only ever fired on string.Split(...), which
+        // forced scripts to hand-roll their own tokenizer. "SplitSlab" is distinctive enough to
+        // keep.
+        "MoveObject", "CopyObject", "SplitSlab",
         "CreateIFC4ExportFromAll", "CreateIFC4ExportFromSelected",
         "CreateReportFromAll", "CreateReportFromSelected",
         "CreateNCFilesFromAll", "CreateNCFilesFromSelected", "CreateNCFilesByPartId",
         "InsertView", "InsertViewByStandardFile", "UpdateModificationStampToLatest",
         "SetAsCurrentRevision", "RemoveRevision",
+
+        // Environment catalogs (CatalogHandler, 2021–2023 verified from the NuGet assemblies):
+        // imports overwrite same-named catalog entries, and a field report ran a custom-component
+        // import through compile-check with no mutation detected.
+        "ImportBoltItems", "ImportCustomComponentItems", "ImportDrawingItems",
+        "ImportLibraryProfileItems", "ImportMaterialItems", "ImportMeshItems",
+        "ImportParametricProfileItems", "ImportRebarItems", "ImportShapeItems",
+        "SaveProfileDatabase",
+
+        // ModelHandler: switching, closing or creating a model. Bare Open/Close are acceptable
+        // here only because matching is invocation-only and File/Stream/Process are banned, so
+        // the realistic callee is ModelHandler.
+        "Open", "Close", "CreateNewSingleUserModel", "CreateNewMultiUserModel",
 
         // Drawing lifecycle / output.
         "SaveActiveDrawing", "CloseActiveDrawing", "IssueDrawing", "UnissueDrawing",
@@ -192,17 +209,35 @@ public static class ScriptPolicy
                     string.Join(", ", AllowedUsings.OrderBy(n => n)) + ".");
         }
 
+        // Banned names the script DECLARES itself (a local function called Process, ...). Every
+        // later use of such a name is a use of that declaration, so the whole script gets the
+        // "rename your declaration" message instead of an accusation about System.Diagnostics.
+        var declaredBanned = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var token in root.DescendantTokens()
+                     .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
+            if (BannedIdentifiers.Contains(token.ValueText) && IsDeclarationName(token))
+                declaredBanned.Add(token.ValueText);
+
         foreach (var token in root.DescendantTokens()
                      .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
         {
             var name = token.ValueText;
             if (BannedIdentifiers.Contains(name))
-                Add($"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
-                    "Use Print(...) for output and return a value as the last expression. " +
-                    "(If this is just your variable name, rename it.)");
-            else if (BannedNamespaceSegments.Contains(name))
+                Add(declaredBanned.Contains(name)
+                    ? $"'{name}' is a reserved capability name and cannot be used even for your own " +
+                      "function, variable or parameter — rename it (e.g. " + name + "Row). The check " +
+                      "is syntax-only, so it cannot tell your declaration from the banned type of the " +
+                      "same name."
+                    : $"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
+                      "Use Print(...) for output and return a value as the last expression. " +
+                      "Reflection and 'dynamic' are banned because the Tekla API is fully typed: cast to the " +
+                      "concrete type instead (e.g. 'if (e.Current is Beam b)' or 'var c = mo as Connection;') " +
+                      "and verify the member with tekla_search_api. " +
+                      "(If this is just your variable name, rename it.)");
+            else if (BannedNamespaceSegments.Contains(name) && !IsStopwatchQualifier(token))
                 Add($"'{name}' looks like a banned namespace (System.{name}.*) — not allowed in scripts. " +
-                    "(If this is just your variable name, rename it.)");
+                    "(If this is just your variable name, rename it. Fully-qualified " +
+                    "System.Diagnostics.Stopwatch is allowed for timing.)");
             else if (MutatingMembers.Contains(name) && IsMutatingUse(token))
                 mutations.Add(name);
         }
@@ -214,6 +249,76 @@ public static class ScriptPolicy
                 "needed: show the script to the user, get their explicit go-ahead, then retry with allowMutations=true.");
 
         return new ScriptPolicyAnalysis(violations, mutations.ToList());
+    }
+
+    /// <summary>
+    /// The one sanctioned use of a banned namespace segment: fully-qualified
+    /// <c>System.Diagnostics.Stopwatch</c>. Timing a scan is a legitimate read-only need, and
+    /// the qualification requirement keeps the rest of System.Diagnostics (Process, ...)
+    /// unreachable — a bare <c>using System.Diagnostics;</c> is still rejected. True when the
+    /// "Diagnostics" token is the right-hand side of <c>System.Diagnostics</c> whose parent
+    /// member access / qualified name is <c>.Stopwatch</c>.
+    /// </summary>
+    private static bool IsStopwatchQualifier(SyntaxToken token)
+    {
+        if (token.ValueText != "Diagnostics")
+            return false;
+
+        var identifier = token.Parent as IdentifierNameSyntax;
+        if (identifier == null)
+            return false;
+
+        // "Diagnostics" must be the Name of a member access (expression context) or the Right
+        // of a qualified name (type context) — i.e. the "System.Diagnostics" node...
+        SyntaxNode node;
+        var memberAccess = identifier.Parent as MemberAccessExpressionSyntax;
+        var qualifiedName = identifier.Parent as QualifiedNameSyntax;
+        if (memberAccess != null && ReferenceEquals(memberAccess.Name, identifier))
+            node = memberAccess;
+        else if (qualifiedName != null && ReferenceEquals(qualifiedName.Right, identifier))
+            node = qualifiedName;
+        else
+            return false;
+
+        // ...whose own parent selects exactly Stopwatch.
+        var parentAccess = node.Parent as MemberAccessExpressionSyntax;
+        if (parentAccess != null && ReferenceEquals(parentAccess.Expression, node))
+            return (parentAccess.Name as IdentifierNameSyntax)?.Identifier.ValueText == "Stopwatch";
+        var parentQualified = node.Parent as QualifiedNameSyntax;
+        if (parentQualified != null && ReferenceEquals(parentQualified.Left, node))
+            return (parentQualified.Right as IdentifierNameSyntax)?.Identifier.ValueText == "Stopwatch";
+        return false;
+    }
+
+    /// <summary>
+    /// True when the token is the NAME being declared (local function, method, variable,
+    /// parameter, foreach/pattern designation) rather than a use of the banned type. The ban
+    /// still applies — a syntax-only policy cannot distinguish the two once the name is in
+    /// scope — but the message can at least say "rename your declaration" instead of accusing
+    /// the script of reaching for System.Diagnostics.Process.
+    /// </summary>
+    private static bool IsDeclarationName(SyntaxToken token)
+    {
+        var parent = token.Parent;
+        if (parent == null) return false;
+
+        switch (parent)
+        {
+            case LocalFunctionStatementSyntax localFunction:
+                return localFunction.Identifier == token;
+            case MethodDeclarationSyntax method:
+                return method.Identifier == token;
+            case VariableDeclaratorSyntax variable:
+                return variable.Identifier == token;
+            case ParameterSyntax parameter:
+                return parameter.Identifier == token;
+            case ForEachStatementSyntax forEach:
+                return forEach.Identifier == token;
+            case SingleVariableDesignationSyntax designation:
+                return designation.Identifier == token;
+            default:
+                return false;
+        }
     }
 
     /// <summary>

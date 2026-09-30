@@ -20,15 +20,17 @@ public static class DrawingWriteTools
         ITeklaModelService model,
         [Description("Opaque key from tekla_list_drawings, or unambiguous exact mark.")] string keyOrMark,
         [Description("Show the drawing editor UI. Default true.")] bool showDrawing = true,
-        [Description("Set true to open; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.OpenDrawing(keyOrMark, showDrawing, apply));
+        [Description("Set true to open; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.OpenDrawing(keyOrMark, showDrawing, apply));
 
     [McpServerTool(Name = "tekla_save_drawing")]
     [Description("Save the active drawing. Preview unless apply=true.")]
     public static DrawingWriteResult SaveDrawing(
         ITeklaModelService model,
-        [Description("Set true to save; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.SaveActiveDrawing(apply));
+        [Description("Set true to save; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.SaveActiveDrawing(apply));
 
     [McpServerTool(Name = "tekla_close_drawing")]
     [Description("Close the active drawing. Preview unless apply=true. save=false explicitly " +
@@ -36,8 +38,9 @@ public static class DrawingWriteTools
     public static DrawingWriteResult CloseDrawing(
         ITeklaModelService model,
         [Description("Save changes before closing. false discards unsaved changes.")] bool save = true,
-        [Description("Set true to close; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.CloseActiveDrawing(save, apply));
+        [Description("Set true to close; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.CloseActiveDrawing(save, apply));
 
     [McpServerTool(Name = "tekla_create_drawing")]
     [Description("Create one assembly/single-part/cast-unit/GA drawing. The drawing editor must be " +
@@ -49,8 +52,9 @@ public static class DrawingWriteTools
         [Description("Saved drawing attributes file. Empty = defaults.")] string attributeFile = "",
         [Description("Optional sheet number.")] int? sheetNumber = null,
         [Description("Drawing name (especially useful for GA).")] string name = "",
-        [Description("Set true to create; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.CreateDrawings(new[]
+        [Description("Set true to create; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawings(new[]
         {
             new DrawingSpec
             {
@@ -68,8 +72,9 @@ public static class DrawingWriteTools
     public static DrawingWriteResult CreateDrawings(
         ITeklaModelService model,
         [Description("Structured drawing specifications (maximum 50).")] IReadOnlyList<DrawingSpec> drawings,
-        [Description("Set true to create; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.CreateDrawings((drawings ?? new List<DrawingSpec>()).Take(50).ToList(), apply));
+        [Description("Set true to create; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawings((drawings ?? new List<DrawingSpec>()).Take(50).ToList(), apply));
 
     [McpServerTool(Name = "tekla_create_drawings_from_rule")]
     [Description("Create drawings using a saved Tekla AutoDrawing rule (safer than attempting " +
@@ -78,8 +83,9 @@ public static class DrawingWriteTools
         ITeklaModelService model,
         [Description("Saved AutoDrawing rule filename understood by Tekla.")] string ruleFile,
         [Description("Part/assembly model GUIDs, comma/semicolon/newline separated (max 50).")] string modelGuids,
-        [Description("Set true to run AutoDrawing; false returns preview.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.CreateDrawingsFromRule(
+        [Description("Set true to run AutoDrawing; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingsFromRule(
             ruleFile ?? "",
             ToolHelpers.ParseList(modelGuids).Take(50).ToList(),
             apply));
@@ -102,8 +108,9 @@ public static class DrawingWriteTools
         [Description("New master-drawing flag; omit to keep.")] bool? isMasterDrawing = null,
         [Description("New ready-for-issue flag; omit to keep.")] bool? isReadyForIssue = null,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to commit; false returns preview only.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.ModifyDrawings(
+        [Description("Set true to commit; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.ModifyDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, type: type, markContains: markContains, nameContains: nameContains),
             new DrawingModification
@@ -131,7 +138,8 @@ public static class DrawingWriteTools
         [Description("Name substring.")] string? nameContains = null,
         [Description("Use Drawing List selection only.")] bool selectedOnly = false,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to delete; false returns preview only.")] bool apply = false)
+        [Description("Set true to delete; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         if (string.IsNullOrWhiteSpace(keyIn) &&
             string.IsNullOrWhiteSpace(type) &&
@@ -147,7 +155,8 @@ public static class DrawingWriteTools
             };
         return Operate(
             model, "delete", keyIn, type, markContains,
-            nameContains, selectedOnly, limit, apply);
+            nameContains, selectedOnly, limit, apply,
+            expectedModelPath: expectedModelPath);
     }
 
     [McpServerTool(Name = "tekla_issue_drawings")]
@@ -158,8 +167,10 @@ public static class DrawingWriteTools
         [Description("Mark substring.")] string? markContains = null,
         [Description("Use Drawing List selection only.")] bool selectedOnly = false,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to issue; false returns preview only.")] bool apply = false) =>
-        Operate(model, "issue", keyIn, null, markContains, null, selectedOnly, limit, apply);
+        [Description("Set true to issue; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        Operate(model, "issue", keyIn, null, markContains, null, selectedOnly, limit, apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_unissue_drawings")]
     [Description("Unissue matched drawings. Preview unless apply=true; capped by limit.")]
@@ -169,8 +180,10 @@ public static class DrawingWriteTools
         [Description("Mark substring.")] string? markContains = null,
         [Description("Use Drawing List selection only.")] bool selectedOnly = false,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to unissue; false returns preview only.")] bool apply = false) =>
-        Operate(model, "unissue", keyIn, null, markContains, null, selectedOnly, limit, apply);
+        [Description("Set true to unissue; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        Operate(model, "unissue", keyIn, null, markContains, null, selectedOnly, limit, apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_update_drawings")]
     [Description("Update matched drawings from the model. Numbering must be up to date; active " +
@@ -181,8 +194,10 @@ public static class DrawingWriteTools
         [Description("Mark substring.")] string? markContains = null,
         [Description("Use Drawing List selection only.")] bool selectedOnly = false,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to update; false returns preview only.")] bool apply = false) =>
-        Operate(model, "update", keyIn, null, markContains, null, selectedOnly, limit, apply);
+        [Description("Set true to update; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        Operate(model, "update", keyIn, null, markContains, null, selectedOnly, limit, apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_place_drawing_views")]
     [Description("Auto-place views on the matched ACTIVE drawing. Use a key for the active " +
@@ -190,7 +205,8 @@ public static class DrawingWriteTools
     public static DrawingWriteResult PlaceDrawingViews(
         ITeklaModelService model,
         [Description("Opaque active-drawing key.")] string key,
-        [Description("Set true to place views; false returns preview only.")] bool apply = false)
+        [Description("Set true to place views; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var keys = ToolHelpers.ParseList(key);
         if (keys.Count != 1)
@@ -201,7 +217,7 @@ public static class DrawingWriteTools
                 Backend = model.GetDrawingStatus().Backend,
                 Message = "Exactly one non-empty drawing key is required.",
             };
-        return ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(keyIn: keys[0]),
             "place_views", null, apply, 1));
     }
@@ -209,7 +225,11 @@ public static class DrawingWriteTools
     [McpServerTool(Name = "tekla_export_drawings_pdf")]
     [Description("Export matched CLOSED drawings to PDF using Tekla printing. outputFile must be " +
                  "an explicit absolute path; for multiple drawings use {mark}/{name} so paths are unique. " +
-                 "Preview unless apply=true.")]
+                 "Preview unless apply=true. WARNING: unlike the file-exchange tools, outputFile is NOT " +
+                 "restricted to TEKLA_MCP_FILE_ROOT — Tekla writes wherever the path points, including " +
+                 "network shares, and overwrite=true replaces ANY existing file there, whatever its type. " +
+                 "Use a folder the user named, show the resolved outputFiles from the preview, and set " +
+                 "overwrite=true only after the user confirmed those exact files may be replaced.")]
     public static DrawingWriteResult ExportDrawingsPdf(
         ITeklaModelService model,
         [Description("Exact opaque keys, comma/semicolon separated.")] string? keyIn = null,
@@ -222,9 +242,11 @@ public static class DrawingWriteTools
         [Description("Auto or Scale.")] string scalingMethod = "Auto",
         [Description("Scale factor when scalingMethod=Scale.")] double scaleFactor = 1.0,
         [Description("Open the generated file after export.")] bool openFileWhenFinished = false,
-        [Description("Allow replacing an existing output file. Default false.")] bool overwrite = false,
+        [Description("Allow replacing an existing output file of ANY type at outputFile. Default false; " +
+                     "only with the user's explicit consent to replace those files.")] bool overwrite = false,
         [Description("Safety cap (default 50).")] int limit = 50,
-        [Description("Set true to export; false returns preview only.")] bool apply = false)
+        [Description("Set true to export; false returns preview only.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var invalid = ValidatePrintChoice(
             colorMode, new[] { "Color", "BlackAndWhite", "GreyScale" }, "colorMode") ??
@@ -243,7 +265,7 @@ public static class DrawingWriteTools
                 Message = invalid,
             };
 
-        return ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, markContains: markContains, selectedOnly: selectedOnly),
             "print",
@@ -283,8 +305,9 @@ public static class DrawingWriteTools
         string? nameContains,
         bool selectedOnly,
         int limit,
-        bool apply) =>
-        ToolHelpers.FailIfNothingApplied(model.OperateDrawings(
+        bool apply,
+        string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.OperateDrawings(
             DrawingToolHelpers.BuildDrawingQuery(
                 keyIn: keyIn, type: type, markContains: markContains,
                 nameContains: nameContains, selectedOnly: selectedOnly),

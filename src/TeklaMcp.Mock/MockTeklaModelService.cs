@@ -16,7 +16,7 @@ namespace TeklaMcp.Mock;
 ///
 /// This implementation contains NO Tekla references and is safe everywhere.
 /// </summary>
-public sealed class MockTeklaModelService : ITeklaModelService
+public sealed partial class MockTeklaModelService : ITeklaModelService
 {
     private const string BackendName = "Mock";
     private static readonly string[] DefaultAttributeCandidates =
@@ -80,16 +80,24 @@ public sealed class MockTeklaModelService : ITeklaModelService
     public ConnectionInfo GetConnectionInfo() => new()
     {
         Connected = true,
-        ModelName = "MockModel",
-        ModelPath = "/virtual/mock/MockModel",
+        ModelName = _modelName,
+        ModelPath = _modelPath,
         TeklaVersion = "2026 (mock)",
         Backend = BackendName,
         Message = "Synthetic data — no Tekla involved.",
     };
 
+    public WriteTarget GetWriteTarget() => new()
+    {
+        ModelName = _modelName,
+        ModelPath = _modelPath,
+        Note = "Mock backend — no Tekla process.",
+    };
+
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var s = new ModelSummary { Backend = BackendName };
+        var totalWeight = 0.0;
         foreach (var o in _objects)
         {
             if (maxObjects is int cap && cap > 0 && s.TotalObjects >= cap)
@@ -106,14 +114,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
             Bump(s.CountByMaterial, o.Material);
             if (includeWeights && o.WeightKg is double w)
             {
-                s.TotalWeightKg += w;
+                totalWeight += w;
                 s.WeightByMaterialKg[o.Material] =
                     s.WeightByMaterialKg.TryGetValue(o.Material, out var cur) ? cur + w : w;
             }
         }
         if (!includeWeights)
             s.Message = (s.Message + " Weights skipped (includeWeights=false).").TrimStart();
-        s.TotalWeightKg = Math.Round(s.TotalWeightKg, 1);
+        // null (not 0) when weights were skipped — 0 kg would read as a real measurement.
+        s.TotalWeightKg = includeWeights ? Math.Round(totalWeight, 1) : (double?)null;
         return s;
     }
 
@@ -135,7 +144,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (!string.IsNullOrWhiteSpace(query.Profile)) q = q.Where(o => Contains(o.Profile, query.Profile));
         if (!string.IsNullOrWhiteSpace(query.Material)) q = q.Where(o => Contains(o.Material, query.Material));
         if (!string.IsNullOrWhiteSpace(query.NameContains)) q = q.Where(o => Contains(o.Name, query.NameContains));
-        if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
+        if (!string.IsNullOrWhiteSpace(query.UdaName) && query.UdaIsEmpty)
+        {
+            // "Not processed yet" — an object with no value in that field at all.
+            q = q.Where(o =>
+                !_udasByGuid.TryGetValue(o.Guid, out var udas) ||
+                !udas.TryGetValue(query.UdaName!, out var value) ||
+                string.IsNullOrWhiteSpace(value));
+        }
+        else if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
         {
             q = q.Where(o =>
             {
@@ -180,7 +197,14 @@ public sealed class MockTeklaModelService : ITeklaModelService
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
             if (TryGetAttributeValue(obj, name, out var value)) result.Udas[name] = value;
+            else result.NotFound.Add(name);
         }
+
+        if (result.NotFound.Count > 0 && result.Udas.Count == 0)
+            result.Message =
+                "None of the requested names resolved on this " + result.Type +
+                ". Report-property names are template names (VOLUME, AREA, ASSEMBLY_POS); " +
+                "use tekla_find_attributes_by_value to discover where a known value lives.";
 
         return result;
     }
@@ -286,15 +310,28 @@ public sealed class MockTeklaModelService : ITeklaModelService
         };
     }
 
-    public IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    public AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50)
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false)
     {
+        var search = new AttributeSearchResult { Backend = BackendName };
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            search.Message = "Empty search value — nothing scanned.";
+            return search;
+        }
+
         var candidates = BuildAttributeCandidateList(candidateAttributeNames);
-        var objects = Limit(_objects, objectLimit);
+        search.CandidatesTried = candidates.Count;
+        var source = ScopedObjects(useSelection, partsOnly).ToList();
+        var objects = Limit(source, objectLimit);
+        search.ScannedObjects = objects.Count;
+        search.Truncated = objects.Count < source.Count;
         var matches = new Dictionary<string, AttributeValueMatch>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var obj in objects)
@@ -318,6 +355,15 @@ public sealed class MockTeklaModelService : ITeklaModelService
             }
         }
 
+        var scope = useSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+        search.Message = search.Truncated
+            ? $"Scanned the first {search.ScannedObjects} {scope} (objectLimit) against {search.CandidatesTried} candidate names; " +
+              "an empty result means NOT FOUND IN THIS SAMPLE, not absent — raise objectLimit or narrow the query to be sure."
+            : $"Scanned all {search.ScannedObjects} {scope} against {search.CandidatesTried} candidate names.";
+        if (matches.Count == 0 && !search.Truncated)
+            search.Message += " The value is absent from the tried candidates in this scope — " +
+                              "tekla_discover_udas can enumerate the fields that actually exist.";
+
         var ordered = matches.Values
             .OrderByDescending(x => x.MatchCount)
             .ThenBy(x => x.AttributeName, StringComparer.OrdinalIgnoreCase)
@@ -326,7 +372,144 @@ public sealed class MockTeklaModelService : ITeklaModelService
         if (resultLimit is int n && n > 0 && ordered.Count > n)
             ordered = ordered.Take(n).ToList();
 
-        return ordered;
+        search.Matches = ordered;
+        return search;
+    }
+
+    public AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true)
+    {
+        var result = new AggregationResult { Backend = BackendName };
+        if (!Aggregation.TryParseGroupKey(groupBy, out var mode, out var keyName, out var normalized, out var error))
+        {
+            result.Message = error;
+            return result;
+        }
+        result.GroupBy = normalized;
+
+        if (!Aggregation.TryParseCursor(cursor, out var skip, out var cursorError))
+        {
+            result.Message = cursorError;
+            return result;
+        }
+
+        query ??= new ObjectQuery();
+        // Source mirrors the real backend: selection > explicit type > parts chain > all.
+        var source = query.UseSelection
+            ? (IEnumerable<ModelObjectInfo>)_selectedObjects
+            : partsOnly && string.IsNullOrWhiteSpace(query.Type)
+                ? _objects.Where(o => PartTypeNames.Contains(o.Type))
+                : _objects;
+
+        var agg = new Dictionary<string, double[]>(StringComparer.Ordinal);
+        long skipped = 0;
+        var stoppedEarly = false;
+
+        foreach (var obj in source)
+        {
+            if (skipped < skip) { skipped++; continue; }
+            if (maxObjects is int cap && cap > 0 && result.ScannedObjects >= cap)
+            {
+                stoppedEarly = true;
+                break;
+            }
+            result.ScannedObjects++;
+
+            if (!MatchesFilters(obj, query)) continue;
+            result.MatchedObjects++;
+
+            var key = Aggregation.NormalizeKey(ReadGroupKey(obj, mode, keyName));
+            Aggregation.Accumulate(agg, key, obj.WeightKg);
+            if (obj.WeightKg is double w)
+            {
+                result.ObjectsWithWeight++;
+                result.TotalWeightKg += w;
+            }
+        }
+
+        result.TotalWeightKg = Math.Round(result.TotalWeightKg, 2);
+        result.Rows = Aggregation.BuildRows(agg, limit, result);
+        result.Truncated = stoppedEarly;
+        if (stoppedEarly)
+        {
+            result.NextCursor = (skip + result.ScannedObjects).ToString();
+            result.Message = Aggregation.Append(result.Message,
+                $"Partial page: stopped after {result.ScannedObjects} source objects (maxObjects). " +
+                "Repeat the call with cursor=NextCursor and the SAME filters, then merge rows by key — pages cover disjoint slices.");
+        }
+        else if (skip > 0 && result.ScannedObjects == 0)
+        {
+            result.Message = Aggregation.Append(result.Message,
+                "Cursor points at or beyond the end of the source — nothing left to scan.");
+        }
+
+        return result;
+    }
+
+    public UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true)
+    {
+        var result = new UdaDiscoveryResult { Backend = BackendName };
+        if (sampleSize <= 0) sampleSize = 200;
+        if (topValuesPerField <= 0) topValuesPerField = 5;
+
+        query ??= new ObjectQuery();
+        var matching = ScopedObjects(query.UseSelection, partsOnly && string.IsNullOrWhiteSpace(query.Type))
+            .Where(o => MatchesFilters(o, query))
+            .ToList();
+        var sample = Limit(matching, sampleSize);
+        result.SampledObjects = sample.Count;
+        result.Truncated = sample.Count < matching.Count;
+
+        var valueCounts = new Dictionary<string, Dictionary<string, int>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var obj in sample)
+        {
+            if (!_udasByGuid.TryGetValue(obj.Guid, out var udas)) continue;
+            foreach (var kv in udas)
+            {
+                var value = (kv.Value ?? "").Trim();
+                if (value.Length == 0) continue; // empty string = unset field
+
+                if (!valueCounts.TryGetValue(kv.Key, out var counts))
+                {
+                    counts = new Dictionary<string, int>(StringComparer.Ordinal);
+                    valueCounts[kv.Key] = counts;
+                }
+                counts[value] = counts.TryGetValue(value, out var c) ? c + 1 : 1;
+            }
+        }
+
+        result.Fields = valueCounts
+            .Select(kv => new UdaFieldStat
+            {
+                Name = kv.Key,
+                ObjectCount = kv.Value.Values.Sum(),
+                DistinctValueCount = kv.Value.Count,
+                TopValues = kv.Value
+                    .OrderByDescending(v => v.Value)
+                    .ThenBy(v => v.Key, StringComparer.OrdinalIgnoreCase)
+                    .Take(topValuesPerField)
+                    .Select(v => new UdaValueCount { Value = v.Key, Count = v.Value })
+                    .ToList(),
+            })
+            .OrderByDescending(f => f.ObjectCount)
+            .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var scope = query.UseSelection ? "current UI selection" : (partsOnly ? "parts" : "all objects");
+        result.Message = $"Sampled {result.SampledObjects} objects ({scope}).";
+        if (result.Truncated)
+            result.Message += " SAMPLE ONLY — fields carried exclusively by unsampled objects are invisible here; " +
+                              "verify a specific field with a filtered count before concluding it is absent.";
+        return result;
     }
 
     public ProfileConnectionSummary AnalyzeConnectionsForProfile(string profile, double toleranceMm = 50, int? limit = 1000)
@@ -486,21 +669,8 @@ public sealed class MockTeklaModelService : ITeklaModelService
 
     public IReadOnlyList<GridLineInfo> GetGrids() => Grids;
 
-    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z)
-    {
-        var result = new PointResult { AxisX = axisXLabel, AxisY = axisYLabel, Z = z };
-        var gx = Grids.FirstOrDefault(g => g.Axis == "X" && Eq(g.Label, axisXLabel));
-        var gy = Grids.FirstOrDefault(g => g.Axis == "Y" && Eq(g.Label, axisYLabel));
-        if (gx is null || gy is null)
-        {
-            result.Message = $"Grid label not found (X='{axisXLabel}': {(gx != null)}, Y='{axisYLabel}': {(gy != null)}).";
-            return result;
-        }
-        result.Resolved = true;
-        result.X = gx.Coordinate;
-        result.Y = gy.Coordinate;
-        return result;
-    }
+    public PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z) =>
+        TeklaMcp.Core.Geometry.GridMath.Resolve(Grids, axisXLabel, axisYLabel, z);
 
     // -- Mutations ----------------------------------------------------------------------
 
@@ -578,6 +748,7 @@ public sealed class MockTeklaModelService : ITeklaModelService
             return result;
         }
 
+        var plannedReplacements = 0;
         foreach (var spec in specs)
         {
             result.PlannedCount++;
@@ -596,6 +767,13 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 result.Errors.Add("One or more secondary objects were not found.");
                 continue;
             }
+            // Tekla refuses a second connection on an occupied primary/secondary pair, so a
+            // node-type swap is delete + insert. Mirror that here.
+            var doomed = spec.ReplaceExisting
+                ? FindComponentsOnPair(spec.PrimaryGuid, spec.SecondaryGuids)
+                : new List<ComponentInfo>();
+            plannedReplacements += doomed.Count;
+
             var id = apply ? _nextId++ : 0;
             var guid = apply ? Guid.NewGuid().ToString() : "(preview)";
             var component = new ComponentInfo
@@ -608,18 +786,112 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 PrimaryGuid = spec.PrimaryGuid,
                 SecondaryGuids = spec.SecondaryGuids.ToList(),
                 UpVector = spec.UpVector,
-                AutoDirection = spec.AutoDirection ?? "NA",
+                AutoDirection = NormalizeAutoDirection(spec.AutoDirection),
                 Status = "OK",
             };
             if (result.ComponentPreview.Count < 20) result.ComponentPreview.Add(component);
             if (!apply) continue;
+
+            foreach (var existing in doomed)
+            {
+                _components.Remove(existing);
+                result.DeletedCount++;
+            }
 
             _components.Add(component);
             result.CreatedCount++;
             result.CreatedGuids.Add(guid);
             result.CreatedIds.Add(id);
         }
+
+        if (plannedReplacements > 0)
+            result.Message = apply
+                ? "Replace mode: deleted " + result.DeletedCount +
+                  " existing component(s) on the targeted pair(s) before inserting."
+                : "Replace mode: " + plannedReplacements +
+                  " existing component(s) on the targeted pair(s) would be deleted first.";
+
         return result;
+    }
+
+    public WriteResult ModifyConnections(
+        IReadOnlyList<ConnectionModification> modifications, bool apply)
+    {
+        var result = new WriteResult
+        {
+            Operation = "modify_connections",
+            Applied = apply,
+            Backend = BackendName,
+        };
+        if (modifications == null || modifications.Count == 0)
+        {
+            result.Message = "No connection modifications provided.";
+            return result;
+        }
+
+        foreach (var mod in modifications)
+        {
+            result.PlannedCount++;
+            var component = _components.FirstOrDefault(c =>
+                (!string.IsNullOrWhiteSpace(mod.Guid) && Eq(c.Guid, mod.Guid)) ||
+                (mod.Id.HasValue && mod.Id.Value != 0 && c.Id == mod.Id.Value));
+            if (component == null)
+            {
+                result.Errors.Add("Connection not found: " +
+                    (string.IsNullOrWhiteSpace(mod.Guid) ? "id " + (mod.Id ?? 0) : mod.Guid));
+                continue;
+            }
+
+            // An explicit up vector only persists under AUTODIR_NA, so it selects that mode
+            // unless the caller named one. See ConnectionModification for the live evidence.
+            var autoDirection = !string.IsNullOrWhiteSpace(mod.AutoDirection)
+                ? NormalizeAutoDirection(mod.AutoDirection)
+                : (mod.UpVector != null ? "AUTODIR_NA" : component.AutoDirection);
+            var vectorSticks = mod.UpVector != null && Eq(autoDirection, "AUTODIR_NA");
+
+            if (!apply)
+            {
+                if (result.ComponentPreview.Count < 20)
+                    result.ComponentPreview.Add(new ComponentInfo
+                    {
+                        Guid = component.Guid,
+                        Id = component.Id,
+                        Type = component.Type,
+                        Name = component.Name,
+                        Number = component.Number,
+                        PrimaryGuid = component.PrimaryGuid,
+                        SecondaryGuids = component.SecondaryGuids.ToList(),
+                        UpVector = vectorSticks ? mod.UpVector : component.UpVector,
+                        AutoDirection = autoDirection,
+                        Status = component.Status,
+                    });
+                continue;
+            }
+
+            component.AutoDirection = autoDirection;
+            // Mirror the live quirk: under any non-NA mode Tekla recomputes the vector and the
+            // written value is silently dropped, even though Modify() reports success.
+            if (vectorSticks) component.UpVector = mod.UpVector;
+            StampOrigin(component.Guid, "mcp:modify_connection");
+            result.ModifiedCount++;
+            if (result.ComponentPreview.Count < 20) result.ComponentPreview.Add(component);
+        }
+        return result;
+    }
+
+    private List<ComponentInfo> FindComponentsOnPair(
+        string primaryGuid, IReadOnlyList<string> secondaryGuids) =>
+        _components
+            .Where(c => Eq(c.PrimaryGuid, primaryGuid) &&
+                        c.SecondaryGuids.Any(g => secondaryGuids.Any(s => Eq(g, s))))
+            .ToList();
+
+    private static string NormalizeAutoDirection(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "AUTODIR_NA" : value!.Trim();
+        if (!normalized.StartsWith("AUTODIR_", StringComparison.OrdinalIgnoreCase))
+            normalized = "AUTODIR_" + normalized;
+        return normalized.ToUpperInvariant();
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
@@ -1423,17 +1695,26 @@ public sealed class MockTeklaModelService : ITeklaModelService
             compilationSkipped = false;
             result.Stage = "compile";
             result.CompilationAttempted = true;
-            var dlls = System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll");
+            // Same selection as the live backend, minus loaded assemblies (the mock loads no
+            // Tekla): the folder alone decides, and mixed Tekla years are still rejected.
+            var references = Scripting.ScriptReferenceSelector.Select(
+                loadedAssemblyPaths: null,
+                directoryFiles: System.IO.Directory.GetFiles(dllDir, "Tekla.*.dll")
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase),
+                expectedTeklaMajor: null);
+            result.ReferenceSummary = references.Summary;
             var script = Scripting.ScriptEngine.Create(
-                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: dlls));
+                code, Scripting.ScriptEngine.BuildReferences(teklaDllPaths: references.Paths));
             result.CompileErrors.AddRange(Scripting.ScriptEngine.Compile(script));
             if (result.CompileErrors.Count > 0)
             {
-                result.Guidance = "Fix the compile errors and retry. Verify signatures with tekla_search_api.";
+                result.References.AddRange(references.Report);
+                result.Guidance = Scripting.ScriptReferenceSelector.CompileFailureGuidance(references);
                 result.DurationMs = watch.ElapsedMilliseconds;
                 return result;
             }
             result.Compiled = true;
+            if (compileOnly) result.References.AddRange(references.Report);
         }
         else
         {
@@ -1691,6 +1972,82 @@ public sealed class MockTeklaModelService : ITeklaModelService
     private static bool Contains(string a, string? b) =>
         a.IndexOf(b ?? "", StringComparison.OrdinalIgnoreCase) >= 0;
 
+    /// <summary>
+    /// Type names that count as physical parts, mirroring the real backend's parts chain
+    /// (which enumerates BEAM/POLYBEAM/CONTOURPLATE/... instead of walking all objects).
+    /// </summary>
+    private static readonly HashSet<string> PartTypeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "Beam", "Column", "PolyBeam", "ContourPlate", "BentPlate",
+        "LoftedPlate", "SpiralBeam", "Brep", "CustomPart", "Plate",
+    };
+
+    /// <summary>Selection > parts filter > all, mirroring the real backend's scan scopes.</summary>
+    private IEnumerable<ModelObjectInfo> ScopedObjects(bool useSelection, bool partsOnly)
+    {
+        IEnumerable<ModelObjectInfo> source = useSelection ? _selectedObjects : _objects;
+        return partsOnly && !useSelection ? source.Where(o => PartTypeNames.Contains(o.Type)) : source;
+    }
+
+    /// <summary>
+    /// Per-object equivalent of the <see cref="FindObjects"/> filter chain, for streaming
+    /// scans (aggregation/discovery) that need cursor semantics over the raw source order.
+    /// </summary>
+    private bool MatchesFilters(ModelObjectInfo o, ObjectQuery query)
+    {
+        if (query.GuidIn != null && query.GuidIn.Count > 0 &&
+            !query.GuidIn.Any(g => !string.IsNullOrWhiteSpace(g) && Eq(o.Guid, g)))
+            return false;
+        if (!string.IsNullOrWhiteSpace(query.Type) && !Eq(o.Type, query.Type)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Class) && !Eq(o.Class, query.Class)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Profile) && !Contains(o.Profile, query.Profile)) return false;
+        if (!string.IsNullOrWhiteSpace(query.Material) && !Contains(o.Material, query.Material)) return false;
+        if (!string.IsNullOrWhiteSpace(query.NameContains) && !Contains(o.Name, query.NameContains)) return false;
+        if (!string.IsNullOrWhiteSpace(query.UdaName) && query.UdaIsEmpty)
+        {
+            if (_udasByGuid.TryGetValue(o.Guid, out var udas) &&
+                udas.TryGetValue(query.UdaName!, out var current) &&
+                !string.IsNullOrWhiteSpace(current))
+                return false;
+        }
+        else if (!string.IsNullOrWhiteSpace(query.UdaName) && !string.IsNullOrWhiteSpace(query.UdaEquals))
+        {
+            if (!_udasByGuid.TryGetValue(o.Guid, out var udas)) return false;
+            if (!udas.TryGetValue(query.UdaName!, out var value) ||
+                !string.Equals(value, query.UdaEquals, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        if (!string.IsNullOrWhiteSpace(query.AttributeName))
+        {
+            if (!TryGetAttributeValue(o, query.AttributeName!, out var value)) return false;
+            if (!string.IsNullOrWhiteSpace(query.AttributeEquals) && !Eq(value, query.AttributeEquals)) return false;
+            if (!string.IsNullOrWhiteSpace(query.AttributeContains) && !Contains(value, query.AttributeContains)) return false;
+        }
+        return true;
+    }
+
+    private string ReadGroupKey(ModelObjectInfo obj, GroupKeyMode mode, string keyName)
+    {
+        switch (mode)
+        {
+            case GroupKeyMode.All: return "(all)";
+            case GroupKeyMode.Type: return obj.Type;
+            case GroupKeyMode.Class: return obj.Class;
+            case GroupKeyMode.Profile: return obj.Profile;
+            case GroupKeyMode.Material: return obj.Material;
+            case GroupKeyMode.Name: return obj.Name;
+            case GroupKeyMode.Assembly: return obj.AssemblyPos ?? "";
+            case GroupKeyMode.Uda:
+                return _udasByGuid.TryGetValue(obj.Guid, out var udas) &&
+                       udas.TryGetValue(keyName, out var udaValue)
+                    ? udaValue
+                    : "";
+            case GroupKeyMode.Attribute:
+                return TryGetAttributeValue(obj, keyName, out var attrValue) ? attrValue : "";
+            default: return "";
+        }
+    }
+
     private bool TryGetAttributeValue(ModelObjectInfo obj, string attributeName, out string value)
     {
         value = "";
@@ -1808,6 +2165,16 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 ["RU_FN1_MRK"] = baseMark,
                 ["RU_OBJ_TYPE"] = obj.Name,
             };
+
+            // Approval-status fixture on USER_FIELD_1 — the most common real-world UDA
+            // (review workflows): columns approved, braces rejected, main beams partially,
+            // everything else unset. Gives uda-grouping/discovery something realistic.
+            var status = obj.Name == "COLUMN" ? "Approved"
+                : obj.Name == "BRACE" ? "Rejected"
+                : obj.Class == "3" ? "Partially approved"
+                : "";
+            if (status.Length > 0)
+                _udasByGuid[obj.Guid]["USER_FIELD_1"] = status;
         }
     }
 
@@ -1880,6 +2247,9 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 Scale = 10,
                 RestrictionMin = new Point3D(-1000, -500, -500),
                 RestrictionMax = new Point3D(1000, 4500, 500),
+                // Looks at the XZ plane: view X = global X, view Y = global Z.
+                ViewCoordinateSystem = MockCoordinateSystem(0, 0, 1),
+                DisplayCoordinateSystem = MockCoordinateSystem(0, 0, 1),
                 ModelObjectCount = 8,
             },
             new DrawingViewInfo
@@ -1895,8 +2265,20 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 Scale = 10,
                 RestrictionMin = new Point3D(-1000, -1000, -100),
                 RestrictionMax = new Point3D(7000, 7000, 4100),
+                // Plan: view X = global X, view Y = global Y.
+                ViewCoordinateSystem = MockCoordinateSystem(0, 1, 0),
+                DisplayCoordinateSystem = MockCoordinateSystem(0, 1, 0),
                 ModelObjectCount = 18,
             },
+        };
+
+    /// <summary>Global-origin coordinate system with X = global X and the given Y axis.</summary>
+    private static CoordinateSystemInfo MockCoordinateSystem(double yx, double yy, double yz) =>
+        new CoordinateSystemInfo
+        {
+            Origin = new Point3D(0, 0, 0),
+            AxisX = new Point3D(1, 0, 0),
+            AxisY = new Point3D(yx, yy, yz),
         };
 
     private static List<DrawingObjectInfo> BuildSampleDrawingObjects() =>
@@ -2081,6 +2463,28 @@ public sealed class MockTeklaModelService : ITeklaModelService
                 p.Y + ((i / 2) % 2 == 0 ? 60 : -60),
                 50);
         }
+
+        // Curved member (issue #15): a PD168.3*6 tube arch over the Y=3000 line, modelled like a
+        // Tekla curved beam — a PolyBeam whose apex carries CHAMFER_ARC_POINT (see
+        // MockTeklaModelService.CurveGeometry.cs). Appended LAST so every older fixture keeps its
+        // id and GUID. ~24.0 kg/m.
+        Add("PolyBeam", "ARCH", "6", ArchProfile, "S355J2", ArchLength, ArchLength / 1000 * 24.02, "A1",
+            3000, 3000, 4500,
+            ArchStart.X, ArchStart.Y, ArchStart.Z,
+            ArchEnd.X, ArchEnd.Y, ArchEnd.Z);
+        var arch = list[list.Count - 1];
+        arch.MinX = -50.49;
+        arch.MaxX = 6050.49;
+        arch.MinY = 3000 - ArchDiameter / 2;
+        arch.MaxY = 3000 + ArchDiameter / 2;
+        arch.MinZ = 3932.68;
+        arch.MaxZ = ArchApex.Z + ArchDiameter / 2;
+        arch.Position = new PartPosition
+        {
+            Plane = "MIDDLE",
+            Rotation = "FRONT",
+            Depth = "MIDDLE",
+        };
 
         return list;
     }

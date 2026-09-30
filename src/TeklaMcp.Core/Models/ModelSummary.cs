@@ -8,8 +8,11 @@ public sealed class ModelSummary
     /// <summary>Total number of objects counted.</summary>
     public int TotalObjects { get; set; }
 
-    /// <summary>Sum of all object weights, in kilograms.</summary>
-    public double TotalWeightKg { get; set; }
+    /// <summary>
+    /// Sum of all object weights, in kilograms. <c>null</c> when the scan skipped weights
+    /// (includeWeights=false) — a numeric 0 would masquerade as a real measurement.
+    /// </summary>
+    public double? TotalWeightKg { get; set; }
 
     /// <summary>Object count grouped by type ("Beam", "Bolt", ...).</summary>
     public Dictionary<string, int> CountByType { get; set; } = new();

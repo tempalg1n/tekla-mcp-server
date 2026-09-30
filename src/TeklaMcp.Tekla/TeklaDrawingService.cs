@@ -51,9 +51,11 @@ public sealed partial class TeklaModelService
     public IReadOnlyList<DrawingInfo> FindDrawings(DrawingQuery query, int? limit = null)
     {
         var rows = new List<DrawingInfo>();
+        // Outside the try: no connection is a tool error, never an empty list the agent would
+        // read as "there are no drawings".
+        var handler = GetDrawingHandler();
         try
         {
-            var handler = GetDrawingHandler();
             query = query ?? new DrawingQuery();
             var active = TryGetActiveDrawing(handler);
             var enumerator = query.SelectedOnly
@@ -74,7 +76,7 @@ public sealed partial class TeklaModelService
         }
         catch
         {
-            // Query tools degrade to an empty result; status gives the connection error.
+            // Past the connection, enumeration stays best-effort (rows read so far).
         }
         return rows;
     }
@@ -205,9 +207,9 @@ public sealed partial class TeklaModelService
     public IReadOnlyList<DrawingViewInfo> GetDrawingViews()
     {
         var result = new List<DrawingViewInfo>();
+        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
         try
         {
-            var handler = GetDrawingHandler();
             var active = TryGetActiveDrawing(handler);
             if (active == null) return result;
             var views = EnumerateViews(active);
@@ -225,9 +227,9 @@ public sealed partial class TeklaModelService
         DrawingObjectQuery query,
         int? limit = null)
     {
+        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
         try
         {
-            var handler = GetDrawingHandler();
             var active = TryGetActiveDrawing(handler);
             if (active == null) return new List<DrawingObjectInfo>();
             return GetDrawingObjectRecords(handler, active, query ?? new DrawingObjectQuery(), limit)
@@ -312,7 +314,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -343,7 +345,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -372,7 +374,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -428,13 +430,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -519,7 +521,7 @@ public sealed partial class TeklaModelService
                 catch (Exception exItem)
                 {
                     result.Errors.Add(
-                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + ErrorText.Flatten(exItem));
+                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + DrawingFailure(result, exItem));
                 }
             }
             if (!apiSucceeded)
@@ -538,7 +540,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -591,13 +593,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -729,26 +731,38 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
 
     private static TSD.DrawingHandler GetDrawingHandler()
     {
-        EnsureTeklaReady();
+        EnsureTeklaReady(TeklaChannel.Drawing);
         try { TSD.DrawingEnumeratorBase.AutoFetch = true; } catch { }
         var handler = new TSD.DrawingHandler();
-        if (!handler.GetConnectionStatus())
-            throw new InvalidOperationException(
-                "Drawing API is not connected. Is Tekla Structures running with a model open?");
+        // Unlike Model's, the Drawing status check is a real round trip, so a Tekla restart shows up
+        // here as false — recreate the clients once (backlog §1).
+        if (!DrawingConnected(handler))
+        {
+            if (!TeklaRemotingChannel.TryReconnect("the drawing client lost Tekla", out var why) ||
+                !DrawingConnected(handler = new TSD.DrawingHandler()))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Drawing) + " Reconnect attempt: " + why);
+        }
         return handler;
+    }
+
+    private static bool DrawingConnected(TSD.DrawingHandler handler)
+    {
+        try { return handler.GetConnectionStatus(); }
+        catch { return false; }
     }
 
     private static TSD.Drawing? TryGetActiveDrawing(TSD.DrawingHandler handler)
@@ -1021,6 +1035,19 @@ public sealed partial class TeklaModelService
     private static DrawingWriteResult NewDrawingWriteResult(string operation, bool apply) =>
         new DrawingWriteResult { Operation = operation, Applied = apply, Backend = BackendName };
 
+    /// <summary>
+    /// Error text for a failed drawing write that also records its outcome coarsely: a lost
+    /// connection during apply leaves the drawing state unknown (backlog §4). Drawing writes do
+    /// not track where exactly writing began, so this errs towards "unknown" — the tool layer
+    /// derives the other outcomes from the counters.
+    /// </summary>
+    private static string DrawingFailure(DrawingWriteResult result, Exception exception)
+    {
+        if (result.Applied && ConnectionErrors.IsTeklaConnectionFailure(exception))
+            result.Outcome = WriteOutcome.Unknown;
+        return ErrorText.Flatten(exception);
+    }
+
     private static DrawingInfo PreviewDrawing(DrawingSpec spec) =>
         new DrawingInfo
         {
@@ -1119,6 +1146,7 @@ public sealed partial class TeklaModelService
         DrawingWriteResult result)
     {
         if (drawing.CommitChanges(message)) return;
+        result.Outcome = WriteOutcome.Unknown; // database operations already ran; nothing rolls back
         result.Warnings.Add(
             "Tekla returned false from Drawing.CommitChanges after database operations had " +
             "already been attempted. Changes may be partial; inspect the drawing and use Ctrl+Z if needed.");

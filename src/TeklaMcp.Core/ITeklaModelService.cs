@@ -27,6 +27,49 @@ public interface ITeklaModelService
     ConnectionInfo GetConnectionInfo();
 
     /// <summary>
+    /// The model a write would go to right now: name, path and — when it can be told apart —
+    /// the Tekla process. The tool layer calls it before every write/preview to stamp the result
+    /// and to refuse a mismatching <c>expectedModelPath</c> before anything is written. Throws
+    /// when there is no connection (the write could not happen either).
+    /// </summary>
+    WriteTarget GetWriteTarget();
+
+    /// <summary>
+    /// Values of advanced options (XS_* variables) as the running Tekla resolves them for the open
+    /// model — environment, firm, project and model levels already merged by Tekla. An unknown
+    /// option is <see cref="AdvancedOptionValue.Found"/>=false, never an error. With
+    /// <paramref name="asPaths"/> the value is also split into paths by Tekla's own rules.
+    /// </summary>
+    IReadOnlyList<AdvancedOptionValue> GetAdvancedOptions(IReadOnlyList<string> names, bool asPaths);
+
+    /// <summary>
+    /// One page of an environment catalog: library/parametric profiles, materials, components or
+    /// UDA definitions (<see cref="CatalogQuery.Kind"/>). Paged by catalog offset
+    /// (<see cref="CatalogListResult.NextCursor"/>); an unknown kind or a failed read is reported in
+    /// <see cref="CatalogListResult.Message"/>.
+    /// </summary>
+    CatalogListResult ListCatalog(CatalogQuery query);
+
+    /// <summary>
+    /// The Tekla Open API assemblies (and XML docs) on this machine that the offline API reference
+    /// can be generated from — without connecting to Tekla. Null when there are none. Never throws.
+    /// </summary>
+    ApiReferenceSource? GetApiReferenceSource();
+
+    /// <summary>
+    /// Save the open model (ModelHandler.Save) with <paramref name="comment"/>. Preview unless
+    /// <paramref name="apply"/>; the preview reports whether there are unsaved changes.
+    /// </summary>
+    ModelFileOperationResult SaveModel(string? comment, bool apply);
+
+    /// <summary>
+    /// Switch Tekla to the model in <paramref name="modelFolder"/> (ModelHandler.Open — which
+    /// DISCARDS unsaved changes of the current model). Preview unless <paramref name="apply"/>;
+    /// with unsaved changes the call is refused unless <paramref name="discardUnsavedChanges"/>.
+    /// </summary>
+    ModelFileOperationResult OpenModel(string modelFolder, bool openAutoSaved, bool discardUnsavedChanges, bool apply);
+
+    /// <summary>
     /// Aggregate statistics over every object in the model (counts by type/class/
     /// profile/material and total weight). Implementations must stream — never build an
     /// in-memory list of all objects. <paramref name="includeWeights"/> false skips the
@@ -91,14 +134,54 @@ public interface ITeklaModelService
 
     /// <summary>
     /// Search candidate attributes by known value (for "which field stores X?" discovery).
-    /// Implementations should inspect common report properties and UDAs.
+    /// Implementations should inspect common report properties and UDAs, and must report the
+    /// scan scope honestly (<see cref="AttributeSearchResult.ScannedObjects"/> /
+    /// <see cref="AttributeSearchResult.Truncated"/>) so an empty match list is never mistaken
+    /// for "the value does not exist". <paramref name="partsOnly"/> (default) restricts the
+    /// scan to physical parts — attributes live on parts in almost every real workflow, and a
+    /// mixed scan burns the object budget on control points and welds.
     /// </summary>
-    IReadOnlyList<AttributeValueMatch> FindAttributesByValue(
+    AttributeSearchResult FindAttributesByValue(
         string value,
         IReadOnlyList<string>? candidateAttributeNames = null,
         bool exactMatch = false,
         int? objectLimit = 2000,
-        int? resultLimit = 50);
+        int? resultLimit = 50,
+        bool partsOnly = true,
+        bool useSelection = false);
+
+    /// <summary>
+    /// Stream count + total weight per group over objects matching <paramref name="query"/>,
+    /// WITHOUT materializing DTOs and without reading solids. <paramref name="groupBy"/>:
+    /// 'type', 'class', 'profile', 'material', 'name', 'assembly' (ASSEMBLY_POS),
+    /// 'uda:NAME' (group by a user-defined attribute), 'attr:NAME' (any report/UDA/built-in
+    /// name), or null/'all' for a single overall bucket. Unknown keys are reported via
+    /// <see cref="AggregationResult.Message"/>, never thrown.
+    /// <paramref name="partsOnly"/> (default) pre-filters the scan to physical parts when the
+    /// query names no type. <paramref name="maxObjects"/> caps one call;
+    /// <paramref name="cursor"/> resumes a capped scan (see <see cref="AggregationResult"/>).
+    /// </summary>
+    AggregationResult AggregateBy(
+        ObjectQuery query,
+        string? groupBy,
+        int? limit = 100,
+        string? cursor = null,
+        int? maxObjects = null,
+        bool partsOnly = true);
+
+    /// <summary>
+    /// Sample objects matching <paramref name="query"/> and report which UDA fields exist,
+    /// how filled they are, and their most frequent values. The expensive per-object
+    /// "read all UDAs" call limits this to <paramref name="sampleSize"/> objects;
+    /// implementations should spread the sample across part types when the query names no
+    /// type, and must set <see cref="UdaDiscoveryResult.Truncated"/> when the scope was larger
+    /// than the sample.
+    /// </summary>
+    UdaDiscoveryResult DiscoverUdas(
+        ObjectQuery query,
+        int sampleSize = 200,
+        int topValuesPerField = 5,
+        bool partsOnly = true);
 
     /// <summary>
     /// Analyze how members of a profile connect to neighboring elements near beam ends.
@@ -130,6 +213,45 @@ public interface ITeklaModelService
         bool apply,
         int? limit = null);
 
+    // -- File exchange --------------------------------------------------------------------
+    //
+    // These three are the ONLY sanctioned file access in the server. They exist because a
+    // geometric reconciliation moves tens of MB of geometry out and tens of thousands of
+    // GUID→UDA pairs back in, and an MCP tool response is an LLM context — the wrong pipe by
+    // one to two orders of magnitude. Data therefore NEVER appears in their results, only
+    // counters. Paths are validated by TeklaMcp.Core.FileExchange.FilePathPolicy.
+
+    /// <summary>
+    /// Stream objects matching <paramref name="query"/> into a file on disk, one record per
+    /// object, and return counters only. Implementations must stream (never materialize the
+    /// model) and must pay only for the fields the request asks for — a solid AABB costs a
+    /// <c>GetSolid()</c> per object. <see cref="ExportRequest.MaxObjects"/> caps one call and
+    /// <see cref="ExportRequest.Cursor"/> resumes it, exactly like
+    /// <see cref="AggregateBy"/>; continuation calls must pass
+    /// <see cref="ExportRequest.Append"/> so pages land in the same file. Never throws —
+    /// failures are reported in <see cref="ExportResult.Message"/>.
+    /// </summary>
+    ExportResult ExportObjectsToFile(ObjectQuery query, ExportRequest request);
+
+    /// <summary>
+    /// Apply UDA values from a jsonl/csv file keyed by Tekla GUID. Honors preview-by-default
+    /// (<see cref="UdaFileWriteRequest.Apply"/>) and, by default, refuses to overwrite a UDA
+    /// that already holds a value. Rows whose GUID is missing from the model are skipped or
+    /// fail the run per <see cref="UdaFileWriteRequest.OnMissing"/>. Never throws.
+    /// </summary>
+    UdaFileWriteResult SetUdasFromFile(UdaFileWriteRequest request);
+
+    /// <summary>
+    /// Stream reference-model (IFC) objects into a file: external GUID, entity, names, world
+    /// AABB and placement, with the same paging contract as
+    /// <see cref="ExportObjectsToFile"/>. Uses the same best-effort geometry resolution as
+    /// <see cref="GetReferenceGeometry"/> (Open API first, reference IFC file as fallback), so
+    /// per-object <see cref="ReferenceGeometryInfo.AabbSource"/> /
+    /// <see cref="ReferenceGeometryInfo.PlacementSource"/> land in the file and the caller can
+    /// tell exact geometry from an estimate. Never throws.
+    /// </summary>
+    ExportResult ExportReferenceObjectsToFile(ReferenceExportRequest request);
+
     // -- Geometry / grids -----------------------------------------------------------------
 
     /// <summary>
@@ -144,6 +266,57 @@ public interface ITeklaModelService
     /// is not found.
     /// </summary>
     PointResult ResolvePoint(string axisXLabel, string axisYLabel, double z);
+
+    /// <summary>
+    /// Exact centerline geometry of one part, for dimensioning curved members: lines and arcs
+    /// (on the live backend a PolyBeam's own <c>GetCenterLinePolycurve()</c>), arcs merged per
+    /// physical bend, inner/outer arcs of round sections, the modelled contour with chamfers,
+    /// and — when <see cref="PartCurveGeometryRequest.WantsView"/> — the same geometry in the
+    /// coordinates of an active-drawing view. Derived values come from
+    /// <c>TeklaMcp.Core.Geometry.CurveMath</c> so both backends compute identically. Never
+    /// throws: an unknown GUID gives <see cref="PartCurveGeometry.Found"/> = false, and view
+    /// problems (no active drawing, unknown view) become warnings next to the model geometry.
+    /// </summary>
+    PartCurveGeometry GetPartCurveGeometry(PartCurveGeometryRequest request);
+
+    /// <summary>
+    /// Faces, loops and vertices of part solids in GLOBAL mm, one entry per requested GUID (a GUID
+    /// that is not a part comes back <see cref="PartSolidGeometry.Found"/>=false). Capped by
+    /// <see cref="PartSolidRequest.MaxFaces"/>/<see cref="PartSolidRequest.MaxPoints"/>; a capped
+    /// solid says so in <see cref="PartSolidGeometry.Truncated"/>.
+    /// </summary>
+    IReadOnlyList<PartSolidGeometry> GetPartSolids(PartSolidRequest request);
+
+    // -- Visual context ---------------------------------------------------------------------
+    //
+    // Agents otherwise reason about the model only through property lists. These two give them
+    // a picture: a schematic drawn by TeklaMcp.Core.Rendering from raw geometry (identical on
+    // both backends), and a capture of what Tekla itself renders in a model view.
+
+    /// <summary>
+    /// Raw drawable geometry for <c>tekla_render_schematic</c>: focus objects matching
+    /// <see cref="SchematicSceneRequest.Query"/> (GUIDs are looked up directly, never by a
+    /// whole-model scan), context parts inside the focus box grown by
+    /// <see cref="SchematicSceneRequest.ContextMarginMm"/> (or inside
+    /// <see cref="SchematicSceneRequest.Region"/>), and the grids with real labels and origins.
+    /// With no scope at all the whole model is context (an overview), capped by
+    /// <see cref="SchematicSceneRequest.MaxContextObjects"/>. Cheap geometry only — reference
+    /// lines, contours, bolt positions; a solid AABB only as a bounded fallback for other part
+    /// types. Coverage (caps, missing GUIDs, objects without geometry) is reported, never hidden.
+    /// Never throws: failures go into <see cref="SchematicScene.Message"/>.
+    /// </summary>
+    SchematicScene GetSchematicScene(SchematicSceneRequest request);
+
+    /// <summary>
+    /// Picture of a model view for <c>tekla_capture_view</c>. The live backend captures the
+    /// pixels Tekla rendered in the target view's own window (PrintWindow, never a screen copy,
+    /// so other applications' windows cannot leak into it); optionally zooms to, colours and
+    /// numbers target objects and rotates the camera first, and by default restores camera and
+    /// colours afterwards. Only a view that is visible on screen can be captured. The mock backend
+    /// returns a schematic stand-in and says so (<see cref="ViewCaptureResult.Source"/>). Never
+    /// throws: failures go into <see cref="ViewCaptureResult.Message"/>.
+    /// </summary>
+    ViewCaptureResult CaptureView(ViewCaptureRequest request);
 
     // -- Mutations (create / modify / delete) ---------------------------------------------
     //
@@ -166,8 +339,29 @@ public interface ITeklaModelService
     /// <summary>
     /// Create one or more connections. Preview unless apply; implementations commit geometry
     /// once before inserting components so newly-created parts can be addressed reliably.
+    /// A spec with <see cref="ConnectionSpec.ReplaceExisting"/> first deletes the components
+    /// already attached to that primary/secondary pair — Tekla rejects a second connection on
+    /// an existing pair, so a node-type swap is a delete + insert.
     /// </summary>
     WriteResult CreateConnections(IReadOnlyList<ConnectionSpec> specs, bool apply);
+
+    /// <summary>
+    /// Change orientation/attributes of EXISTING connections addressed by GUID (or integer ID).
+    /// Preview unless apply. Implementations must work around Tekla's auto-direction quirk:
+    /// a written <c>UpVector</c> only persists under <c>AUTODIR_NA</c>, so setting
+    /// <see cref="ConnectionModification.UpVector"/> switches the mode unless the caller asked
+    /// for a specific <see cref="ConnectionModification.AutoDirection"/>.
+    /// </summary>
+    WriteResult ModifyConnections(IReadOnlyList<ConnectionModification> modifications, bool apply);
+
+    /// <summary>
+    /// Insert plugins / custom / system components with an ordered input list (objects, points,
+    /// point pairs, polygons) and attributes. Preview unless <paramref name="apply"/>. After the
+    /// commit every created component is read back with its children (<see
+    /// cref="ComponentInfo.ChildCount"/>) — the only evidence that a plugin's Run did anything.
+    /// Specs must pass <see cref="ComponentSpecs.Validate"/>.
+    /// </summary>
+    WriteResult CreateComponents(IReadOnlyList<ComponentSpec> specs, bool apply);
 
     // -- Drawings ---------------------------------------------------------------------------
 

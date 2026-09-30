@@ -15,4 +15,13 @@ public sealed class ComponentInfo
     public Point3D? UpVector { get; set; }
     public string AutoDirection { get; set; } = "";
     public string Status { get; set; } = "";
+
+    /// <summary>
+    /// create_components readback: objects the component created (its children). Null when not
+    /// read. 0 after an insert usually means the plugin's Run failed — see Tekla's log.
+    /// </summary>
+    public int? ChildCount { get; set; }
+
+    /// <summary>Distinct child object types (capped), e.g. "Beam", "ContourPlate", "BoltArray".</summary>
+    public List<string> ChildTypes { get; set; } = new List<string>();
 }

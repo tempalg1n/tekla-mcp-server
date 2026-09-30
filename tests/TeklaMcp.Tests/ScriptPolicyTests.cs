@@ -45,6 +45,23 @@ public class ScriptPolicyTests
             v => v.Contains("Preprocessor"));
     }
 
+    [Theory]
+    [InlineData("var sw = System.Diagnostics.Stopwatch.StartNew();\nsw.ElapsedMilliseconds")]
+    [InlineData("var sw = new System.Diagnostics.Stopwatch();\nsw.Start();\nsw.Stop();")]
+    public void Allows_fully_qualified_stopwatch_for_timing(string code)
+    {
+        Assert.Empty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
+    [Theory]
+    [InlineData("using System.Diagnostics;\nvar sw = Stopwatch.StartNew();")] // namespace import stays banned
+    [InlineData("System.Diagnostics.Process.Start(\"cmd\");")]
+    [InlineData("var d = System.Diagnostics.Debug.Listeners;")]
+    public void Stopwatch_exception_does_not_open_the_rest_of_diagnostics(string code)
+    {
+        Assert.NotEmpty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
     [Fact]
     public void Bans_await()
     {
@@ -94,6 +111,42 @@ public class ScriptPolicyTests
             "var b = new Beam(); b.Insert(); new Model().CommitChanges();", allowMutations: true));
     }
 
+    [Theory]
+    [InlineData("var parts = \"a,b,c\".Split(',');\nparts.Length")]
+    [InlineData("var parts = line.Split(new[] { ';' });\nparts")]
+    public void String_split_is_not_a_mutation(string code)
+    {
+        // Field report: the bare "Split" entry only ever fired on string.Split, forcing scripts
+        // to hand-roll a tokenizer. Operation.Split is still caught by the "Operation" token.
+        Assert.Empty(ScriptPolicy.Validate(code, allowMutations: false));
+    }
+
+    [Fact]
+    public void Operation_split_is_still_a_mutation()
+    {
+        Assert.NotEmpty(ScriptPolicy.Validate("Operation.Split(beam, point);", allowMutations: false));
+    }
+
+    [Fact]
+    public void Banned_name_used_as_a_declaration_says_rename_your_declaration()
+    {
+        var violations = ScriptPolicy.Validate(
+            "int Process(int x) => x + 1;\nProcess(1)", allowMutations: false);
+
+        var v = Assert.Single(violations);
+        Assert.Contains("reserved capability name", v);
+        Assert.Contains("rename", v);
+        // Must not accuse the script of reaching for System.Diagnostics.Process.
+        Assert.DoesNotContain("no file/network/process", v);
+    }
+
+    [Fact]
+    public void Banned_name_used_as_a_type_still_gets_the_capability_message()
+    {
+        var violations = ScriptPolicy.Validate("Process.Start(\"cmd\");", allowMutations: false);
+        Assert.Contains(violations, v => v.Contains("no file/network/process"));
+    }
+
     [Fact]
     public void Reports_mutating_members_even_when_allowed()
     {
@@ -116,6 +169,12 @@ public class ScriptPolicyTests
     [InlineData("ModelObjectEnumerator.AutoFetch = false;", "AutoFetch")]
     [InlineData("mark.MergeMarks(other);", "MergeMarks")]
     [InlineData("drawingObject.Scale(2.0);", "Scale")]
+    [InlineData("new CatalogHandler().ImportCustomComponentItems(\"C:\\\\x.uel\");", "ImportCustomComponentItems")]
+    [InlineData("catalog.ImportShapeItems(path);", "ImportShapeItems")]
+    [InlineData("catalog.SaveProfileDatabase();", "SaveProfileDatabase")]
+    [InlineData("new ModelHandler().Open(\"C:\\\\Models\\\\Other\");", "Open")]
+    [InlineData("handler.Close();", "Close")]
+    [InlineData("handler.CreateNewSingleUserModel(\"M\", \"C:\\\\Models\");", "CreateNewSingleUserModel")]
     public void Detects_drawing_and_model_mutations(string code, string expectedMember)
     {
         var analysis = ScriptPolicy.Analyze(code, allowMutations: false);
