@@ -15,6 +15,7 @@ their findings stay here because the open remainder builds on them.
 | 5 | Read tools for component development | Shipped. **Open:** the live run of each tool (see §5) |
 | 6 | Smaller follow-ups | Shipped. **Open:** why orphaned servers lived |
 | 7 | Found after the first write-up | Fixes shipped. **Open:** AutoFetch snapshot cost, `GetAllObjectsWithType(Type[])` timing, partial version-mismatch recovery |
+| 8 | `tekla_analyze_by_material` is an unpaged whole-model scan | **Open** (found in the v0.8.0 release review) |
 
 The per-API verification ledger and the full list of live runs still pending are in
 [docs/tekla-api-notes.md](tekla-api-notes.md) ("Live validation still pending").
@@ -181,7 +182,14 @@ refused every item"), and `partial` was added (committed, some items refused). S
   `tekla_set_object_udas` / `tekla_set_udas_by_filter` never call `CommitChanges()`. Decide once
   `Modify()`'s role for UDAs is known live. (The bulk import used to swallow an exception from its
   final `CommitChanges()` and report `committed`; fixed before the v0.8.0 release — it is now
-  `unknown`, like the other write paths.)
+  `unknown`, like the other write paths.) Listed as a known limitation in the v0.8.0 CHANGELOG.
+  **Plan** (live, on a scratch model): (1) `SetUserProperty` alone, no `Modify()`/commit — read the
+  value back from a freshly started server: does it persist? (2) the same with `Modify()` per
+  object type (`Beam`, `ContourPlate`, `PolyBeam`, `Assembly`, `BoltGroup`, weld) and its return
+  value; (3) whether a missing `CommitChanges()` loses anything on save. Then treat a `false`
+  from a required `Modify()` as a refusal (as `ModifyParts` does) and give
+  `tekla_set_object_udas` / `tekla_set_udas_by_filter` one `CommitChanges()` whose throw is
+  `unknown` — or document why neither is needed.
 - The Tekla PID is exact only when the channel names it or one instance of the version runs;
   with several instances on a plain channel it stays null (§2 makes it exact).
 - Drawing writes are tracked coarsely (connection loss / failed commit → unknown).
@@ -255,3 +263,22 @@ multi-type overload" sentence) — see CHANGELOG. Still open:
   class whose static initializer ran during the mismatch stays broken until the server restarts
   (CLR behaviour, verified in isolation). The common case — the right Tekla installed, so its
   assemblies are in the GAC — never gets there.
+
+---
+
+## Found in the v0.8.0 release review (2026-09-30)
+
+### 8. `tekla_analyze_by_material` is an unpaged whole-model scan
+
+`ModelAnalysisTools.AnalyzeByMaterial` calls `GetModelSummary()` with its defaults: every object
+through `GetAllObjects()` (~50 s on a 400k-object model, see the `tekla_run_csharp` notes), a
+`WEIGHT` read per part, plus class/profile counts it throws away — with no `maxObjects`, no cursor
+and no `partsOnly`. On a large model it can outlive the MCP client's ~60 s timeout, and the reply
+is then lost. `tekla_group_weight_by` with `groupBy=material` gives the same breakdown streamed,
+restricted to physical parts and paged; the README already points there.
+
+**Plan.** Either re-implement the tool on `ITeklaModelService.AggregateBy` (key = material) with
+the usual `partsOnly` / `maxObjects` / `cursor` / `truncated` + `nextCursor`, keeping its output
+shape, or deprecate it in favour of `tekla_group_weight_by` (description first, removal in a
+later minor with a CHANGELOG note — tool removals break clients that hard-code schemas). Both
+backends already implement `AggregateBy`, so either option is tool-layer only.
