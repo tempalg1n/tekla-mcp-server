@@ -107,6 +107,12 @@ const string serverInstructions =
     "expectedSha256 = the codeSha256 the check returned (any edit after approval changes the hash " +
     "and the run is refused — check and approve again) — and keep changes traceable (MCP_ORIGIN " +
     "UDA) and reversible (Tekla Ctrl+Z).\n\n" +
+    "WRITE RESULTS say what happened: outcome = planned (preview) / not_written / committed / " +
+    "partial (see errors) / unknown, plus target = the model path and Tekla PID the write went to. " +
+    "'unknown' means the call failed AFTER writing began and Tekla does not roll back: read the " +
+    "objects back and write only what is missing — never retry blindly. When more than one Tekla " +
+    "or model is in play, pass expectedModelPath (the modelPath from tekla_get_connection_info) to " +
+    "every write: a different open model refuses the call before anything is written.\n\n" +
     "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +

@@ -126,8 +126,9 @@ public static class ModelFileExchangeTools
         [Description("Overwrite UDAs that already hold a value. Default false — a human's decision wins.")]
         bool overwriteNonEmpty = false,
         [Description("Cap the number of file rows processed in this call.")] int? maxObjects = null,
-        [Description("Continuation cursor from the previous page's nextCursor.")] string? cursor = null)
-        => model.SetUdasFromFile(new UdaFileWriteRequest
+        [Description("Continuation cursor from the previous page's nextCursor.")] string? cursor = null,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        => ToolHelpers.Write(model, expectedModelPath, () => model.SetUdasFromFile(new UdaFileWriteRequest
         {
             Path = path,
             Format = format,
@@ -138,7 +139,7 @@ public static class ModelFileExchangeTools
             OnMissing = onMissing,
             MaxObjects = maxObjects,
             Cursor = cursor,
-        });
+        }));
 
     [McpServerTool(Name = "tekla_export_reference_objects_file")]
     [Description(

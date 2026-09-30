@@ -151,6 +151,20 @@ and are now handled by the tools and documented under
   launched it exits, and cuts any shutdown that hangs for 10 s — a Tekla call cannot be
   cancelled. Windows only; `TEKLA_MCP_EXIT_WITH_PARENT=0` turns the parent watch off for
   launchers that exit while keeping the server's stdio open.
+- **Every write result says what happened and where** (DEV-005). `outcome`: `planned`
+  (preview), `not_written`, `committed`, `partial` (committed; some items refused, see errors)
+  or `unknown`; `target`: model name and path, and the Tekla PID and start time when the
+  instance can be told apart (the only running Tekla of this version, or the PID in a second
+  instance's channel name). On model, UDA, bulk-UDA and drawing writes; `tekla_run_csharp`
+  reports the target. The Open API has no transactions, so a failure after writing began —
+  a lost connection, a failed commit — is `unknown`: a tool error that carries the full result
+  (GUIDs, counters) and says to read back before retrying. Previously the same situation read
+  either as success (`createdCount=3` next to a failed commit) or as "no objects were written"
+  (connection lost mid-insert, which may well have reached Tekla).
+- **`expectedModelPath` on every write tool and on `tekla_run_csharp`**: the model folder (or its
+  `.db1`) the write is meant for. If the connected Tekla has another model open, the call is
+  refused before anything is written or compiled — with two Tekla instances open the server had
+  written into the user's working model instead of the test model.
 
 ### Changed
 
@@ -182,6 +196,12 @@ and are now handled by the tools and documented under
 
 ### Fixed
 
+- **Refused edits and deletes counted as done.** `ModifyParts` ignored `Modify()` returning false
+  and counted the part as modified; `DeleteObjects` skipped a `Delete()` that returned false
+  without a word. Both are now errors on that item (`partial` / `not_written`).
+- **`tekla_set_udas_from_file` counted the object that broke a run as updated** — `updated` was
+  bumped before the write. It now counts objects Tekla accepted, and an object that accepted
+  none of its values shows up as `refused` in the sample.
 - **A tool call while Tekla was not running broke the server until it was restarted** (Tekla
   2021–2023). The first Open API client of the process dialed a pipe that did not exist; on
   Tekla 2021 the Open API then prints "Connection failed" and keeps a null connection for good,

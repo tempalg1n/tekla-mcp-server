@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
 using TSM = Tekla.Structures.Model;
@@ -166,6 +167,54 @@ public static class TeklaRemotingChannel
               "this MCP server (reconnect it in the MCP client)."
             : $"The {api} is not connected. Is Tekla Structures running with a model open?";
         return text + " (" + Describe() + ")";
+    }
+
+    /// <summary>
+    /// Fills <see cref="WriteTarget.TeklaPid"/> / <see cref="WriteTarget.TeklaStartedAt"/> with the
+    /// Tekla process behind this server's model channel, when the evidence names exactly one
+    /// (see <see cref="RemotingChannelNames.ResolveInstancePid"/>); otherwise leaves the PID null
+    /// and says why in <see cref="WriteTarget.Note"/>. Candidates are running TeklaStructures
+    /// processes of this build's version (the exe's file major version is the Tekla year —
+    /// 2021.0.12696.0, 2023.0.29842.0); one whose version cannot be read stays a candidate, so an
+    /// unreadable process makes the answer ambiguous rather than wrong. Never throws.
+    /// </summary>
+    public static void IdentifyInstance(WriteTarget target)
+    {
+        try
+        {
+            var major = TeklaAssemblyResolver.CompiledVersion?.Major;
+            var starts = new Dictionary<int, DateTime?>();
+            foreach (var process in System.Diagnostics.Process.GetProcessesByName("TeklaStructures"))
+            {
+                using (process)
+                {
+                    int? fileMajor = null;
+                    try { fileMajor = process.MainModule?.FileVersionInfo.FileMajorPart; } catch { }
+                    if (major is int m && fileMajor is int f && f != m) continue;
+                    DateTime? started = null;
+                    try { started = process.StartTime; } catch { }
+                    starts[process.Id] = started;
+                }
+            }
+
+            string? channel;
+            List<string> pipes;
+            lock (Gate)
+            {
+                try { channel = ReadModelChannel(); } catch { channel = null; }
+                pipes = ListPublishedTeklaPipes();
+            }
+
+            var pid = RemotingChannelNames.ResolveInstancePid(channel, pipes, starts.Keys.ToList(), out var note);
+            target.TeklaPid = pid;
+            if (pid is int found && starts.TryGetValue(found, out var start) && start is DateTime s)
+                target.TeklaStartedAt = s.ToString("yyyy-MM-dd HH:mm:ss");
+            if (note != null) target.Note = "Tekla process not identified: " + note + ".";
+        }
+        catch (Exception ex)
+        {
+            target.Note = "Tekla process not identified: " + ex.Message;
+        }
     }
 
     /// <summary>Guard evidence; never throws (a failure is <see cref="ChannelPublication.Unknown"/>).</summary>

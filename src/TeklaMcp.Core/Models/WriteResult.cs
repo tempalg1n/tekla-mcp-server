@@ -12,8 +12,20 @@ public sealed class WriteResult
     /// <summary>Operation label, e.g. "create", "modify", "delete", "generate_frame".</summary>
     public string Operation { get; set; } = "";
 
-    /// <summary>False = preview only (nothing changed). True = committed to the model.</summary>
+    /// <summary>
+    /// False = preview only (nothing changed). True = apply was requested — whether it
+    /// succeeded is <see cref="Outcome"/>.
+    /// </summary>
     public bool Applied { get; set; }
+
+    /// <summary>
+    /// What happened to the model: planned / not_written / committed / partial / unknown (see
+    /// <see cref="TeklaMcp.Core.WriteOutcome"/>). "unknown" means read back before retrying.
+    /// </summary>
+    public string Outcome { get; set; } = "";
+
+    /// <summary>The model (and Tekla process) this write or preview was about.</summary>
+    public WriteTarget? Target { get; set; }
 
     /// <summary>How many objects the operation would affect / matched.</summary>
     public int PlannedCount { get; set; }

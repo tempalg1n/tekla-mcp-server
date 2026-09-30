@@ -107,10 +107,18 @@ proxy after a restart is unknown — test on a live 2024+ before claiming suppor
 
 ### 4. Write outcomes
 
-`WriteResult` carries `Applied` and counts only. Add `outcome` (planned / rejected /
-failed_before_write / unknown / committed), the target model path and Tekla PID in every write
-result, and an optional `expectedModelPath` on write tools (mismatch → refuse before writing).
-A timeout or disconnect after a write started is `unknown`, never "rolled back".
+Done 2026-09-30 (see CHANGELOG and AGENTS.md "Outcome + target"). Differences from the plan:
+`rejected` is not an outcome — a mismatching `expectedModelPath` refuses the call as a tool error
+before the backend runs; `failed_before_write` became `not_written` (it also covers "Tekla
+refused every item"), and `partial` was added (committed, some items refused). Still open:
+
+- Live verification of the `unknown` path (break the connection mid-batch on a scratch model)
+  and of `Modify()` returning false for a refused part edit (TODO(windows) in `ModifyParts`).
+- The Tekla PID is exact only when the channel names it or one instance of the version runs;
+  with several instances on a plain channel it stays null (§2 makes it exact).
+- Drawing writes are tracked coarsely (connection loss / failed commit → unknown).
+- `tekla_run_csharp` gets the target and `expectedModelPath`, but no outcome: a script's own
+  writes are not observable (`executed`/`executionAttempted` stay the signal).
 
 ### 5. Read tools for component development
 

@@ -434,7 +434,7 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add((spec.Type ?? "view") + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add((spec.Type ?? "view") + ": " + DrawingFailure(result, exItem));
                 }
             }
 
@@ -451,7 +451,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -501,7 +501,7 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add((view.Name ?? "view") + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add((view.Name ?? "view") + ": " + DrawingFailure(result, exItem));
                 }
             }
             if (apply && (result.ModifiedCount > 0 || result.DeletedCount > 0))
@@ -510,7 +510,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }

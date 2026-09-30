@@ -125,8 +125,18 @@ public sealed class UdaFileWriteRequest
 /// <summary>Outcome of one bulk UDA write. Same counters in preview and apply mode.</summary>
 public sealed class UdaFileWriteResult
 {
-    /// <summary>False = preview mode, true = changes were applied.</summary>
+    /// <summary>False = preview mode, true = apply was requested (success: <see cref="Outcome"/>).</summary>
     public bool Applied { get; set; }
+
+    /// <summary>
+    /// planned / not_written / committed / partial / unknown (see <see cref="TeklaMcp.Core.WriteOutcome"/>).
+    /// Per page: "unknown" means this page broke off after writing began — re-run it in preview to
+    /// see what is still missing instead of trusting the counters.
+    /// </summary>
+    public string Outcome { get; set; } = "";
+
+    /// <summary>The model (and Tekla process) this write or preview was about.</summary>
+    public WriteTarget? Target { get; set; }
 
     /// <summary>Data rows consumed by this call.</summary>
     public long RowsRead { get; set; }
@@ -186,7 +196,10 @@ public sealed class UdaFileWritePreview
     public string Type { get; set; } = "";
     public string? AssemblyPos { get; set; }
 
-    /// <summary>"update", "unchanged", "skip-non-empty", "not-found" or "invalid".</summary>
+    /// <summary>
+    /// "update", "unchanged", "skip-non-empty", "not-found", "invalid", or "refused" (apply:
+    /// Tekla accepted none of the object's values).
+    /// </summary>
     public string Action { get; set; } = "";
 
     public List<UdaFieldChange> Changes { get; set; } = new List<UdaFieldChange>();

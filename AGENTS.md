@@ -178,6 +178,24 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
 - **Tag origin.** Backends stamp created/modified objects with the `MCP_ORIGIN` UDA so agent
   output is findable and reversible. Keep this behavior.
 - **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
+- **Outcome + target on every write result** (`WriteResult`, `UdaOperationResult`,
+  `UdaFileWriteResult`, `DrawingWriteResult`; `ScriptResult` gets the target). Every mutating
+  tool goes through a `ToolHelpers.Write(model, expectedModelPath, () => …)` wrapper and takes the
+  optional `expectedModelPath` parameter (`ToolHelpers.ExpectedModelPathDescription`): the
+  wrapper resolves `ITeklaModelService.GetWriteTarget()` (model path + Tekla PID), refuses a
+  mismatch BEFORE the backend is called, stamps `Target`, derives a missing `Outcome` from the
+  counters and turns `unknown` into `isError` with the full result in the text. A new write
+  tool that bypasses the wrapper is a bug.
+- **Outcomes come from what happened, not from counters.** The Open API has no transactions —
+  an `Insert`/`Modify`/`Delete`/`SetUserProperty` is in the model when it returns and nothing
+  rolls back. Live model writes use `Core/WriteProgress`: `BeginWrite()` right before the first
+  mutating call, `Complete()` after the final commit, `Fail(ex)` / `ItemFailed(ex)` in the
+  catches, `Stamp(...)` on every return. A failure between the first write and the commit is
+  `unknown` — never "not written". Count an object right after its write succeeded (not before,
+  not after follow-up reads), and treat a `false` from `Modify()`/`Delete()` as a refusal with
+  an error, never silently. Drawing writes are coarse (`DrawingFailure`: a lost connection
+  during apply → `unknown`; `CommitDrawingChanges` returning false → `unknown`). The mock never
+  fails half-way, so counters are exact there.
 - **Small service surface.** Keep backend write methods primitive and batch-oriented:
   `CreateParts`, `ModifyParts`, `DeleteObjects`, and `CreateConnections`. **Generators, fixers
   and replication workflows** (`tekla_generate_frame`, `tekla_straighten_columns`,

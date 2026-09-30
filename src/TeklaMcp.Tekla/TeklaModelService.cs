@@ -103,6 +103,19 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     public ConnectionInfo GetConnectionInfo() => WithTeklaIdentity(ProbeConnection());
 
+    public WriteTarget GetWriteTarget()
+    {
+        var model = GetConnectedModel();
+        var info = model.GetInfo();
+        var target = new WriteTarget
+        {
+            ModelName = info.ModelName ?? "",
+            ModelPath = info.ModelPath ?? "",
+        };
+        TeklaRemotingChannel.IdentifyInstance(target);
+        return target;
+    }
+
     /// <summary>Build/binding facts the tool layer cannot know; filled on every outcome.</summary>
     private static ConnectionInfo WithTeklaIdentity(ConnectionInfo info)
     {
@@ -900,6 +913,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
 
         try
         {
@@ -908,27 +922,30 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (mo is null)
             {
                 result.Message = "Object not found.";
-                return result;
+                return Stamp(result, progress);
             }
 
             var preview = Map(mo);
             if (preview != null) result.Preview.Add(preview);
             result.MatchedObjects = 1;
 
-            if (!apply) return result;
+            if (!apply) return Stamp(result, progress);
 
+            progress.BeginWrite(); // SetUserProperty writes straight to the model
             if (ApplyUdaUpdates(mo, updates, out var changedFields))
             {
                 result.UpdatedObjects = 1;
                 result.UpdatedFields = changedFields;
             }
+            progress.Complete();
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
 
-        return result;
+        return Stamp(result, progress);
     }
 
     public UdaOperationResult SetUdas(
@@ -942,6 +959,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
 
         try
         {
@@ -960,18 +978,44 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
 
                 if (!apply) continue;
+                progress.BeginWrite();
                 if (ApplyUdaUpdates(mo, updates, out var changedFields))
                 {
                     result.UpdatedObjects++;
                     result.UpdatedFields += changedFields;
                 }
             }
+            progress.Complete();
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
 
+        return Stamp(result, progress);
+    }
+
+    // -- Write outcomes (backlog §4): every result says what happened, see WriteProgress ------
+
+    private static UdaOperationResult Stamp(UdaOperationResult result, WriteProgress progress)
+    {
+        // An object that matched but accepted none of its values counts as a refused item.
+        var refused = result.Applied ? Math.Max(0, result.MatchedObjects - result.UpdatedObjects) : 0;
+        result.Outcome = progress.Outcome(result.Applied, result.UpdatedObjects, refused);
+        return result;
+    }
+
+    private static WriteResult Stamp(WriteResult result, WriteProgress progress)
+    {
+        result.Outcome = progress.Outcome(
+            result.Applied,
+            result.CreatedCount + result.ModifiedCount + result.DeletedCount,
+            result.Errors.Count);
+        if (result.Outcome == WriteOutcome.Unknown)
+            result.Message = (string.IsNullOrWhiteSpace(result.Message) ? "" : result.Message + " ") +
+                "The call failed after writing began, and Tekla does not roll back: the model may hold " +
+                "some, all or none of these changes. Read the targets back before retrying.";
         return result;
     }
 
@@ -1014,7 +1058,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public WriteResult CreateParts(IReadOnlyList<PartSpec> specs, bool apply)
     {
         var result = new WriteResult { Operation = "create", Applied = apply, Backend = BackendName };
-        if (specs == null || specs.Count == 0) { result.Message = "No specs provided."; return result; }
+        var progress = new WriteProgress();
+        if (specs == null || specs.Count == 0) { result.Message = "No specs provided."; return Stamp(result, progress); }
 
         if (!apply)
         {
@@ -1023,7 +1068,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 result.PlannedCount++;
                 if (result.Preview.Count < 20) result.Preview.Add(PreviewInfo(spec));
             }
-            return result;
+            return Stamp(result, progress);
         }
 
         try
@@ -1039,10 +1084,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     result.PlannedCount++;
                     try
                     {
+                        progress.BeginWrite(); // CreateOne inserts
                         var created = CreateOne(model, spec);
                         if (created is null) { result.Errors.Add("Create failed for kind=" + spec.Kind); continue; }
-                        created.SetUserProperty("MCP_ORIGIN", "mcp:create");
+                        // Counted right after the insert: anything failing below must not make
+                        // an object that IS in the model look uncreated.
                         result.CreatedCount++;
+                        created.SetUserProperty("MCP_ORIGIN", "mcp:create");
                         var info = Map(created);
                         if (info != null)
                         {
@@ -1050,20 +1098,30 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             if (result.Preview.Count < 20) result.Preview.Add(info);
                         }
                     }
-                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                    catch (Exception exItem)
+                    {
+                        progress.ItemFailed(exItem);
+                        result.Errors.Add(ErrorText.Flatten(exItem));
+                    }
                 }
                 model.CommitChanges();
+                progress.Complete();
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public WriteResult ModifyParts(IReadOnlyList<PartModification> modifications, bool apply)
     {
         var result = new WriteResult { Operation = "modify", Applied = apply, Backend = BackendName };
-        if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return result; }
+        var progress = new WriteProgress();
+        if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return Stamp(result, progress); }
 
         try
         {
@@ -1079,7 +1137,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     var info = Map(moPrev);
                     if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
                 }
-                return result;
+                return Stamp(result, progress);
             }
 
             var wph = model.GetWorkPlaneHandler();
@@ -1115,16 +1173,27 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             if (mod.NewStart != null) beam.StartPoint = ToPoint(mod.NewStart);
                             if (mod.NewEnd != null) beam.EndPoint = ToPoint(mod.NewEnd);
                         }
+                        progress.BeginWrite(); // SetUserProperty writes straight to the model
                         mo.SetUserProperty("MCP_ORIGIN", "mcp:modify");
-                        mo.Modify();
+                        // The return value used to be ignored, so a refused Modify() counted as a
+                        // modification. TODO(windows): confirm live that a no-op Modify() of an
+                        // unchanged part still returns true.
+                        if (!mo.Modify())
+                            throw new InvalidOperationException(
+                                "Tekla rejected Modify() for " + mod.Guid + " — the geometry/properties were not changed.");
                         result.ModifiedCount++;
                         var writtenGuid = ModelGuid(mo);
                         if (!string.IsNullOrWhiteSpace(writtenGuid) && writtenGuids.Count < 20)
                             writtenGuids.Add(writtenGuid);
                     }
-                    catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                    catch (Exception exItem)
+                    {
+                        progress.ItemFailed(exItem);
+                        result.Errors.Add(ErrorText.Flatten(exItem));
+                    }
                 }
                 model.CommitChanges();
+                progress.Complete();
 
                 // Report what the DATABASE holds, not the object we just wrote to. Tekla
                 // canonicalizes Position on commit — TOP+180° comes back as BELOW+0°, LEFT
@@ -1140,13 +1209,18 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
     {
         var result = new WriteResult { Operation = "delete", Applied = apply, Backend = BackendName };
+        var progress = new WriteProgress();
         try
         {
             var model = GetConnectedModel();
@@ -1165,17 +1239,31 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.PlannedCount = matched.Count;
-            if (!apply) return result;
+            if (!apply) return Stamp(result, progress);
 
             foreach (var mo in matched)
             {
-                try { if (mo.Delete()) result.DeletedCount++; }
-                catch (Exception exItem) { result.Errors.Add(ErrorText.Flatten(exItem)); }
+                try
+                {
+                    progress.BeginWrite();
+                    if (mo.Delete()) result.DeletedCount++;
+                    else result.Errors.Add("Tekla refused to delete " + ModelGuid(mo) + " (" + mo.GetType().Name + ").");
+                }
+                catch (Exception exItem)
+                {
+                    progress.ItemFailed(exItem);
+                    result.Errors.Add(ErrorText.Flatten(exItem));
+                }
             }
             model.CommitChanges();
+            progress.Complete();
         }
-        catch (Exception ex) { result.Message = ErrorText.Flatten(ex); }
-        return result;
+        catch (Exception ex)
+        {
+            progress.Fail(ex);
+            result.Message = ErrorText.Flatten(ex);
+        }
+        return Stamp(result, progress);
     }
 
     public IReadOnlyList<ComponentInfo> GetConnections(string partGuid)
@@ -1209,10 +1297,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
         if (specs == null || specs.Count == 0)
         {
             result.Message = "No connection specs provided.";
-            return result;
+            return Stamp(result, progress);
         }
 
         try
@@ -1271,6 +1360,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                         result.ComponentPreview.Add(preview);
                     if (!apply) continue;
 
+                    progress.BeginWrite(); // replace-mode deletes, then the insert
                     foreach (var existing in doomed)
                     {
                         if (existing.Delete()) result.DeletedCount++;
@@ -1326,6 +1416,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
                 catch (Exception exItem)
                 {
+                    progress.ItemFailed(exItem);
                     result.Errors.Add(ErrorText.Flatten(exItem));
                 }
             }
@@ -1333,6 +1424,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (apply)
             {
                 model.CommitChanges();
+                progress.Complete();
                 RefreshComponentPreview(model, result);
             }
 
@@ -1345,9 +1437,10 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
-        return result;
+        return Stamp(result, progress);
     }
 
     public WriteResult ModifyConnections(
@@ -1359,10 +1452,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
             Applied = apply,
             Backend = BackendName,
         };
+        var progress = new WriteProgress();
         if (modifications == null || modifications.Count == 0)
         {
             result.Message = "No connection modifications provided.";
-            return result;
+            return Stamp(result, progress);
         }
 
         try
@@ -1394,6 +1488,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                     }
 
                     ApplyConnectionModification(component, mod);
+                    progress.BeginWrite(); // SetUserProperty writes straight to the model
                     component.SetUserProperty("MCP_ORIGIN", "mcp:modify_connection");
                     if (!component.Modify())
                         throw new InvalidOperationException(
@@ -1406,6 +1501,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 }
                 catch (Exception exItem)
                 {
+                    progress.ItemFailed(exItem);
                     result.Errors.Add(ErrorText.Flatten(exItem));
                 }
             }
@@ -1413,6 +1509,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (apply)
             {
                 model.CommitChanges();
+                progress.Complete();
                 // Same reason as ModifyParts: read back the committed component so the caller
                 // sees the orientation Tekla actually stored, not the one we asked for.
                 foreach (var guid in writtenGuids)
@@ -1424,9 +1521,10 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
             result.Message = ErrorText.Flatten(ex);
         }
-        return result;
+        return Stamp(result, progress);
     }
 
     /// <summary>

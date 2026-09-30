@@ -69,7 +69,7 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add((spec.Kind ?? "object") + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add((spec.Kind ?? "object") + ": " + DrawingFailure(result, exItem));
                 }
             }
 
@@ -82,7 +82,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -144,7 +144,7 @@ public sealed partial class TeklaModelService
                 catch (Exception exItem)
                 {
                     result.Errors.Add(
-                        record.Object.GetType().Name + " #" + record.Index + ": " + ErrorText.Flatten(exItem));
+                        record.Object.GetType().Name + " #" + record.Index + ": " + DrawingFailure(result, exItem));
                 }
             }
 
@@ -154,7 +154,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -214,7 +214,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }

@@ -314,7 +314,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -345,7 +345,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -374,7 +374,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -430,13 +430,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DescribeDrawingSpec(spec) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -521,7 +521,7 @@ public sealed partial class TeklaModelService
                 catch (Exception exItem)
                 {
                     result.Errors.Add(
-                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + ErrorText.Flatten(exItem));
+                        DrawingLabel(row.Drawing) + ": origin stamp/commit: " + DrawingFailure(result, exItem));
                 }
             }
             if (!apiSucceeded)
@@ -540,7 +540,7 @@ public sealed partial class TeklaModelService
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -593,13 +593,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -731,13 +731,13 @@ public sealed partial class TeklaModelService
                 }
                 catch (Exception exItem)
                 {
-                    result.Errors.Add(DrawingLabel(drawing) + ": " + ErrorText.Flatten(exItem));
+                    result.Errors.Add(DrawingLabel(drawing) + ": " + DrawingFailure(result, exItem));
                 }
             }
         }
         catch (Exception ex)
         {
-            result.Message = ErrorText.Flatten(ex);
+            result.Message = DrawingFailure(result, ex);
         }
         return result;
     }
@@ -1023,6 +1023,19 @@ public sealed partial class TeklaModelService
     private static DrawingWriteResult NewDrawingWriteResult(string operation, bool apply) =>
         new DrawingWriteResult { Operation = operation, Applied = apply, Backend = BackendName };
 
+    /// <summary>
+    /// Error text for a failed drawing write that also records its outcome coarsely: a lost
+    /// connection during apply leaves the drawing state unknown (backlog §4). Drawing writes do
+    /// not track where exactly writing began, so this errs towards "unknown" — the tool layer
+    /// derives the other outcomes from the counters.
+    /// </summary>
+    private static string DrawingFailure(DrawingWriteResult result, Exception exception)
+    {
+        if (result.Applied && ConnectionErrors.IsTeklaConnectionFailure(exception))
+            result.Outcome = WriteOutcome.Unknown;
+        return ErrorText.Flatten(exception);
+    }
+
     private static DrawingInfo PreviewDrawing(DrawingSpec spec) =>
         new DrawingInfo
         {
@@ -1121,6 +1134,7 @@ public sealed partial class TeklaModelService
         DrawingWriteResult result)
     {
         if (drawing.CommitChanges(message)) return;
+        result.Outcome = WriteOutcome.Unknown; // database operations already ran; nothing rolls back
         result.Warnings.Add(
             "Tekla returned false from Drawing.CommitChanges after database operations had " +
             "already been attempted. Changes may be partial; inspect the drawing and use Ctrl+Z if needed.");

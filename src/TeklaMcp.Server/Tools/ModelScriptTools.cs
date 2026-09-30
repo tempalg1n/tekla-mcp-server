@@ -100,11 +100,40 @@ public static class ModelScriptTools
         [Description("codeSha256 of the exact script the user approved (from tekla_check_csharp). REQUIRED when " +
                      "allowMutations=true; optional otherwise. A mismatch means the source changed after approval " +
                      "and the run is rejected without compiling or executing.")]
-        string? expectedSha256 = null)
+        string? expectedSha256 = null,
+        [Description(ToolHelpers.ExpectedModelPathDescription + " Checked before the script is compiled or run.")]
+        string? expectedModelPath = null)
     {
         code ??= "";
-        return ScriptApprovalGate.Check(code, allowMutations, expectedSha256)
-               ?? model.ExecuteScript(code, allowMutations, timeoutSeconds);
+        var rejected = ScriptApprovalGate.Check(code, allowMutations, expectedSha256);
+        if (rejected != null) return rejected;
+
+        // Which model the script will run against. With expectedModelPath a mismatch — or no way
+        // to tell — refuses the run; without it, a connection problem is left to ExecuteScript,
+        // which reports it in the result (scripts never throw).
+        WriteTarget? target = null;
+        try
+        {
+            target = ToolHelpers.ResolveTarget(model, expectedModelPath);
+        }
+        catch (Exception ex) when (!string.IsNullOrWhiteSpace(expectedModelPath))
+        {
+            return new ScriptResult
+            {
+                Stage = "policy",
+                CodeSha256 = ScriptEngine.ComputeCodeSha256(code),
+                Error = ex.Message,
+                Guidance = "Nothing was compiled or executed: the target model could not be confirmed.",
+            };
+        }
+        catch
+        {
+            // No expectedModelPath: run as before and let the backend report the connection.
+        }
+
+        var result = model.ExecuteScript(code, allowMutations, timeoutSeconds);
+        result.Target = target;
+        return result;
     }
 
     [McpServerTool(Name = "tekla_check_csharp")]

@@ -27,6 +27,14 @@ public interface ITeklaModelService
     ConnectionInfo GetConnectionInfo();
 
     /// <summary>
+    /// The model a write would go to right now: name, path and — when it can be told apart —
+    /// the Tekla process. The tool layer calls it before every write/preview to stamp the result
+    /// and to refuse a mismatching <c>expectedModelPath</c> before anything is written. Throws
+    /// when there is no connection (the write could not happen either).
+    /// </summary>
+    WriteTarget GetWriteTarget();
+
+    /// <summary>
     /// Aggregate statistics over every object in the model (counts by type/class/
     /// profile/material and total weight). Implementations must stream — never build an
     /// in-memory list of all objects. <paramref name="includeWeights"/> false skips the

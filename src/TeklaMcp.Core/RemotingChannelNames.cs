@@ -125,6 +125,56 @@ public static class RemotingChannelNames
             : ChannelPublication.NotPublished;
     }
 
+    /// <summary>
+    /// The Tekla process behind <paramref name="channel"/>, out of the running processes of this
+    /// build's version (<paramref name="candidatePids"/>). A second or later instance names its
+    /// channels "…-Console-&lt;PID&gt;:…", which settles it; the plain name belongs to the one
+    /// candidate no published channel names (elimination); a single candidate is trivially it.
+    /// Null when that does not narrow it to one — <paramref name="note"/> says why. Never guesses.
+    /// </summary>
+    public static int? ResolveInstancePid(
+        string? channel, IEnumerable<string>? pipes, IReadOnlyCollection<int> candidatePids, out string? note)
+    {
+        note = null;
+        if (candidatePids.Count == 0)
+        {
+            note = "no running Tekla process of this version was found";
+            return null;
+        }
+
+        var own = PidSuffix(channel is null ? null : SessionSuffixOf(channel));
+        if (own is int pid)
+        {
+            if (candidatePids.Contains(pid)) return pid;
+            note = $"the channel names PID {pid}, which is not a running Tekla of this version";
+            return null;
+        }
+
+        if (candidatePids.Count == 1) return candidatePids.First();
+
+        // Plain-named channel: every OTHER instance publishes under its PID.
+        var named = new HashSet<int>();
+        foreach (var pipe in pipes ?? Enumerable.Empty<string>())
+            if (PidSuffix(SessionSuffixOf(pipe)) is int other) named.Add(other);
+        var remaining = candidatePids.Where(c => !named.Contains(c)).ToList();
+        if (remaining.Count == 1) return remaining[0];
+
+        note = $"{candidatePids.Count} Tekla instances of this version are running (PIDs " +
+               string.Join(", ", candidatePids.OrderBy(p => p)) + ") and the channel does not say which " +
+               "one this server is bound to";
+        return null;
+    }
+
+    /// <summary>22296 from "Console-22296" (also "TeklaStructures-Console-5120" on 2024+).</summary>
+    private static int? PidSuffix(string? sessionSuffix)
+    {
+        if (string.IsNullOrEmpty(sessionSuffix)) return null;
+        var dash = sessionSuffix!.LastIndexOf('-');
+        if (dash < 0 || dash == sessionSuffix.Length - 1) return null;
+        var digits = sessionSuffix.Substring(dash + 1);
+        return digits.All(char.IsDigit) && int.TryParse(digits, out var pid) && pid > 0 ? pid : (int?)null;
+    }
+
     /// <summary>"Tekla.Structures.Model" from "Tekla.Structures.Model-Console:2023.0.0.0".</summary>
     private static string? AssemblyOf(string channel)
     {

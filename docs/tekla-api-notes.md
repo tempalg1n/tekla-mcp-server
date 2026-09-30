@@ -355,6 +355,14 @@ agree with. `ModifyParts`, `ModifyConnections` and `CreateConnections` re-select
 object by GUID after `CommitChanges()` and map *that*. Keep this when adding write paths — the
 alternative is a tool that confidently contradicts the next read.
 
+The same honesty applies to the outcome (backlog §4, `Core/WriteProgress`): there are no
+transactions — `Insert`/`Modify`/`Delete`/`SetUserProperty` are in the model as soon as they
+return, and `CommitChanges()` flushes rather than commits. A failure after the first of those
+calls is therefore reported as `unknown`, never as "not written". `ModifyParts` now treats
+`Modify() == false` as a refusal and `DeleteObjects` treats `Delete() == false` the same way.
+TODO(windows): confirm live that a no-op `Modify()` of an unchanged part returns true, and
+break the connection mid-batch on a scratch model to see the `unknown` path end to end.
+
 ### 4. One connection per primary/secondary pair
 
 Tekla **rejects** `Connection.Insert()` when the pair already carries a connection (the failure

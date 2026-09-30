@@ -22,7 +22,8 @@ public static class DrawingContentTools
         [Description("Saved view attributes file.")] string attributeFile = "",
         [Description("Optional view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var normalizedType = (type ?? "").Trim().ToLowerInvariant();
         if (normalizedType != "front" && normalizedType != "top" &&
@@ -37,7 +38,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -69,7 +70,8 @@ public static class DrawingContentTools
         [Description("Saved GA view attributes file.")] string attributeFile = "",
         [Description("Optional view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var insertion = ToolHelpers.ParsePoint(insertionPoint);
         var viewO = ToolHelpers.ParsePoint(viewOrigin);
@@ -114,7 +116,7 @@ public static class DrawingContentTools
                 Message = "restrictionMin must be component-wise less than or equal to restrictionMax.",
             };
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -169,7 +171,8 @@ public static class DrawingContentTools
         [Description("Saved section-mark attributes file.")] string markAttributeFile = "",
         [Description("Optional created-view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var cutPoints = ToolHelpers.ParsePoints(points);
         var expected = curved ? 3 : 2;
@@ -184,7 +187,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -220,7 +223,8 @@ public static class DrawingContentTools
         [Description("Saved detail-mark attributes file.")] string markAttributeFile = "",
         [Description("Optional created-view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var center = ToolHelpers.ParsePoint(centerPoint);
         var boundary = ToolHelpers.ParsePoint(boundaryPoint);
@@ -231,7 +235,7 @@ public static class DrawingContentTools
                 "create_drawing_views", apply,
                 "centerPoint, boundaryPoint, labelPoint and insertionPoint must use 'x,y,z'.");
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingViews(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
             new DrawingViewSpec
             {
@@ -267,7 +271,8 @@ public static class DrawingContentTools
         [Description("Rotate around view Y in degrees.")] double? rotateYDegrees = null,
         [Description("Rotate around view Z in degrees.")] double? rotateZDegrees = null,
         [Description("Rotate on drawing plane in degrees.")] double? rotateOnDrawingPlaneDegrees = null,
-        [Description("Set true to commit; false returns preview.")] bool apply = false)
+        [Description("Set true to commit; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
@@ -286,7 +291,7 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "modify_drawing_views", apply,
                 "width, height and scale must be greater than zero when supplied.");
-        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingViews(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyDrawingViews(new[]
         {
             new DrawingViewModification
             {
@@ -313,8 +318,9 @@ public static class DrawingContentTools
         [Description("Non-zero session View ID; omit to use viewIndex.")] int? viewId = null,
         [Description("Session View ID2.")] int? viewId2 = null,
         [Description("Ephemeral view index fallback; re-list before use.")] int viewIndex = -1,
-        [Description("Set true to delete; false returns preview.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.ModifyDrawingViews(new[]
+        [Description("Set true to delete; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.ModifyDrawingViews(new[]
         {
             new DrawingViewModification
             {
@@ -331,8 +337,9 @@ public static class DrawingContentTools
     public static DrawingWriteResult CreateDrawingObjects(
         ITeklaModelService model,
         [Description("Structured drawing-object specs (maximum 200).")] IReadOnlyList<DrawingObjectSpec> objects,
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
-        ToolHelpers.FailIfNothingApplied(model.CreateDrawingObjects(
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingObjects(
             (objects ?? new List<DrawingObjectSpec>()).Take(200).ToList(), apply));
 
     [McpServerTool(Name = "tekla_create_drawing_text")]
@@ -347,9 +354,11 @@ public static class DrawingContentTools
         [Description("view (default), model, or sheet.")] string coordinateSpace = "view",
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet. Ignored when viewId supplied.")] int viewIndex = 0,
         [Description("Saved text attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "text", point, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, text: text, apply: apply);
+            attributeFile, text: text, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_line")]
     [Description("Create a line in the ACTIVE drawing. Points use view-local/model/sheet coordinates. " +
@@ -363,9 +372,11 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Optional line bulge.")] double? bulge = null,
         [Description("Saved line attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "line", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, bulge: bulge, apply: apply);
+            attributeFile, bulge: bulge, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_rectangle")]
     [Description("Create a rectangle from two opposite points in the ACTIVE drawing. Preview unless apply=true.")]
@@ -378,9 +389,11 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Rotation angle in degrees.")] double? angleDegrees = null,
         [Description("Saved rectangle attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "rectangle", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, angleDegrees: angleDegrees, apply: apply);
+            attributeFile, angleDegrees: angleDegrees, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_circle")]
     [Description("Create a circle in the ACTIVE drawing. Preview unless apply=true.")]
@@ -393,9 +406,11 @@ public static class DrawingContentTools
         [Description("view, model, or sheet.")] string coordinateSpace = "view",
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Saved circle attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "circle", center, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, radius: radius, apply: apply);
+            attributeFile, radius: radius, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_arc")]
     [Description("Create an arc from three points, or two points plus radius. Preview unless apply=true.")]
@@ -408,9 +423,11 @@ public static class DrawingContentTools
         [Description("view, model, or sheet.")] string coordinateSpace = "view",
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Saved arc attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "arc", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, radius: radius, apply: apply);
+            attributeFile, radius: radius, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_polyline")]
     [Description("Create a polyline in the ACTIVE drawing. Preview unless apply=true.")]
@@ -423,9 +440,11 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Optional common bulge.")] double? bulge = null,
         [Description("Saved polyline attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "polyline", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, bulge: bulge, apply: apply);
+            attributeFile, bulge: bulge, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_drawing_polygon")]
     [Description("Create a closed polygon in the ACTIVE drawing. Preview unless apply=true.")]
@@ -438,9 +457,11 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Optional common bulge.")] double? bulge = null,
         [Description("Saved polygon attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "polygon", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, bulge: bulge, apply: apply);
+            attributeFile, bulge: bulge, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_revision_cloud")]
     [Description("Create a revision cloud in the ACTIVE drawing. Preview unless apply=true.")]
@@ -453,9 +474,11 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Cloud bulge/size.")] double? bulge = null,
         [Description("Saved cloud attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "cloud", points, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, bulge: bulge, apply: apply);
+            attributeFile, bulge: bulge, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_straight_dimension")]
     [Description("Create a straight dimension set in a real view of the ACTIVE drawing. Distance " +
@@ -469,7 +492,8 @@ public static class DrawingContentTools
         [Description("Dimension line distance in paper mm.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved dimension attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var up = ToolHelpers.ParsePoint(upDirection);
         if (up == null || IsZeroVector(up))
@@ -479,7 +503,8 @@ public static class DrawingContentTools
         return CreateOne(
             model, "straight_dimension", points,
             viewId, viewId2, -1, coordinateSpace,
-            attributeFile, upDirection: up, distance: distance, apply: apply);
+            attributeFile, upDirection: up, distance: distance, apply: apply,
+            expectedModelPath: expectedModelPath);
     }
 
     [McpServerTool(Name = "tekla_create_angle_dimension")]
@@ -493,9 +518,11 @@ public static class DrawingContentTools
         [Description("Dimension distance in paper mm.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved angle-dimension attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "angle_dimension", points, viewId, viewId2, -1, coordinateSpace,
-            attributeFile, distance: distance, apply: apply);
+            attributeFile, distance: distance, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_radius_dimension")]
     [Description("Create a radius dimension from three arc points. Distance is paper mm. Preview unless apply=true.")]
@@ -507,9 +534,11 @@ public static class DrawingContentTools
         [Description("Dimension distance in paper mm.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved radius-dimension attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "radius_dimension", points, viewId, viewId2, -1, coordinateSpace,
-            attributeFile, distance: distance, apply: apply);
+            attributeFile, distance: distance, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_curved_dimension")]
     [Description("Create a radial or orthogonal curved dimension. First 3 points define the arc; " +
@@ -523,7 +552,8 @@ public static class DrawingContentTools
         [Description("Dimension distance in paper mm.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved curved-dimension attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var normalized = (mode ?? "").Trim().ToLowerInvariant();
         if (normalized != "radial" && normalized != "orthogonal")
@@ -538,7 +568,8 @@ public static class DrawingContentTools
             model,
             normalized == "orthogonal" ? "curved_orthogonal" : "curved_radial",
             points, viewId, viewId2, -1, coordinateSpace,
-            attributeFile, distance: distance, apply: apply);
+            attributeFile, distance: distance, apply: apply,
+            expectedModelPath: expectedModelPath);
     }
 
     [McpServerTool(Name = "tekla_create_drawing_mark")]
@@ -550,9 +581,11 @@ public static class DrawingContentTools
         [Description("Target View ID2.")] int viewId2 = 0,
         [Description("Optional mark insertion point 'x,y,z' in view coordinates.")] string? insertionPoint = null,
         [Description("Saved mark attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "mark", insertionPoint ?? "", viewId, viewId2, -1, "view",
-            attributeFile, modelGuid: modelGuid, apply: apply);
+            attributeFile, modelGuid: modelGuid, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_level_mark")]
     [Description("Create a level mark from insertion and base points. Preview unless apply=true.")]
@@ -565,7 +598,8 @@ public static class DrawingContentTools
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("NoArrowNoLeaderLine, ArrowWithoutLeaderLine, InclinedLeaderLine, OrthogonalLeaderLine.")] string subType = "",
         [Description("Saved level-mark attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false)
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var normalized = (subType ?? "").Trim();
         if (normalized.Length > 0 &&
@@ -580,7 +614,8 @@ public static class DrawingContentTools
         return CreateOne(
             model, "level_mark", points, viewId, viewId2,
             viewIndex, coordinateSpace, attributeFile,
-            subType: normalized, apply: apply);
+            subType: normalized, apply: apply,
+            expectedModelPath: expectedModelPath);
     }
 
     [McpServerTool(Name = "tekla_create_drawing_symbol")]
@@ -595,9 +630,11 @@ public static class DrawingContentTools
         [Description("view, model, or sheet.")] string coordinateSpace = "view",
         [Description("Target view index (default 0); use -1 with coordinateSpace=sheet.")] int viewIndex = 0,
         [Description("Saved symbol attributes file.")] string attributeFile = "",
-        [Description("Set true to create; false returns preview.")] bool apply = false) =>
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         CreateOne(model, "symbol", point, viewId, viewId2, viewIndex, coordinateSpace,
-            attributeFile, symbolFile: symbolFile, symbolIndex: symbolIndex, apply: apply);
+            attributeFile, symbolFile: symbolFile, symbolIndex: symbolIndex, apply: apply,
+            expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_modify_drawing_objects")]
     [Description("Batch edit active-drawing objects: change Text contents, move, set visibility, " +
@@ -613,7 +650,8 @@ public static class DrawingContentTools
         [Description("drawing, view, show_drawing, show_view; omit to keep.")] string? visibility = null,
         [Description("Saved attributes file to load; omit to keep.")] string? attributeFile = null,
         [Description("Safety cap (default 200).")] int limit = 200,
-        [Description("Set true to commit; false returns preview.")] bool apply = false)
+        [Description("Set true to commit; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "modify_drawing_objects", objectIds, types, useSelection, apply);
@@ -632,7 +670,7 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "modify_drawing_objects", apply,
                 "visibility must be drawing, view, show_drawing, or show_view.");
-        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingObjects(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: types, useSelection: useSelection),
             new DrawingObjectModification
@@ -655,12 +693,13 @@ public static class DrawingContentTools
         [Description("Exact API object types.")] string? types = null,
         [Description("Delete current drawing selection.")] bool useSelection = false,
         [Description("Safety cap (default 200).")] int limit = 200,
-        [Description("Set true to delete; false returns preview.")] bool apply = false)
+        [Description("Set true to delete; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "delete_drawing_objects", objectIds, types, useSelection, apply);
         if (rejected != null) return rejected;
-        return ToolHelpers.FailIfNothingApplied(model.ModifyDrawingObjects(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: types, useSelection: useSelection),
             new DrawingObjectModification { Delete = true },
@@ -676,12 +715,13 @@ public static class DrawingContentTools
         [Description("Mark Object IDs 'id:id2; id:id2'.")] string? objectIds = null,
         [Description("Use current drawing selection.")] bool useSelection = false,
         [Description("Safety cap (default 200).")] int limit = 200,
-        [Description("Set true to merge; false returns preview.")] bool apply = false)
+        [Description("Set true to merge; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "merge_drawing_marks", objectIds, null, useSelection, apply);
         if (rejected != null) return rejected;
-        return ToolHelpers.FailIfNothingApplied(model.OperateDrawingMarks(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.OperateDrawingMarks(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: "Mark,MarkSet", useSelection: useSelection),
             "merge", apply, limit));
@@ -695,12 +735,13 @@ public static class DrawingContentTools
         [Description("Mark Object IDs 'id:id2; id:id2'.")] string? objectIds = null,
         [Description("Use current drawing selection.")] bool useSelection = false,
         [Description("Safety cap (default 200).")] int limit = 200,
-        [Description("Set true to split; false returns preview.")] bool apply = false)
+        [Description("Set true to split; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "split_drawing_marks", objectIds, null, useSelection, apply);
         if (rejected != null) return rejected;
-        return ToolHelpers.FailIfNothingApplied(model.OperateDrawingMarks(
+        return ToolHelpers.Write(model, expectedModelPath, () => model.OperateDrawingMarks(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: "Mark,MarkSet", useSelection: useSelection),
             "split", apply, limit));
@@ -725,7 +766,8 @@ public static class DrawingContentTools
         double? angleDegrees = null,
         Point3D? upDirection = null,
         double? distance = null,
-        bool apply = false)
+        bool apply = false,
+        string? expectedModelPath = null)
     {
         var normalizedKind = (kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
         var normalizedSpace = (coordinateSpace ?? "view").Trim().ToLowerInvariant();
@@ -779,7 +821,7 @@ public static class DrawingContentTools
                 "create_drawing_objects", apply,
                 "symbolIndex must be between 0 and 255.");
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateDrawingObjects(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingObjects(new[]
         {
             new DrawingObjectSpec
             {
@@ -837,6 +879,7 @@ public static class DrawingContentTools
         {
             Operation = operation,
             Applied = apply,
+            Outcome = apply ? WriteOutcome.NotWritten : WriteOutcome.Planned, // refused before the backend
             Backend = "Tool validation",
             Message = message,
         };
@@ -857,6 +900,7 @@ public static class DrawingContentTools
         {
             Operation = operation,
             Applied = apply,
+            Outcome = apply ? WriteOutcome.NotWritten : WriteOutcome.Planned, // refused before the backend
             Backend = model.GetDrawingStatus().Backend,
             Message =
                 "Refusing an unscoped drawing-object mutation. Supply objectIds, types, " +

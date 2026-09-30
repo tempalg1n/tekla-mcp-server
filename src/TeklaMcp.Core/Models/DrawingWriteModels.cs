@@ -161,6 +161,13 @@ public sealed class DrawingWriteResult
 {
     public string Operation { get; set; } = "";
     public bool Applied { get; set; }
+    /// <summary>
+    /// planned / not_written / committed / partial / unknown (see <see cref="TeklaMcp.Core.WriteOutcome"/>).
+    /// Drawing writes are tracked coarsely: a lost connection during apply is always "unknown".
+    /// </summary>
+    public string Outcome { get; set; } = "";
+    /// <summary>The model (and Tekla process) whose drawings this write or preview was about.</summary>
+    public WriteTarget? Target { get; set; }
     public int PlannedCount { get; set; }
     public int CreatedCount { get; set; }
     public int ModifiedCount { get; set; }

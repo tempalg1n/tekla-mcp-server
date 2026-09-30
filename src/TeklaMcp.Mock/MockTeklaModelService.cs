@@ -87,6 +87,13 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         Message = "Synthetic data — no Tekla involved.",
     };
 
+    public WriteTarget GetWriteTarget() => new()
+    {
+        ModelName = "MockModel",
+        ModelPath = "/virtual/mock/MockModel",
+        Note = "Mock backend — no Tekla process.",
+    };
+
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var s = new ModelSummary { Backend = BackendName };

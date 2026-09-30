@@ -37,6 +37,12 @@ public sealed class ScriptResult
     public string Backend { get; set; } = "";
 
     /// <summary>
+    /// The model (and Tekla process) an executed script ran against. Null for compile-only
+    /// checks, which never touch Tekla.
+    /// </summary>
+    public WriteTarget? Target { get; set; }
+
+    /// <summary>
     /// SHA-256 of the exact UTF-8 script text, for approval/audit without echoing the code.
     /// </summary>
     public string CodeSha256 { get; set; } = "";

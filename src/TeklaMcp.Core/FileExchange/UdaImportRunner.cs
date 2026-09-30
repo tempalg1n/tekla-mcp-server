@@ -61,6 +61,8 @@ public static class UdaImportRunner
         {
             Applied = request.Apply,
             Backend = backendName,
+            // Every early return below happens before the first write.
+            Outcome = request.Apply ? WriteOutcome.NotWritten : WriteOutcome.Planned,
         };
 
         if (!DataFileReader.TryResolveFormat(request.Format, request.Path, out var format, out var formatError))
@@ -99,6 +101,8 @@ public static class UdaImportRunner
         var writtenFieldSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var stopwatch = Stopwatch.StartNew();
         var applied = false;
+        var progress = new WriteProgress();
+        var refusedObjects = 0L;
 
         try
         {
@@ -191,29 +195,55 @@ public static class UdaImportRunner
                     }
 
                     preview.Action = "update";
-                    result.Updated++;
                     AddSample(result, preview, null);
 
                     if (!request.Apply)
                     {
+                        result.Updated++;
                         result.UpdatedFields += changes.Count;
                         continue;
                     }
 
+                    // Counted only once Tekla took it: a count bumped before the write used to
+                    // claim the object that broke the run as updated.
+                    progress.BeginWrite();
                     var written = target.WriteUdas(handle, changes);
-                    result.UpdatedFields += written;
                     applied = true;
+                    if (written > 0)
+                    {
+                        result.Updated++;
+                        result.UpdatedFields += written;
+                    }
+                    else
+                    {
+                        refusedObjects++;
+                        preview.Action = "refused";
+                    }
                 }
             }
 
             if (applied) target.Commit();
+            progress.Complete();
         }
         catch (Exception ex)
         {
+            progress.Fail(ex);
+            result.Outcome = progress.Outcome(request.Apply, result.Updated, refusedObjects);
             result.Seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
             result.Message = Aggregation.Append(result.Message, "Import failed: " + ErrorText.Flatten(ex));
+            if (result.Outcome == WriteOutcome.Unknown)
+                result.Message = Aggregation.Append(result.Message,
+                    "The run broke off after writing began: the object being written when it failed may " +
+                    "or may not hold the new values. Re-run this page with apply=false to see what is " +
+                    "still missing before applying again.");
             return result;
         }
+
+        result.Outcome = progress.Outcome(request.Apply, result.Updated, refusedObjects);
+        if (refusedObjects > 0)
+            result.Message = Aggregation.Append(result.Message,
+                $"{refusedObjects} object(s) accepted none of their UDA values (action 'refused' in the " +
+                "sample) — check the field names and types.");
 
         result.Seconds = Math.Round(stopwatch.Elapsed.TotalSeconds, 1);
         result.Fields = writtenFields;

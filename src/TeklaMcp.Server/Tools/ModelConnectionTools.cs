@@ -141,7 +141,8 @@ public static class ModelConnectionTools
         [Description("Tekla AutoDirectionType: NA, BASIC, DIAGONAL, SPLICE, GLOBAL_Z. Empty = keep, " +
                      "or NA when upVector is given.")] string? autoDirection = null,
         [Description("Saved attributes file to load into each component. Empty = none.")] string attributesFile = "",
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var parsedUpVector = ToolHelpers.ParsePoint(upVector);
         var mods = ToolHelpers.ParseList(guids)
@@ -162,7 +163,7 @@ public static class ModelConnectionTools
                 Message = "No connection GUIDs provided.",
             };
 
-        var result = ToolHelpers.FailIfNothingApplied(model.ModifyConnections(mods, apply));
+        var result = ToolHelpers.Write(model, expectedModelPath, () => model.ModifyConnections(mods, apply));
         return WarnOnDiscardedUpVector(result, parsedUpVector, autoDirection);
     }
 
@@ -182,10 +183,11 @@ public static class ModelConnectionTools
         [Description("System component number; negative = custom component. Default -1.")] int number = -1,
         [Description("NA, BASIC, DIAGONAL, SPLICE, GLOBAL_Z, etc. Default NA uses upVector.")] string autoDirection = "NA",
         [Description("Delete components already on this primary/secondary pair first. Default false.")] bool replaceExisting = false,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var parsedUpVector = ToolHelpers.ParsePoint(upVector) ?? new Point3D(0, 0, 1);
-        var result = ToolHelpers.FailIfNothingApplied(model.CreateConnections(new[]
+        var result = ToolHelpers.Write(model, expectedModelPath, () => model.CreateConnections(new[]
         {
             new ConnectionSpec
             {
@@ -218,7 +220,8 @@ public static class ModelConnectionTools
         [Description("New secondary part GUIDs, comma/semicolon/newline separated.")] string targetSecondaryGuids,
         [Description("Optional attributes file to load for custom parameters.")] string attributesFile = "",
         [Description("Delete components already on the target pair first. Default false.")] bool replaceExisting = false,
-        [Description("Set true to commit. Default false = preview.")] bool apply = false)
+        [Description("Set true to commit. Default false = preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
         var candidates = model.GetConnections(sourcePartGuid)
             .Where(c => c.Type == "Connection")
@@ -236,7 +239,7 @@ public static class ModelConnectionTools
                     : "Source connection is ambiguous/not found; call tekla_list_connections and pass its id.",
             };
 
-        return ToolHelpers.FailIfNothingApplied(model.CreateConnections(new[]
+        return ToolHelpers.Write(model, expectedModelPath, () => model.CreateConnections(new[]
         {
             new ConnectionSpec
             {
