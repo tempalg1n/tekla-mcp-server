@@ -288,8 +288,20 @@ public interface ITeklaModelService
     /// <summary>
     /// Create one or more connections. Preview unless apply; implementations commit geometry
     /// once before inserting components so newly-created parts can be addressed reliably.
+    /// A spec with <see cref="ConnectionSpec.ReplaceExisting"/> first deletes the components
+    /// already attached to that primary/secondary pair — Tekla rejects a second connection on
+    /// an existing pair, so a node-type swap is a delete + insert.
     /// </summary>
     WriteResult CreateConnections(IReadOnlyList<ConnectionSpec> specs, bool apply);
+
+    /// <summary>
+    /// Change orientation/attributes of EXISTING connections addressed by GUID (or integer ID).
+    /// Preview unless apply. Implementations must work around Tekla's auto-direction quirk:
+    /// a written <c>UpVector</c> only persists under <c>AUTODIR_NA</c>, so setting
+    /// <see cref="ConnectionModification.UpVector"/> switches the mode unless the caller asked
+    /// for a specific <see cref="ConnectionModification.AutoDirection"/>.
+    /// </summary>
+    WriteResult ModifyConnections(IReadOnlyList<ConnectionModification> modifications, bool apply);
 
     // -- Drawings ---------------------------------------------------------------------------
 

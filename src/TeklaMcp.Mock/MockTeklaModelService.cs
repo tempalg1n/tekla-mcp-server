@@ -190,7 +190,14 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         {
             if (string.IsNullOrWhiteSpace(name)) continue;
             if (TryGetAttributeValue(obj, name, out var value)) result.Udas[name] = value;
+            else result.NotFound.Add(name);
         }
+
+        if (result.NotFound.Count > 0 && result.Udas.Count == 0)
+            result.Message =
+                "None of the requested names resolved on this " + result.Type +
+                ". Report-property names are template names (VOLUME, AREA, ASSEMBLY_POS); " +
+                "use tekla_find_attributes_by_value to discover where a known value lives.";
 
         return result;
     }
@@ -734,6 +741,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             return result;
         }
 
+        var plannedReplacements = 0;
         foreach (var spec in specs)
         {
             result.PlannedCount++;
@@ -752,6 +760,13 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 result.Errors.Add("One or more secondary objects were not found.");
                 continue;
             }
+            // Tekla refuses a second connection on an occupied primary/secondary pair, so a
+            // node-type swap is delete + insert. Mirror that here.
+            var doomed = spec.ReplaceExisting
+                ? FindComponentsOnPair(spec.PrimaryGuid, spec.SecondaryGuids)
+                : new List<ComponentInfo>();
+            plannedReplacements += doomed.Count;
+
             var id = apply ? _nextId++ : 0;
             var guid = apply ? Guid.NewGuid().ToString() : "(preview)";
             var component = new ComponentInfo
@@ -764,18 +779,112 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 PrimaryGuid = spec.PrimaryGuid,
                 SecondaryGuids = spec.SecondaryGuids.ToList(),
                 UpVector = spec.UpVector,
-                AutoDirection = spec.AutoDirection ?? "NA",
+                AutoDirection = NormalizeAutoDirection(spec.AutoDirection),
                 Status = "OK",
             };
             if (result.ComponentPreview.Count < 20) result.ComponentPreview.Add(component);
             if (!apply) continue;
+
+            foreach (var existing in doomed)
+            {
+                _components.Remove(existing);
+                result.DeletedCount++;
+            }
 
             _components.Add(component);
             result.CreatedCount++;
             result.CreatedGuids.Add(guid);
             result.CreatedIds.Add(id);
         }
+
+        if (plannedReplacements > 0)
+            result.Message = apply
+                ? "Replace mode: deleted " + result.DeletedCount +
+                  " existing component(s) on the targeted pair(s) before inserting."
+                : "Replace mode: " + plannedReplacements +
+                  " existing component(s) on the targeted pair(s) would be deleted first.";
+
         return result;
+    }
+
+    public WriteResult ModifyConnections(
+        IReadOnlyList<ConnectionModification> modifications, bool apply)
+    {
+        var result = new WriteResult
+        {
+            Operation = "modify_connections",
+            Applied = apply,
+            Backend = BackendName,
+        };
+        if (modifications == null || modifications.Count == 0)
+        {
+            result.Message = "No connection modifications provided.";
+            return result;
+        }
+
+        foreach (var mod in modifications)
+        {
+            result.PlannedCount++;
+            var component = _components.FirstOrDefault(c =>
+                (!string.IsNullOrWhiteSpace(mod.Guid) && Eq(c.Guid, mod.Guid)) ||
+                (mod.Id.HasValue && mod.Id.Value != 0 && c.Id == mod.Id.Value));
+            if (component == null)
+            {
+                result.Errors.Add("Connection not found: " +
+                    (string.IsNullOrWhiteSpace(mod.Guid) ? "id " + (mod.Id ?? 0) : mod.Guid));
+                continue;
+            }
+
+            // An explicit up vector only persists under AUTODIR_NA, so it selects that mode
+            // unless the caller named one. See ConnectionModification for the live evidence.
+            var autoDirection = !string.IsNullOrWhiteSpace(mod.AutoDirection)
+                ? NormalizeAutoDirection(mod.AutoDirection)
+                : (mod.UpVector != null ? "AUTODIR_NA" : component.AutoDirection);
+            var vectorSticks = mod.UpVector != null && Eq(autoDirection, "AUTODIR_NA");
+
+            if (!apply)
+            {
+                if (result.ComponentPreview.Count < 20)
+                    result.ComponentPreview.Add(new ComponentInfo
+                    {
+                        Guid = component.Guid,
+                        Id = component.Id,
+                        Type = component.Type,
+                        Name = component.Name,
+                        Number = component.Number,
+                        PrimaryGuid = component.PrimaryGuid,
+                        SecondaryGuids = component.SecondaryGuids.ToList(),
+                        UpVector = vectorSticks ? mod.UpVector : component.UpVector,
+                        AutoDirection = autoDirection,
+                        Status = component.Status,
+                    });
+                continue;
+            }
+
+            component.AutoDirection = autoDirection;
+            // Mirror the live quirk: under any non-NA mode Tekla recomputes the vector and the
+            // written value is silently dropped, even though Modify() reports success.
+            if (vectorSticks) component.UpVector = mod.UpVector;
+            StampOrigin(component.Guid, "mcp:modify_connection");
+            result.ModifiedCount++;
+            if (result.ComponentPreview.Count < 20) result.ComponentPreview.Add(component);
+        }
+        return result;
+    }
+
+    private List<ComponentInfo> FindComponentsOnPair(
+        string primaryGuid, IReadOnlyList<string> secondaryGuids) =>
+        _components
+            .Where(c => Eq(c.PrimaryGuid, primaryGuid) &&
+                        c.SecondaryGuids.Any(g => secondaryGuids.Any(s => Eq(g, s))))
+            .ToList();
+
+    private static string NormalizeAutoDirection(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "AUTODIR_NA" : value!.Trim();
+        if (!normalized.StartsWith("AUTODIR_", StringComparison.OrdinalIgnoreCase))
+            normalized = "AUTODIR_" + normalized;
+        return normalized.ToUpperInvariant();
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)

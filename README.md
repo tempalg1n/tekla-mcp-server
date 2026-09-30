@@ -108,6 +108,7 @@ All tools use the `tekla_` prefix. The current build exposes **107 tools** in to
 | `tekla_export_objects` | Export filtered objects as a CSV/Markdown table (bill-of-materials). |
 | `tekla_analyze_profile_connections` | Estimate unique connection/node types for members of a profile. |
 | `tekla_list_connections` | List actual Connection/component objects attached to a part. |
+| `tekla_find_connections` | Find connections across many parts (filter/selection/bbox) and aggregate them by component name. |
 | `tekla_select_objects` | Select matching objects in the Tekla UI; supports UDA/attribute filters and `guidIn`; returns `selectedCount` + preview. |
 | `tekla_get_object_udas` | Read UDA fields for an object by GUID. |
 | `tekla_set_object_udas` | Set UDAs on one object (`apply=false` by default). |
@@ -185,8 +186,10 @@ tekla_set_udas_from_file apply=true  → write
 | `tekla_create_column` | Create a vertical column at (x,y) from bottomZ to topZ. |
 | `tekla_create_plate` | Create a contour plate from 3+ points. |
 | `tekla_modify_part` | Edit properties/endpoints/Position, or copy Position from an exemplar. |
-| `tekla_create_connection` | Create a system/custom Connection (primary, secondaries, UpVector, attributes file). |
-| `tekla_copy_connection` | Copy a Connection's exact name/number/orientation to new parts. |
+| `tekla_modify_parts` | Batch form of the above — up to 200 parts in one call (whole-axis re-orientation). |
+| `tekla_create_connection` | Create a system/custom Connection (primary, secondaries, UpVector, attributes file); `replaceExisting` swaps an occupied pair. |
+| `tekla_copy_connection` | Copy a Connection's exact name/number/orientation to new parts; `replaceExisting` swaps the node type. |
+| `tekla_modify_connections` | Re-orient existing connections (UpVector / auto-direction / attributes file) in bulk, handling the AUTODIR_NA quirk. |
 | `tekla_swap_handles` | Swap start/end handles of matching parts. |
 | `tekla_delete_objects` | Delete objects by filter or GUID list. |
 | `tekla_create_beam_between_grids` | Create a beam between two grid intersections at an elevation. |

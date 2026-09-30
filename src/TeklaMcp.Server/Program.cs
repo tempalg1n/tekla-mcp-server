@@ -115,7 +115,21 @@ const string serverInstructions =
     "restored change on the user's screen). tekla_render_schematic (BETA — an early, simplified " +
     "sketch that can look cluttered on dense models) draws a numbered plan/elevation/iso with real " +
     "grid labels and a legend with GUIDs, without touching Tekla. Use them to orient yourself, to " +
-    "identify what the user points at, and to check what a write created before you report success.";
+    "identify what the user points at, and to check what a write created before you report success.\n\n" +
+    "KNOWN MODEL-LAYER QUIRKS (verified on live Tekla — trust the tools over a raw script here):\n" +
+    "- Connection.UpVector is only STORED under auto-direction NA. Under BASIC the Open API " +
+    "returns success and silently recomputes the vector. Use tekla_modify_connections, which " +
+    "switches to NA for you, rather than scripting UpVector + Modify.\n" +
+    "- Tekla canonicalizes Part.Position on commit: writing rotation TOP + 180 deg reads back as " +
+    "BELOW + 0 (and LEFT can flip to RIGHT). The orientation IS correct — a RotationOffset of 0 " +
+    "is not evidence the write failed, so do not retry it in a loop.\n" +
+    "- Only ONE connection may exist per primary/secondary pair; a second insert is rejected. To " +
+    "swap a node type pass replaceExisting=true (delete + insert), do not just insert again.\n" +
+    "- Component names differ between the Tekla UI and the API (UI shows '...(1)' where the API " +
+    "has '... 1'). Read names from tekla_list_connections / tekla_find_connections; never filter " +
+    "on a name copied out of the UI.\n" +
+    "- Prefer the batch tools (tekla_modify_parts, tekla_modify_connections, tekla_create_beams) " +
+    "over N single-object calls when editing a whole axis or frame.";
 
 var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)

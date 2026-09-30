@@ -230,6 +230,9 @@ public static class ScriptPolicy
                       "same name."
                     : $"'{name}' is not allowed — scripts have no file/network/process/reflection/thread/Console access. " +
                       "Use Print(...) for output and return a value as the last expression. " +
+                      "Reflection and 'dynamic' are banned because the Tekla API is fully typed: cast to the " +
+                      "concrete type instead (e.g. 'if (e.Current is Beam b)' or 'var c = mo as Connection;') " +
+                      "and verify the member with tekla_search_api. " +
                       "(If this is just your variable name, rename it.)");
             else if (BannedNamespaceSegments.Contains(name) && !IsStopwatchQualifier(token))
                 Add($"'{name}' looks like a banned namespace (System.{name}.*) — not allowed in scripts. " +

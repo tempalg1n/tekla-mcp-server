@@ -179,6 +179,20 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   freshly-created-part race. Negative `ConnectionSpec.Number` maps to
   `BaseComponent.CUSTOM_OBJECT_NUMBER`. Arbitrary custom-component attributes cannot be
   enumerated reliably; use `AttributesFile`.
+- **Read write results back from the database.** After `CommitChanges()`, re-select every
+  committed object by GUID and map *that* — never echo the in-memory object you just wrote.
+  Tekla canonicalizes `Part.Position` on commit (`TOP`+180° is stored as `BELOW`+0°), so an echo
+  reports values the model does not agree with and the next read looks like a lost write.
+  `ModifyParts`, `ModifyConnections` and `CreateConnections` all do this; keep it.
+- **Connection orientation goes through `ModifyConnections`.** A written `Connection.UpVector`
+  only persists under `AUTODIR_NA`; other modes accept the write and silently recompute. The
+  backend switches to NA whenever an explicit vector arrives without a caller-named mode.
+- **One connection per primary/secondary pair.** Tekla rejects a second insert on an occupied
+  pair, so `ConnectionSpec.ReplaceExisting` deletes the occupants and **commits** before
+  inserting. Do not drop that intermediate commit.
+- All three quirks are verified live and documented under "Known model-layer quirks" in
+  `docs/tekla-api-notes.md`; the server instructions in `Program.cs` warn agents about them.
+  When you discover another one, add it in both places in the same change.
 - Shared parsing/query helpers for write tools live in `ToolHelpers.cs`.
 
 New tool files: `ModelGeometryTools.cs`, `ModelWriteTools.cs`, `ModelGeneratorTools.cs`,

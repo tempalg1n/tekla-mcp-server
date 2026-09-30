@@ -150,6 +150,27 @@ public static class ModelWriteTools
             }
         }, apply));
 
+    [McpServerTool(Name = "tekla_modify_parts")]
+    [Description("Modify up to 200 parts in ONE batch — the batch form of tekla_modify_part. Each " +
+                 "item addresses a part by GUID and may set profile/material/class/name, move " +
+                 "endpoints, swap handles, and set Position (plane/rotation/depth + offsets) or " +
+                 "copy it from matchPositionGuid. Use this instead of N separate calls when " +
+                 "re-orienting a whole axis or frame. Preview unless apply=true. NOTE: Tekla " +
+                 "canonicalizes Position on commit (TOP+180 is stored as BELOW+0), so the returned " +
+                 "preview reads back from the model and may name the rotation differently than you " +
+                 "asked — the physical orientation is what you requested.")]
+    public static WriteResult ModifyParts(
+        ITeklaModelService model,
+        [Description("Part modifications (maximum 200).")] IReadOnlyList<PartModification> modifications,
+        [Description("Set true to commit the whole batch. Default false = preview.")] bool apply = false)
+    {
+        var mods = (modifications ?? new List<PartModification>()).Take(200).ToList();
+        var result = ToolHelpers.FailIfNothingApplied(model.ModifyParts(mods, apply));
+        if (modifications != null && modifications.Count > 200)
+            result.Message = "Batch capped at 200 of " + modifications.Count + " modifications.";
+        return result;
+    }
+
     [McpServerTool(Name = "tekla_swap_handles")]
     [Description("Swap the start/end handles of parts matching filters (re-orient wrongly-modeled " +
                  "members). Preview unless apply=true. Capped by limit.")]
