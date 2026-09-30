@@ -64,4 +64,43 @@ public static class ModelGeometryTools
             ViewId2 = viewId2,
             ViewIndex = viewIndex,
         });
+
+    private const int MaxSolidGuids = 20;
+
+    [McpServerTool(Name = "tekla_get_part_solid")]
+    [Description("The actual shape of up to 20 parts: faces (outward normal, the part that produced the " +
+                 "face — a cutting part for a cut face), boundary loops and vertices, GLOBAL mm, with cuts, " +
+                 "fittings and chamfers applied (solidType NORMAL, default; RAW = the uncut profile sweep). " +
+                 "outerLoopIndex marks each face's outer boundary (the largest loop; others are holes). Use it " +
+                 "when a bounding box is not enough — cut ends, notches, holes, clash and fit checks. Capped by " +
+                 "maxFaces/maxPoints: when truncated=true the face list is NOT the whole shape (faces are left " +
+                 "out whole, never cut). The AABB is a box around the solid, never the shape. For thousands of " +
+                 "boxes use tekla_export_parts_file (solidAabb) instead. Read-only.")]
+    public static IReadOnlyList<PartSolidGeometry> GetPartSolid(
+        ITeklaModelService model,
+        [Description("Part GUIDs (max 20), comma/semicolon/newline separated.")] string guids,
+        [Description("NORMAL (default), RAW, FITTED, HIGH_ACCURACY, PLANECUTTED, NORMAL_WITHOUT_EDGECHAMFERS, " +
+                     "NORMAL_WITHOUT_WELDPREPS.")] string? solidType = null,
+        [Description("Faces returned per part (default 200, max 5000); the rest are only counted.")] int maxFaces = 200,
+        [Description("Vertices returned per part (default 1000, max 50000).")] int maxPoints = 1000)
+    {
+        var parsed = ToolHelpers.ParseList(guids);
+        if (parsed.Count == 0)
+            throw new ModelContextProtocol.McpException("Pass at least one part GUID.");
+        if (parsed.Count > MaxSolidGuids)
+            throw new ModelContextProtocol.McpException(
+                $"At most {MaxSolidGuids} parts per call (got {parsed.Count}) — every solid is a GetSolid() call. " +
+                "Split the list, or use tekla_export_parts_file with solidAabb for many parts.");
+        if (!string.IsNullOrWhiteSpace(solidType) &&
+            !System.Linq.Enumerable.Contains(PartSolidRequest.SolidTypes, solidType!.Trim().ToUpperInvariant()))
+            throw new ModelContextProtocol.McpException(
+                "Unknown solidType '" + solidType + "'. Use one of: " + string.Join(", ", PartSolidRequest.SolidTypes) + ".");
+        return model.GetPartSolids(new PartSolidRequest
+        {
+            Guids = parsed,
+            SolidType = solidType,
+            MaxFaces = maxFaces,
+            MaxPoints = maxPoints,
+        });
+    }
 }

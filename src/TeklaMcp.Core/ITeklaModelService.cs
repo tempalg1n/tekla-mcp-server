@@ -260,6 +260,14 @@ public interface ITeklaModelService
     /// </summary>
     PartCurveGeometry GetPartCurveGeometry(PartCurveGeometryRequest request);
 
+    /// <summary>
+    /// Faces, loops and vertices of part solids in GLOBAL mm, one entry per requested GUID (a GUID
+    /// that is not a part comes back <see cref="PartSolidGeometry.Found"/>=false). Capped by
+    /// <see cref="PartSolidRequest.MaxFaces"/>/<see cref="PartSolidRequest.MaxPoints"/>; a capped
+    /// solid says so in <see cref="PartSolidGeometry.Truncated"/>.
+    /// </summary>
+    IReadOnlyList<PartSolidGeometry> GetPartSolids(PartSolidRequest request);
+
     // -- Visual context ---------------------------------------------------------------------
     //
     // Agents otherwise reason about the model only through property lists. These two give them

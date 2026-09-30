@@ -169,6 +169,13 @@ and are now handled by the tools and documented under
   running Tekla resolves them for the open model, optionally split into paths by Tekla's own
   rules. Requested through `tekla_report_gap` during component development (DEV-005), which had
   to script it.
+- **`tekla_get_part_solid`**: the boundary representation of up to 20 part solids — faces
+  (outward normal, originating part: a cut face names the cutting part), loops with the outer
+  one picked geometrically (Tekla does not document its loop order) and vertices, in GLOBAL mm,
+  for any `SolidCreationType` (NORMAL default, RAW = uncut sweep). `maxFaces`/`maxPoints` cap
+  the answer; a capped solid says `truncated` with the counts, faces are left out whole and are
+  still counted, and the AABB is labelled a box, never the shape. Vertices are read lazily, so
+  a cap also stops the remoting reads (DEV-005: component checks needed cut geometry).
 - **`tekla_list_catalog`**: the environment catalogs — library and parametric profiles,
   materials, components (with their numbers, matched on the UI name too) and UDA definitions
   (optionally per object type). Paged by catalog offset with `scanned` coverage; `details=true`

@@ -169,6 +169,16 @@ blow the MCP client timeout. In `TeklaModelService`:
 - When a query filters by a known type, `EnumerateSource` pre-filters with
   `GetAllObjectsWithType` (see `TypeEnumMap`) — extend the map when you add type-heavy tools.
 
+### Conventions for PART SOLIDS (`tekla_get_part_solid`)
+
+- **A few GUIDs, never a filter** — `GetSolid()` is the most expensive read; the tool caps at 20
+  parts. Bulk boxes go through `tekla_export_parts_file` (`solidAabb`).
+- **Caps live in `Core/Geometry/SolidBuilder`**: faces beyond `maxFaces` are counted, a face that
+  would cross `maxPoints` is left out WHOLE, and `truncated` + reason say the list is not the
+  shape. Feed loops lazily (`Func<IEnumerable<…>>`) so a full builder stops remoting reads.
+- **Geometry-derived facts only**: the outer loop is the largest by area (`LoopArea`), because
+  Tekla does not document loop order. The AABB is always labelled a box.
+
 ### Conventions for ENVIRONMENT read tools (advanced options, catalogs)
 
 `tekla_get_advanced_options`, `tekla_list_catalog` (`ModelEnvironmentTools.cs`,
