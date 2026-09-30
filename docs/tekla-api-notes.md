@@ -164,8 +164,10 @@ unit-tested):
   `NullReferenceException` inside `MaterialItemEnumerator.GetMaterialsFromDB`; the property setter
   does not. The swap itself is verified live on 2023 WITHOUT a restart (three rounds; model,
   drawing and catalog clients keep working, catalogs also when first used after a swap).
-  TODO(windows): acceptance with REAL restarts — three each of Tekla 2021 and 2023 — including
-  whether the first activation after a restart indeed needs the second attempt. 2024+ (Trimble.
+  Real restarts: **Tekla 2023 passed** three close/reopen cycles (2026-09-30, see backlog §1); the
+  reconnect happens as soon as the restarted Tekla publishes its pipe, and the next real call then
+  blocks until Tekla has opened the model (22–70 s measured). TODO(windows): the same on Tekla
+  2021; whether the first activation after a restart needs the second attempt is not logged yet. 2024+ (Trimble.
   Remoting) is not reconnected: `DelegateProxy.Initialize()` exists there, unverified (§3).
 - *Poisoned* — the first touch happened while the channel did not exist. Fixing `SESSIONNAME` /
   `Remoter.ChannelName` afterwards does not help; only a new process (or AppDomain) recovers.

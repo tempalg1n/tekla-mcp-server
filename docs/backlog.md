@@ -74,9 +74,18 @@ specified` until the MCP server process is restarted (seen on 2021 and 2023, sev
    either: the check runs at the start of each call, before anything is read or written.
    Verified live on Tekla 2023 WITHOUT a restart (the swap, three rounds). 2024+: not reconnected.
 
-**Acceptance — still open** (from the report): three normal restarts each of Tekla 2021 and 2023
-with the MCP server alive; the same model is reachable again without restarting the client; no
-write is repeated blindly.
+**Acceptance** (from the report): three normal restarts each of Tekla 2021 and 2023 with the MCP
+server alive; the same model is reachable again without restarting the client; no write is
+repeated blindly.
+
+- **Tekla 2023 — passed 2026-09-30** (model 3219, one net48 server kept alive by a watcher that
+  called `tekla_get_connection_info` + a read every 3 s): three close/reopen cycles 11:49–11:56,
+  each "not running … call again" while closed (the guard refused, nothing dialed), then
+  "reconnected (Tekla was restarted)" the moment the channel reappeared and `connected=True` on
+  the same model. Known behaviour: the call that reconnects while Tekla is still opening the
+  model waits for it (22–70 s measured) — a real MCP client may time out on that one call; the
+  next one works.
+- **Tekla 2021 — still open.**
 
 ### 2. Explicit Tekla instance selection
 

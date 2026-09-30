@@ -154,6 +154,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 Connected = false,
                 Backend = BackendName,
                 Message = TeklaRemotingChannel.DiagnoseConnectionFailure(ex),
+                LastReconnect = TeklaRemotingChannel.LastReconnect,
             };
         }
     }
@@ -1017,9 +1018,11 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     public IReadOnlyList<GridLineInfo> GetGrids()
     {
+        // Outside the try: no connection is a tool error, never an empty grid list (seen in the
+        // §1 acceptance run — tekla_list_grids answered [] while Tekla was closed).
+        var model = GetConnectedModel();
         try
         {
-            var model = GetConnectedModel();
             return InGlobalWorkPlane(model,
                 () => (IReadOnlyList<GridLineInfo>)GridMath.Flatten(ReadGridDefinitions(model, null)));
         }
