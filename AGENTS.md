@@ -169,6 +169,23 @@ blow the MCP client timeout. In `TeklaModelService`:
 - When a query filters by a known type, `EnumerateSource` pre-filters with
   `GetAllObjectsWithType` (see `TypeEnumMap`) — extend the map when you add type-heavy tools.
 
+### Conventions for ENVIRONMENT read tools (advanced options, catalogs)
+
+`tekla_get_advanced_options`, `tekla_list_catalog` (`ModelEnvironmentTools.cs`,
+`TeklaEnvironmentService.cs`, `MockTeklaModelService.Environment.cs`).
+
+- **Other remoting clients, same guard.** `TeklaStructuresSettings` talks over the base channel
+  and `CatalogHandler` over its own Catalogs channel; neither is in the connection guard, so
+  every entry point calls `GetConnectedModel()` first. Never create a `CatalogHandler` (or any
+  other `*Handler`) before that.
+- **Catalog paging lives in `Core/CatalogListing`**: cursor = catalog offset, `scanned` coverage,
+  and only items that land in the page are mapped — mapping is where live remoting cost is. Set
+  `ProfileItemEnumerator.SelectInstances = details`: names need no per-item `Select()`.
+- **An unknown option or empty catalog is data, not an error** (`found=false`, a message saying
+  how much was searched).
+- `Tekla.Structures.Catalogs` is referenced like the other Tekla packages (`ExcludeAssets=
+  "runtime"`, TeklaBinDir fallback); the resolver supplies it at runtime.
+
 ### Conventions for WRITE tools (create / edit / delete)
 
 Write tools are now in scope (explicitly requested, with safety gates). Rules:

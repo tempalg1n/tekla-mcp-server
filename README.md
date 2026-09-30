@@ -96,6 +96,8 @@ All tools use the `tekla_` prefix. The current build exposes **107 tools** in to
 | `tekla_list_control_lines` | List ControlLine start/end coordinates. |
 | `tekla_find_attributes_by_value` | Find likely attribute names by known value (`BK1` -> matching fields). Reports scan coverage (`scannedObjects`/`truncated`) so "no match" is never mistaken for "absent". |
 | `tekla_discover_udas` | Sample objects and report which UDA fields actually exist: fill counts, distinct values, top values. The "which field holds X?" starting point. |
+| `tekla_get_advanced_options` | Read advanced options (`XS_MACRO_DIRECTORY`, `XS_FIRM`, …) as the running Tekla resolves them; optionally split into paths. Unknown options come back as `found=false`. |
+| `tekla_list_catalog` | Page through an environment catalog: library/parametric profiles, materials, components (with numbers) or UDA definitions (optionally per object type). `details=true` adds dimensions, densities, labels. The authoritative "what exists" list next to the sample-based `tekla_discover_udas`. |
 | `tekla_analyze_by_material` | Material breakdown (count + weight per steel grade). |
 | `tekla_count_objects` | Count objects matching filters, including `udaIsEmpty` (fast: no per-object data is materialized; an unfiltered count is instant). |
 | `tekla_sum_weight` | Sum weight for objects matching filters. Streams without materializing objects; pages huge models via `maxObjects` + `cursor`. |

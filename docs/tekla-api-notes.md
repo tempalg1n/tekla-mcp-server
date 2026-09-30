@@ -206,6 +206,8 @@ NuGet). Neither bundles the DLLs — the runtime resolver still supplies them.
 |---|---|---|
 | Connection | `new TSM.Model()` + `GetConnectionStatus()` | Verified (Tekla 2023) |
 | Model info | `model.GetInfo()` → `ModelInfo.ModelName`, `ModelPath` | Verified |
+| Advanced options | `TeklaStructuresSettings.GetAdvancedOption(name, ref string/bool/int/double)`, `GetAdvancedOptionPaths(name, out List<string>, InvalidPathCallback)` | Compiles 2021–2026; TODO(windows) live |
+| Catalogs | `new CatalogHandler()` + `GetConnectionStatus()`; `GetLibraryProfileItems` / `GetParametricProfileItems` (`ProfileItemEnumerator.SelectInstances`), `GetMaterialItems`, `GetComponentItems`, `GetUserPropertyItems([CatalogObjectTypeEnum])`; `UserPropertyItem.GetLabel()` / `GetObjectTypes(ref List)` | Compiles 2021–2026; TODO(windows) live — own Catalogs channel, see `TeklaEnvironmentService.cs` |
 | Enumeration | `GetModelObjectSelector().GetAllObjects()` | Verified |
 | Parts | Cast `mo is TSM.Part`; read `Name`, `Class`, `Profile`, `Material`, `Finish` | Verified |
 | Identifiers | `part.Identifier.ID`, `part.Identifier.GUID` | Verified |

@@ -165,6 +165,15 @@ and are now handled by the tools and documented under
   `.db1`) the write is meant for. If the connected Tekla has another model open, the call is
   refused before anything is written or compiled — with two Tekla instances open the server had
   written into the user's working model instead of the test model.
+- **`tekla_get_advanced_options`**: advanced options (`XS_MACRO_DIRECTORY`, `XS_FIRM`, …) as the
+  running Tekla resolves them for the open model, optionally split into paths by Tekla's own
+  rules. Requested through `tekla_report_gap` during component development (DEV-005), which had
+  to script it.
+- **`tekla_list_catalog`**: the environment catalogs — library and parametric profiles,
+  materials, components (with their numbers, matched on the UI name too) and UDA definitions
+  (optionally per object type). Paged by catalog offset with `scanned` coverage; `details=true`
+  adds dimensions, densities, UDA labels and object types at one remoting call per item. The
+  authoritative list of what exists, next to the sample-based `tekla_discover_udas`.
 
 ### Changed
 

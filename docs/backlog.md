@@ -124,10 +124,10 @@ refused every item"), and `partial` was added (committed, some items refused). S
 
 The APIs exist in the Tekla 2021 assemblies (checked by metadata):
 
-- Advanced options: `TeklaStructuresSettings.GetAdvancedOption(name, ref value)` /
-  `GetAdvancedOptionPaths` — requested through `tekla_report_gap` for `XS_MACRO_DIRECTORY`.
-- Catalogs: `Tekla.Structures.Catalogs.CatalogHandler` — `GetLibraryProfileItems`,
-  `GetParametricProfileItems`, `GetMaterialItems`, `GetComponentItems`.
+- ~~Advanced options~~ and ~~catalogs~~ — done 2026-09-30: `tekla_get_advanced_options`,
+  `tekla_list_catalog` (profiles, parametric profiles, materials, components, UDA definitions).
+  Compiled against all six NuGet versions; not yet run live (TODO(windows) in
+  `TeklaEnvironmentService.cs`: whether UDA-definition items need `Select()` for details).
 - Plugin components with input objects and ordered points: `Component` +
   `ComponentInput.AddInputObject` / `AddInputPolygon` / `AddOneInputPosition` /
   `AddTwoInputPositions`, then read back children and attributes — one new primitive next to

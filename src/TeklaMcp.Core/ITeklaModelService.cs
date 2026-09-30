@@ -35,6 +35,22 @@ public interface ITeklaModelService
     WriteTarget GetWriteTarget();
 
     /// <summary>
+    /// Values of advanced options (XS_* variables) as the running Tekla resolves them for the open
+    /// model — environment, firm, project and model levels already merged by Tekla. An unknown
+    /// option is <see cref="AdvancedOptionValue.Found"/>=false, never an error. With
+    /// <paramref name="asPaths"/> the value is also split into paths by Tekla's own rules.
+    /// </summary>
+    IReadOnlyList<AdvancedOptionValue> GetAdvancedOptions(IReadOnlyList<string> names, bool asPaths);
+
+    /// <summary>
+    /// One page of an environment catalog: library/parametric profiles, materials, components or
+    /// UDA definitions (<see cref="CatalogQuery.Kind"/>). Paged by catalog offset
+    /// (<see cref="CatalogListResult.NextCursor"/>); an unknown kind or a failed read is reported in
+    /// <see cref="CatalogListResult.Message"/>.
+    /// </summary>
+    CatalogListResult ListCatalog(CatalogQuery query);
+
+    /// <summary>
     /// Aggregate statistics over every object in the model (counts by type/class/
     /// profile/material and total weight). Implementations must stream — never build an
     /// in-memory list of all objects. <paramref name="includeWeights"/> false skips the
