@@ -64,19 +64,19 @@ specified` until the MCP server process is restarted (seen on 2021 and 2023, sev
 1. ~~Poisoning guard~~ — done 2026-09-30 for 2021–2023 (`TeklaRemotingChannel.EnsurePublished`,
    see `docs/tekla-api-notes.md`). On 2021 a poisoned Model client is a NULL delegate, not an
    exception (verified) — so step 3's recreate could also revive it, which widens what "poisoned"
-   can mean here. The guard's "connected before, now not published" branch is where the
-   reconnect hooks in; its message still says "restart the server".
-2. Detect staleness with a cheap real call (`new Model().GetInfo()`); classify by exception
-   TYPE — `RemotingException` in the chain = stale, `TypeInitializationException` = poisoned
-   (only a server restart helps; say so). Messages are localized; never match on text.
-3. Re-derive the channel suffix, patch the loaded `*Internal.Remoter.ChannelName` fields and
-   recreate the base, Model and (if loaded) Drawing proxies as above.
-4. Retry reads once at most. Never retry a write after a failure: report the outcome as unknown
-   and read back (§4).
+   can mean here.
+2.–4. ~~Detect, recreate, never retry a write~~ — implemented 2026-09-30 (`ConnectModel` +
+   `TeklaRemotingChannel.TryReconnect`, see `docs/tekla-api-notes.md` "Two different dead
+   connections"). Deviations from the plan: the channel suffix is NOT re-derived — a reconnect
+   goes to the same channel names only, because another name may be another Tekla (that stays
+   §2); the Catalogs client is recreated too; the swap goes through `DelegateProxy.Delegate`, not
+   `CDelegateSetter.SetInstanceForUnitTesting` (breaks catalogs, verified). Reads are not retried
+   either: the check runs at the start of each call, before anything is read or written.
+   Verified live on Tekla 2023 WITHOUT a restart (the swap, three rounds). 2024+: not reconnected.
 
-**Acceptance** (from the report): three normal restarts each of Tekla 2021 and 2023 with the MCP
-server alive; the same model is reachable again without restarting the client; no write is
-repeated blindly.
+**Acceptance — still open** (from the report): three normal restarts each of Tekla 2021 and 2023
+with the MCP server alive; the same model is reachable again without restarting the client; no
+write is repeated blindly.
 
 ### 2. Explicit Tekla instance selection
 

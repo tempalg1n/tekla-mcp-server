@@ -150,11 +150,23 @@ unit-tested):
 - *Stale* — connected once, then Tekla restarted/closed. `Model.GetConnectionStatus()` is only
   `DelegateProxy.Delegate != null` in 2021–2026 (decompiled), so it keeps returning **true**;
   the first real call (`GetInfo()`) throws `RemotingException` ("Requested service not found",
-  then "Failed to write to an IPC port"). Recoverable in-process in that probe: a new CAO via
-  `Tekla.Structures.Internal.RemotingProxyHelper.CreateInstance<CDelegate>("ipc://" + channel)`
-  assigned through the public `GenericDelegateProxy.Delegate` setter (2021–2023; 2024+ has an
-  internal `DelegateProxy.Initialize()`). **Not implemented yet** — the server tells the user to
-  restart it.
+  then "Failed to write to an IPC port"). **Reconnected in-process since 2026-09-30**
+  (`TeklaRemotingChannel.TryReconnect`, backlog §1): `ConnectModel` makes one real `GetInfo()` at
+  the start of every tool call; on a connection failure it recreates every LOADED client —
+  `{Model, TeklaStructures, Drawing, Catalog}Internal.DelegateProxy`, identical members in 2021 and
+  2023 (reflection on both installs) — with a new CAO from the public
+  `Tekla.Structures.Internal.RemotingProxyHelper.CreateInstance<CDelegate>("ipc://" + Remoter.ChannelName)`
+  (two attempts: the IPC client may hold a connection to the dead pipe) assigned through the
+  non-public `DelegateProxy.Delegate` property. Same channel names only — a channel under another
+  session/instance name may be a different Tekla (§2), so that still says "restart the server".
+  **Do not use the public `CDelegateSetter.SetInstanceForUnitTesting`** for the swap: verified on
+  live Tekla 2023 that after it the first `CatalogHandler.GetMaterialItems()` throws
+  `NullReferenceException` inside `MaterialItemEnumerator.GetMaterialsFromDB`; the property setter
+  does not. The swap itself is verified live on 2023 WITHOUT a restart (three rounds; model,
+  drawing and catalog clients keep working, catalogs also when first used after a swap).
+  TODO(windows): acceptance with REAL restarts — three each of Tekla 2021 and 2023 — including
+  whether the first activation after a restart indeed needs the second attempt. 2024+ (Trimble.
+  Remoting) is not reconnected: `DelegateProxy.Initialize()` exists there, unverified (§3).
 - *Poisoned* — the first touch happened while the channel did not exist. Fixing `SESSIONNAME` /
   `Remoter.ChannelName` afterwards does not help; only a new process (or AppDomain) recovers.
   Two faces: a cached `TypeInitializationException` (the `DelegateProxy` static ctor threw), or —

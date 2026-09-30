@@ -142,4 +142,13 @@ public class EnvironmentToolsTests
         Assert.False(options[1].Found);
         Assert.Null(options[1].Paths);
     }
+
+    [Fact]
+    public void Empty_advanced_option_is_not_found()
+    {
+        // Live Tekla answers "" (and true) for an option it does not know; empty must never read as found.
+        var option = new MockTeklaModelService().GetAdvancedOptions(new[] { "XS_PROJECT" }, asPaths: false).Single();
+        Assert.False(option.Found);
+        Assert.Contains("unset", option.Message);
+    }
 }

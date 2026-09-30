@@ -150,6 +150,117 @@ public static class TeklaRemotingChannel
         }
     }
 
+    /// <summary>The Open API clients that can be recreated, Model first: it is the one every tool needs.</summary>
+    private static readonly (string Assembly, string Namespace)[] ReconnectableClients =
+    {
+        ("Tekla.Structures.Model", "Tekla.Structures.ModelInternal"),
+        ("Tekla.Structures", "Tekla.Structures.TeklaStructuresInternal"),
+        ("Tekla.Structures.Drawing", "Tekla.Structures.DrawingInternal"),
+        ("Tekla.Structures.Catalogs", "Tekla.Structures.CatalogInternal"),
+    };
+
+    /// <summary>When and why the clients were last recreated in this process; null if never.</summary>
+    public static string? LastReconnect { get; private set; }
+
+    /// <summary>In-process reconnect is implemented for the 2021–2023 named-pipe transport only.</summary>
+    public static bool SupportsReconnect =>
+        !RemotingChannelNames.NamesItsOwnChannels(TeklaAssemblyResolver.CompiledVersion?.Major);
+
+    /// <summary>
+    /// Backlog §1: replaces the Open API clients of this process with fresh ones on the SAME channel
+    /// names, after Tekla was restarted (a stale client: <c>GetConnectionStatus()</c> still true, every
+    /// call a <c>RemotingException</c>) or when a client was created while Tekla was down (2021: a null
+    /// delegate). Every client is a static <c>{Asm}Internal.DelegateProxy</c> around a
+    /// <c>GenericDelegateProxy</c>; a new one comes from the public
+    /// <c>RemotingProxyHelper.CreateInstance&lt;CDelegate&gt;("ipc://" + channel)</c> and goes in through the
+    /// <c>DelegateProxy.Delegate</c> setter — identical in 2021 and 2023 (checked by reflection on both
+    /// installs; the swap itself verified on a live Tekla 2023 without a restart, model/drawing/catalog
+    /// clients keep working). Only assemblies already loaded are touched; a failed attempt
+    /// leaves the old client in place, so the next call can try again (Tekla may still be starting).
+    /// Never switches to a channel with another name — that may be a different Tekla (§2).
+    /// A client whose type initializer failed cannot be recreated; that still needs a server restart.
+    /// TODO(windows): acceptance = three real restarts each of Tekla 2021 and 2023.
+    /// </summary>
+    public static bool TryReconnect(string reason, out string message)
+    {
+        lock (Gate)
+        {
+            if (!SupportsReconnect)
+            {
+                message = "Reconnecting inside the server is implemented for Tekla 2021–2023 only; restart this " +
+                          "MCP server (reconnect it in the MCP client).";
+                return false;
+            }
+
+            var loaded = AppDomain.CurrentDomain.GetAssemblies();
+            var renewed = new List<string>();
+            foreach (var (assemblyName, ns) in ReconnectableClients)
+            {
+                var assembly = loaded.FirstOrDefault(a => string.Equals(a.GetName().Name, assemblyName, StringComparison.Ordinal));
+                if (assembly is null) continue; // never used — nothing stale to replace
+                try
+                {
+                    RecreateClient(assembly, ns);
+                    renewed.Add(assemblyName);
+                }
+                catch (Exception ex)
+                {
+                    var flat = ErrorText.Flatten(ex);
+                    if (assemblyName != "Tekla.Structures.Model")
+                    {
+                        Console.Error.WriteLine($"[tekla] reconnect: {assemblyName} client not renewed: {flat}");
+                        continue;
+                    }
+                    message = HasInChain<TypeInitializationException>(ex)
+                        ? "The Open API client failed to initialize earlier in this process and cannot be recreated — " +
+                          "restart this MCP server (reconnect it in the MCP client). Error: " + flat
+                        : "Could not reconnect to Tekla (" + reason + "): " + flat + ". If Tekla is still starting or " +
+                          "no model is open yet, call again in a moment.";
+                    Console.Error.WriteLine("[tekla] reconnect failed: " + message);
+                    return false;
+                }
+            }
+
+            LastReconnect = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} reconnected ({reason}): {string.Join(", ", renewed)}";
+            Console.Error.WriteLine("[tekla] " + LastReconnect);
+            message = LastReconnect;
+            return true;
+        }
+    }
+
+    private static void RecreateClient(Assembly assembly, string ns)
+    {
+        var channel = ReadChannel(assembly, ns + ".Remoter");
+        if (string.IsNullOrEmpty(channel))
+            throw new InvalidOperationException(ns + ".Remoter.ChannelName not found in this Tekla version.");
+        var cdelegate = assembly.GetType(ns + ".CDelegate", throwOnError: true)!;
+
+        // Looked up by name: the helper is public in 2021–2023, and this path never runs on 2024+.
+        var helper = typeof(TS.TeklaStructuresInfo).Assembly.GetType("Tekla.Structures.Internal.RemotingProxyHelper", throwOnError: true)!;
+        var create = helper.GetMethod("CreateInstance", BindingFlags.Public | BindingFlags.Static)!.MakeGenericMethod(cdelegate);
+
+        object? fresh = null;
+        Exception? last = null;
+        // The IPC client may still hold a connection to the dead pipe; the first activation can fail on
+        // it and drop it, the second then dials the new pipe.
+        for (var attempt = 0; attempt < 2 && fresh is null; attempt++)
+        {
+            try { fresh = create.Invoke(null, new object[] { "ipc://" + channel }); }
+            catch (TargetInvocationException ex) { last = ex.InnerException ?? ex; }
+        }
+        if (fresh is null)
+            throw new InvalidOperationException("Could not create a client on channel '" + channel + "'.", last);
+
+        // Through DelegateProxy.Delegate itself, NOT the public CDelegateSetter.SetInstanceForUnitTesting:
+        // verified on live Tekla 2023 (2026-09-30) that the latter leaves the process in a state where
+        // the first CatalogHandler.GetMaterialItems() throws NullReferenceException inside Tekla; the
+        // property setter does not.
+        var property = assembly.GetType(ns + ".DelegateProxy", throwOnError: true)!
+            .GetProperty("Delegate", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(ns + ".DelegateProxy.Delegate not found.");
+        property.SetValue(null, fresh);
+    }
+
     /// <summary>
     /// "Not connected" text for a proxy that answers <c>GetConnectionStatus() == false</c>. When
     /// the channel IS published, the proxy was created while it was not (before this guard, or on
@@ -266,14 +377,14 @@ public static class TeklaRemotingChannel
                        : ", and aligning to it did not help.") +
                    " Nothing was sent to Tekla.";
         else if (state == ChannelPublication.NotPublished)
-            text = $"{tekla} is gone: the channel '{channel}' this server connected to is no longer published " +
-                   "(Tekla was closed or restarted). The Open API cannot re-establish a connection inside this " +
-                   $"process: once the model is open in {tekla} again, restart this MCP server (reconnect it " +
-                   "in the MCP client).";
+            text = $"{tekla} is not running: the channel '{channel}' this server was connected to is no longer " +
+                   $"published (Tekla was closed or is restarting). Nothing was sent. Once the model is open in " +
+                   $"{tekla} again, just call again — the server reconnects by itself; no MCP server restart.";
         else
-            text = $"{tekla} was restarted under another session or instance name: this server is bound to " +
-                   $"'{channel}', which is no longer published. The Open API cannot switch channels inside this " +
-                   "process: restart this MCP server (reconnect it in the MCP client).";
+            text = $"{tekla} is running under another session or instance name than '{channel}', the channel this " +
+                   "server is bound to — possibly a DIFFERENT Tekla. The server only reconnects to its own channel " +
+                   "(choosing between instances is not implemented): restart this MCP server to bind to the " +
+                   "running one.";
 
         return text + " | published Tekla pipes: [" + string.Join(", ", pipes) + "]" +
                " | Tekla processes: " + DescribeTeklaProcesses();
@@ -360,10 +471,14 @@ public static class TeklaRemotingChannel
                  HasInChain<System.Net.Sockets.SocketException>(ex) ||
                  HasInChain<System.IO.IOException>(ex))
         {
-            cause = "The server was connected earlier, but the Tekla process behind that connection " +
-                    "is gone (Tekla was restarted or closed). The Open API cannot re-establish the " +
-                    "connection inside this process. Restart this MCP server (reconnect it in the " +
-                    "MCP client); restarting Tekla again will not help.";
+            cause = SupportsReconnect
+                ? "The Tekla process behind this server's connection is gone (Tekla was restarted or closed). " +
+                  "Once Tekla is running with the model open, call again: the server reconnects at the start of " +
+                  "the next call. Restart the MCP server only if that keeps failing. If this call was a write, " +
+                  "its outcome is unknown — read the targets back before repeating it."
+                : "The server was connected earlier, but the Tekla process behind that connection is gone " +
+                  "(Tekla was restarted or closed). Reconnecting inside the server is implemented for Tekla " +
+                  "2021–2023 only: restart this MCP server (reconnect it in the MCP client).";
         }
         else
         {

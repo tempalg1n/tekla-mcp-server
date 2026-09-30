@@ -426,7 +426,7 @@ Releases ship **one zip per Tekla version** — pick the one matching *your* Tek
 >
 > **If Tekla is open but the server says "Not connected":** the error message lists the client channel and the `Tekla.Structures.Model-*` named pipes Tekla actually publishes. The server auto-matches the published channel (some setups publish `…-Console:<version>` instead of the default `…-:<version>`). To force a specific channel, set the `TEKLA_MCP_CHANNEL` environment variable to the exact pipe name.
 >
-> **Starting the MCP client before Tekla is fine** (Tekla 2021–2023): until Tekla publishes its channel, tools answer "not reachable … nothing was sent to Tekla" and work as soon as the model is open — no server restart. A server that lost Tekla *after* connecting still needs a restart.
+> **Starting the MCP client before Tekla is fine** (Tekla 2021–2023): until Tekla publishes its channel, tools answer "not reachable … nothing was sent to Tekla" and work as soon as the model is open — no server restart. **Restarting Tekla is fine too** (2021–2023): the next tool call notices the dead connection and reconnects on the same channel (`tekla_get_connection_info` shows `lastReconnect`). Only a Tekla that comes back under another Windows session or instance name (e.g. a second instance) needs a server restart, and so does Tekla 2024+ for now.
 >
 > **The server exits with its MCP client** — when the process that launched it is gone, or when a shutdown hangs for 10 s. If your launcher exits while keeping the server's stdio open, set `TEKLA_MCP_EXIT_WITH_PARENT=0`.
 

@@ -34,7 +34,8 @@ public sealed partial class MockTeklaModelService
             var name = (raw ?? "").Trim();
             if (name.Length == 0) continue;
             var option = new AdvancedOptionValue { Name = name };
-            if (MockAdvancedOptions.TryGetValue(name, out var value))
+            // Same contract as live Tekla, which answers "" for an unknown option: empty is never "found".
+            if (MockAdvancedOptions.TryGetValue(name, out var value) && value.Length > 0)
             {
                 option.Found = true;
                 option.Value = value;
@@ -44,7 +45,8 @@ public sealed partial class MockTeklaModelService
             }
             else
             {
-                option.Message = "Not defined in this environment (mock).";
+                option.Message = "Empty value: the option is unset in this environment — or unknown; Tekla does " +
+                                 "not tell the two apart (mock).";
             }
             result.Add(option);
         }

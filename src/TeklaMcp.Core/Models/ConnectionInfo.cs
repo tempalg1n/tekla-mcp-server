@@ -49,4 +49,10 @@ public sealed class ConnectionInfo
 
     /// <summary>Running TeklaStructures processes as "PID n started …"; empty on Mock or when none run.</summary>
     public List<string> TeklaProcesses { get; set; } = new List<string>();
+
+    /// <summary>
+    /// When the server last recreated its Tekla clients after a restart (and which), e.g.
+    /// "2026-09-30 14:02:11 reconnected (Tekla was restarted): Tekla.Structures.Model, …". Null if never.
+    /// </summary>
+    public string? LastReconnect { get; set; }
 }

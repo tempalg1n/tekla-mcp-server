@@ -46,8 +46,15 @@ public sealed partial class TeklaModelService
             var flag = false;
             var integer = 0;
             var number = 0.0;
-            if (TS.TeklaStructuresSettings.GetAdvancedOption(name, ref text))
+            // Tekla answers true with "" for an option it does not know at all (verified live, 2023),
+            // so an empty text is "unset or unknown" — never "found", and no typed overload is asked
+            // after it (a bool overload could turn the same unknown option into "FALSE").
+            var answered = TS.TeklaStructuresSettings.GetAdvancedOption(name, ref text);
+            if (answered && !string.IsNullOrEmpty(text))
                 Found(option, text, "string");
+            else if (answered)
+                option.Message = "Tekla returned an empty value: the option is unset in this environment — or " +
+                                 "unknown; the API does not tell the two apart (names are case-sensitive).";
             else if (TS.TeklaStructuresSettings.GetAdvancedOption(name, ref flag))
                 Found(option, flag ? "TRUE" : "FALSE", "bool");
             else if (TS.TeklaStructuresSettings.GetAdvancedOption(name, ref integer))

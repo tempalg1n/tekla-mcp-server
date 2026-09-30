@@ -134,25 +134,14 @@ public sealed partial class TeklaModelService : ITeklaModelService
     {
         try
         {
-            EnsureTeklaReady();
-            var model = new TSM.Model();
-            if (!model.GetConnectionStatus())
-            {
-                return new ConnectionInfo
-                {
-                    Connected = false,
-                    Backend = BackendName,
-                    Message = TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model),
-                };
-            }
-
-            var info = model.GetInfo();
+            ConnectModel(out var info); // reconnects after a Tekla restart, like every other tool
             return new ConnectionInfo
             {
                 Connected = true,
                 Backend = BackendName,
                 ModelName = info.ModelName ?? "",
                 ModelPath = info.ModelPath ?? "",
+                LastReconnect = TeklaRemotingChannel.LastReconnect,
             };
         }
         catch (Exception ex)
@@ -1684,12 +1673,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             // A compile-only check is intentionally remoting-free: it is safe before user
-            // approval and can work even when no model is open. Live execution still aligns
-            // the Tekla remoting channel before the script's `new Model()`.
+            // approval and can work even when no model is open. Live execution connects first —
+            // guard, alignment and a reconnect after a Tekla restart — so the script's own
+            // `new Model()` gets a live client.
             if (compileOnly)
                 TeklaAssemblyResolver.EnsureVersionMatch();
             else
-                EnsureTeklaReady();
+                GetConnectedModel();
 
             var policy = Scripting.ScriptPolicy.Analyze(code, allowMutations);
             result.DetectedMutatingMembers.AddRange(policy.MutatingMembers);
@@ -2548,13 +2538,40 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     // ---------------------------------------------------------------- internals ----
 
-    private static TSM.Model GetConnectedModel()
+    private static TSM.Model GetConnectedModel() => ConnectModel(out _);
+
+    /// <summary>
+    /// A Model client that has just answered a real call. <c>GetConnectionStatus()</c> is only a
+    /// local null check, so a Tekla restart used to surface as a RemotingException in the middle of
+    /// a tool; now one cheap <c>GetInfo()</c> at the start of every call finds it, and the stale
+    /// clients are recreated once (backlog §1) — BEFORE the tool reads or writes anything, so no
+    /// write is ever repeated. A second failure propagates and is diagnosed by the tool-error filter.
+    /// </summary>
+    private static TSM.Model ConnectModel(out TSM.ModelInfo info)
     {
         EnsureTeklaReady();
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
-            throw new InvalidOperationException(
-                TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model));
+        {
+            // A null client: created while Tekla was down (2021), or never connected.
+            if (!TeklaRemotingChannel.TryReconnect("the client had no connection", out var why))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model) + " Reconnect attempt: " + why);
+            model = new TSM.Model();
+        }
+
+        try
+        {
+            info = model.GetInfo();
+        }
+        catch (Exception ex) when (ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            if (!TeklaRemotingChannel.TryReconnect("Tekla was restarted", out var why))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.DiagnoseConnectionFailure(ex) + " Reconnect attempt: " + why, ex);
+            model = new TSM.Model();
+            info = model.GetInfo();
+        }
 
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,

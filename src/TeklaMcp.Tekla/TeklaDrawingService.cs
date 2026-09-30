@@ -747,10 +747,22 @@ public sealed partial class TeklaModelService
         EnsureTeklaReady(TeklaChannel.Drawing);
         try { TSD.DrawingEnumeratorBase.AutoFetch = true; } catch { }
         var handler = new TSD.DrawingHandler();
-        if (!handler.GetConnectionStatus())
-            throw new InvalidOperationException(
-                TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Drawing));
+        // Unlike Model's, the Drawing status check is a real round trip, so a Tekla restart shows up
+        // here as false — recreate the clients once (backlog §1).
+        if (!DrawingConnected(handler))
+        {
+            if (!TeklaRemotingChannel.TryReconnect("the drawing client lost Tekla", out var why) ||
+                !DrawingConnected(handler = new TSD.DrawingHandler()))
+                throw new InvalidOperationException(
+                    TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Drawing) + " Reconnect attempt: " + why);
+        }
         return handler;
+    }
+
+    private static bool DrawingConnected(TSD.DrawingHandler handler)
+    {
+        try { return handler.GetConnectionStatus(); }
+        catch { return false; }
     }
 
     private static TSD.Drawing? TryGetActiveDrawing(TSD.DrawingHandler handler)

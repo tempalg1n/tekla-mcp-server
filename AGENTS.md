@@ -55,7 +55,13 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
      `new Model()`) only after `EnsureTeklaReady(channel)` — its `EnsurePublished` guard refuses
      while the channel is not published. A client created then is dead for the process (on 2021:
      no exception, just `GetConnectionStatus() == false` forever). The guard must only block on
-     evidence: every unknown (2024+, a partial pipe listing) lets the call through.
+     evidence: every unknown (2024+, a partial pipe listing) lets the call through;
+   - get the Model client through `GetConnectedModel()`/`ConnectModel()` — one real `GetInfo()`
+     that reconnects stale clients (`TeklaRemotingChannel.TryReconnect`) BEFORE the tool reads or
+     writes. Never retry an operation after a mid-call connection failure (writes: `unknown`,
+     §4); never reconnect to a channel with another name (it may be another Tekla); swap clients
+     through `DelegateProxy.Delegate`, never `CDelegateSetter.SetInstanceForUnitTesting` (it
+     breaks the catalog client — verified).
 
    Each of these once turned a transient state into "broken until the server restarts".
 

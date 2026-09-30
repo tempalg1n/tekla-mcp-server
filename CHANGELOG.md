@@ -145,6 +145,16 @@ and are now handled by the tools and documented under
   directly by IFC GlobalId (e.g. `0VZkpIecn7$9mG$7iL8u45`) via
   `ReferenceModel.GetReferenceModelObjectByExternalGuid` where the Tekla version provides
   it.
+- **Restarting Tekla no longer means restarting the MCP server** (Tekla 2021–2023, DEV-005 — the
+  most frequent complaint: every tool failed with `RemotingException` until the client was
+  restarted). Every tool call now starts with one real `GetInfo()`; a dead connection is
+  replaced in-process — the Model, base, Drawing and Catalog clients get fresh remoting objects on
+  the same channels — before the tool reads or writes anything, so nothing is ever retried and a
+  write is never repeated. `tekla_get_connection_info` reports `lastReconnect`. A Tekla that
+  comes back under another session or instance name is NOT adopted silently (it may be a
+  different Tekla — instance selection is still to come), and Tekla 2024+ still needs a server
+  restart. The swap is verified on live Tekla 2023 (repeatedly, without a restart); the
+  acceptance with real Tekla restarts is pending.
 - **The server exits with its MCP client** (DEV-005: dozens of orphaned servers per machine,
   each still holding a Tekla connection). Closing stdin already stopped it (verified, 0.2 s), so
   the orphans never saw EOF or hung in shutdown. The server now also ends when the process that
@@ -235,6 +245,9 @@ and are now handled by the tools and documented under
 
 ### Fixed
 
+- **`tekla_get_advanced_options` called an unknown option "found".** Tekla answers `true` with an
+  empty value for an option it does not know (verified live, 2023); an empty value is now
+  `found=false` with a message saying the API cannot tell "unset" from "unknown".
 - **Refused edits and deletes counted as done.** `ModifyParts` ignored `Modify()` returning false
   and counted the part as modified; `DeleteObjects` skipped a `Delete()` that returned false
   without a word. Both are now errors on that item (`partial` / `not_written`).
