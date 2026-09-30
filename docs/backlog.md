@@ -165,7 +165,10 @@ sentence) — see CHANGELOG. Still open:
   (decompilation). If that holds, `GetSize()` is not a cheap count and every cursor page pays the
   full snapshot again — the AGENTS.md scan rules assume otherwise. Measure live (count and
   page timings on a 400k-object model) before changing them. Calls over ~60 s are a second
-  plausible cause of the "MCP lost access" reports.
+  plausible cause of the "MCP lost access" reports. **First data point (2026-09-30, Tekla 2023,
+  model 3219, net48 server over MCP):** an UNFILTERED `tekla_count_objects` — documented as
+  "instant" (`GetSize()`) — took ~20 s, while connection info and `tekla_list_grids` answered in
+  about a second. Supports the snapshot hypothesis; still needs a proper timing breakdown.
 - **Measure `GetAllObjectsWithType(System.Type[])`** against the per-type chain (~5 s on 470k
   objects) before recommending it.
 - **Recovery from a version mismatch without any GAC copy is only partial.** When neither the
