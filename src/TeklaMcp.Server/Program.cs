@@ -37,6 +37,8 @@ builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogL
 // net48 build (Windows): real Tekla, unless TEKLA_MCP_USE_MOCK=1 forces the mock
 // (handy for smoke-testing the server on Windows without a model open).
 var forceMock = Environment.GetEnvironmentVariable("TEKLA_MCP_USE_MOCK") == "1";
+// Turns a lost-connection exception from any tool into cause + action (see ToolErrorFilter).
+Func<Exception, string>? connectionDiagnoser = null;
 
 #if NET48
 if (forceMock)
@@ -45,6 +47,7 @@ if (forceMock)
 }
 else
 {
+    connectionDiagnoser = TeklaMcp.Tekla.TeklaRemotingChannel.DiagnoseConnectionFailure;
     // Per-version build: this artifact is compiled for ONE Tekla version. The resolver
     // loads the Tekla Open API assemblies from the installed/running Tekla and fails fast
     // on a version mismatch. Must run before the first Tekla type is touched.
@@ -99,9 +102,11 @@ const string serverInstructions =
     "Model and drawing write/UI tools default to apply=false (preview). Drawing points explicitly " +
     "distinguish view-local, global model, and sheet/paper-mm coordinate spaces. Show the plan and " +
     "only set apply=true after the user confirms. The same contract applies to scripted mutations: " +
-    "show the user the script and what it will change, get their explicit go-ahead, only then " +
-    "rerun with allowMutations=true — and keep changes traceable (MCP_ORIGIN UDA) and " +
-    "reversible (Tekla Ctrl+Z).\n\n" +
+    "validate the exact script with tekla_check_csharp, show the user the script and what it will " +
+    "change, get their explicit go-ahead, only then run it with allowMutations=true and " +
+    "expectedSha256 = the codeSha256 the check returned (any edit after approval changes the hash " +
+    "and the run is refused — check and approve again) — and keep changes traceable (MCP_ORIGIN " +
+    "UDA) and reversible (Tekla Ctrl+Z).\n\n" +
     "The DRAWING tool layer (tekla_*drawing*) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
@@ -152,7 +157,10 @@ builder.Services
     .WithToolsFromAssembly() // discovers [McpServerToolType] classes in this assembly
     // Pass the real exception text to the agent instead of the SDK's bare
     // "An error occurred invoking '<tool>'." (see ToolErrorFilter).
-    .WithRequestFilters(filters => filters.AddCallToolFilter(TeklaMcp.Server.ToolErrorFilter.Create));
+    .WithRequestFilters(filters => filters.AddCallToolFilter(
+        next => TeklaMcp.Server.ToolErrorFilter.Create(next, connectionDiagnoser)));
 
 var app = builder.Build();
+// End with the MCP client and never hang in shutdown (orphaned servers, see ShutdownGuard).
+TeklaMcp.Server.ShutdownGuard.Start(app.Services.GetRequiredService<IHostApplicationLifetime>());
 await app.RunAsync();

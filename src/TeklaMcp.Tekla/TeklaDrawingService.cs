@@ -51,9 +51,11 @@ public sealed partial class TeklaModelService
     public IReadOnlyList<DrawingInfo> FindDrawings(DrawingQuery query, int? limit = null)
     {
         var rows = new List<DrawingInfo>();
+        // Outside the try: no connection is a tool error, never an empty list the agent would
+        // read as "there are no drawings".
+        var handler = GetDrawingHandler();
         try
         {
-            var handler = GetDrawingHandler();
             query = query ?? new DrawingQuery();
             var active = TryGetActiveDrawing(handler);
             var enumerator = query.SelectedOnly
@@ -74,7 +76,7 @@ public sealed partial class TeklaModelService
         }
         catch
         {
-            // Query tools degrade to an empty result; status gives the connection error.
+            // Past the connection, enumeration stays best-effort (rows read so far).
         }
         return rows;
     }
@@ -205,9 +207,9 @@ public sealed partial class TeklaModelService
     public IReadOnlyList<DrawingViewInfo> GetDrawingViews()
     {
         var result = new List<DrawingViewInfo>();
+        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
         try
         {
-            var handler = GetDrawingHandler();
             var active = TryGetActiveDrawing(handler);
             if (active == null) return result;
             var views = EnumerateViews(active);
@@ -225,9 +227,9 @@ public sealed partial class TeklaModelService
         DrawingObjectQuery query,
         int? limit = null)
     {
+        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
         try
         {
-            var handler = GetDrawingHandler();
             var active = TryGetActiveDrawing(handler);
             if (active == null) return new List<DrawingObjectInfo>();
             return GetDrawingObjectRecords(handler, active, query ?? new DrawingObjectQuery(), limit)
@@ -742,12 +744,12 @@ public sealed partial class TeklaModelService
 
     private static TSD.DrawingHandler GetDrawingHandler()
     {
-        EnsureTeklaReady();
+        EnsureTeklaReady(TeklaChannel.Drawing);
         try { TSD.DrawingEnumeratorBase.AutoFetch = true; } catch { }
         var handler = new TSD.DrawingHandler();
         if (!handler.GetConnectionStatus())
             throw new InvalidOperationException(
-                "Drawing API is not connected. Is Tekla Structures running with a model open?");
+                TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Drawing));
         return handler;
     }
 

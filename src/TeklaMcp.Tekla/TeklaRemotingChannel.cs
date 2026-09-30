@@ -57,11 +57,15 @@ namespace TeklaMcp.Tekla;
 public static class TeklaRemotingChannel
 {
     private const string PipePrefix = "Tekla.Structures";
+    private const string ModelRemoter = "Tekla.Structures.ModelInternal.Remoter";
+    private const string DrawingRemoter = "Tekla.Structures.DrawingInternal.Remoter";
 
     private static readonly object Gate = new object();
     private static bool _done;
     private static bool _warmedUp;
     private static bool _unavailableLogged;
+    private static bool _incompleteListingLogged;
+    private static readonly HashSet<TeklaChannel> Touched = new HashSet<TeklaChannel>();
 
     public static void Align()
     {
@@ -100,6 +104,130 @@ public static class TeklaRemotingChannel
                     "[tekla] remoting channel alignment failed (keeping defaults): " + ex.Message);
             }
         }
+    }
+
+    /// <summary>
+    /// The poisoning guard (backlog §1.1): call right before the first Open API object of
+    /// <paramref name="which"/> is created. A proxy created while its channel is not published is
+    /// dead for the process — on Tekla 2021 (verified 2026-09-30) the Open API prints
+    /// "Connection failed : … RemotingException" and leaves the delegate null, so
+    /// <c>GetConnectionStatus()</c> answers false forever, even after Tekla starts. Throws
+    /// <see cref="TeklaChannelUnavailableException"/> instead of letting the caller dial a pipe
+    /// that does not exist; nothing Tekla-side is touched, so the next call can still succeed.
+    ///
+    /// Only blocks on evidence: 2024+ builds (no pipes), an incomplete pipe listing or an unknown
+    /// channel name pass as before. While no proxy has dialed yet, a channel published under
+    /// another session/instance suffix triggers a fresh alignment first.
+    /// </summary>
+    public static void EnsurePublished(TeklaChannel which)
+    {
+        lock (Gate)
+        {
+            var state = CheckChannel(which, out var channel, out var pipes);
+            var forced = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TEKLA_MCP_CHANNEL"));
+            if (state == ChannelPublication.PublishedUnderOtherName && Touched.Count == 0 && !forced)
+            {
+                // Nothing has dialed, so the names can still change: the Tekla seen at startup is
+                // gone and this version publishes under another suffix (another Windows session,
+                // or a surviving second instance's Console-<PID>).
+                Console.Error.WriteLine(
+                    $"[tekla] channel '{channel}' is not published but this Tekla version publishes " +
+                    "under another name — aligning again before the first connection.");
+                _done = false;
+                Align();
+                state = CheckChannel(which, out channel, out pipes);
+            }
+
+            if (state == ChannelPublication.Published || state == ChannelPublication.Unknown)
+            {
+                Touched.Add(which); // the caller creates the proxy right after this returns
+                return;
+            }
+
+            throw new TeklaChannelUnavailableException(
+                UnavailableMessage(state, channel ?? "(unknown)", pipes, Touched.Contains(which), forced));
+        }
+    }
+
+    /// <summary>
+    /// "Not connected" text for a proxy that answers <c>GetConnectionStatus() == false</c>. When
+    /// the channel IS published, the proxy was created while it was not (before this guard, or on
+    /// a fail-open) and only a server restart helps — say so instead of "is Tekla running?".
+    /// </summary>
+    public static string NotConnectedMessage(TeklaChannel which)
+    {
+        ChannelPublication state;
+        lock (Gate) state = CheckChannel(which, out _, out _);
+        var api = which == TeklaChannel.Drawing ? "Drawing API" : "Open API";
+        var text = state == ChannelPublication.Published
+            ? $"Not connected although Tekla publishes the {which.ToString().ToLowerInvariant()} channel: this " +
+              $"server's {api} client was most likely created while Tekla was not running or still starting, " +
+              "and the Open API never retries that inside a process. If a model is open in Tekla, restart " +
+              "this MCP server (reconnect it in the MCP client)."
+            : $"The {api} is not connected. Is Tekla Structures running with a model open?";
+        return text + " (" + Describe() + ")";
+    }
+
+    /// <summary>Guard evidence; never throws (a failure is <see cref="ChannelPublication.Unknown"/>).</summary>
+    private static ChannelPublication CheckChannel(
+        TeklaChannel which, out string? channel, out List<string> pipes)
+    {
+        channel = null;
+        pipes = new List<string>();
+        var major = TeklaAssemblyResolver.CompiledVersion?.Major;
+        // 2024+: Trimble.Remoting publishes no pipes. Decided before any Tekla type is mentioned.
+        // TODO(windows): a 2024+ guard would test EventWaitHandle.TryOpenExisting(channel + "$S")
+        // (decompilation, backlog §3) — unverified, so those builds are not guarded.
+        if (RemotingChannelNames.NamesItsOwnChannels(major)) return ChannelPublication.Unknown;
+
+        var complete = TryListPublishedTeklaPipes(pipes);
+        if (!complete && !_incompleteListingLogged)
+        {
+            _incompleteListingLogged = true;
+            Console.Error.WriteLine(
+                "[tekla] the named-pipe listing failed part-way; the connection guard lets calls through " +
+                "(it only blocks on a complete listing).");
+        }
+        try { channel = which == TeklaChannel.Drawing ? ReadDrawingChannel() : ReadModelChannel(); }
+        catch { channel = null; }
+        return RemotingChannelNames.CheckPublished(channel, pipes, complete, major);
+    }
+
+    private static string? ReadModelChannel() => ReadChannel(typeof(TSM.Model).Assembly, ModelRemoter);
+
+    // Separate method: mentioning a Drawing type loads that assembly when the method is compiled.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static string? ReadDrawingChannel() => ReadChannel(typeof(TSD.DrawingHandler).Assembly, DrawingRemoter);
+
+    private static string UnavailableMessage(
+        ChannelPublication state, string channel, List<string> pipes, bool connectedBefore, bool forced)
+    {
+        var major = TeklaAssemblyResolver.CompiledVersion?.Major;
+        var tekla = major is int m ? "Tekla Structures " + m : "Tekla Structures";
+        string text;
+        if (!connectedBefore && state == ChannelPublication.NotPublished)
+            text = $"{tekla} is not reachable: its Open API channel '{channel}' is not published — {tekla} " +
+                   "is not running or is still starting. Nothing was sent to Tekla, so this server has not " +
+                   $"cached a failed connection: open the model in {tekla} and call the tool again. No MCP " +
+                   "server restart is needed.";
+        else if (!connectedBefore)
+            text = $"{tekla} publishes its channels under another name than '{channel}'" +
+                   (forced
+                       ? ", which TEKLA_MCP_CHANNEL forces — correct or unset it."
+                       : ", and aligning to it did not help.") +
+                   " Nothing was sent to Tekla.";
+        else if (state == ChannelPublication.NotPublished)
+            text = $"{tekla} is gone: the channel '{channel}' this server connected to is no longer published " +
+                   "(Tekla was closed or restarted). The Open API cannot re-establish a connection inside this " +
+                   $"process: once the model is open in {tekla} again, restart this MCP server (reconnect it " +
+                   "in the MCP client).";
+        else
+            text = $"{tekla} was restarted under another session or instance name: this server is bound to " +
+                   $"'{channel}', which is no longer published. The Open API cannot switch channels inside this " +
+                   "process: restart this MCP server (reconnect it in the MCP client).";
+
+        return text + " | published Tekla pipes: [" + string.Join(", ", pipes) + "]" +
+               " | Tekla processes: " + DescribeTeklaProcesses();
     }
 
     /// <summary>
@@ -165,6 +293,11 @@ public static class TeklaRemotingChannel
     /// </summary>
     public static string DiagnoseConnectionFailure(Exception ex)
     {
+        // The guard refused before anything was dialed; its message is already cause + action.
+        for (var e = ex; e != null; e = e.InnerException)
+            if (e is TeklaChannelUnavailableException unavailable)
+                return unavailable.Message;
+
         string cause;
         if (HasInChain<TypeInitializationException>(ex))
         {
@@ -427,22 +560,47 @@ public static class TeklaRemotingChannel
     private static List<string> ListPublishedTeklaPipes()
     {
         var result = new List<string>();
+        TryListPublishedTeklaPipes(result);
+        return result;
+    }
+
+    /// <summary>
+    /// Adds the published Tekla pipe names to <paramref name="result"/>; false when the listing
+    /// stopped early. Named pipes are enumerable as files under \\.\pipe\, but some pipe names
+    /// contain characters that are invalid in paths and can make enumeration throw mid-way on
+    /// .NET Framework — keep what we got, and never treat a partial listing as proof of absence.
+    /// </summary>
+    private static bool TryListPublishedTeklaPipes(List<string> result)
+    {
         try
         {
-            // Named pipes are enumerable as files under \\.\pipe\. Some pipe names contain
-            // characters that are invalid in paths and can make enumeration throw mid-way on
-            // .NET Framework — treat the listing as best-effort and keep what we got.
             foreach (var path in Directory.EnumerateFiles(@"\\.\pipe\"))
             {
                 var name = path.Substring(path.LastIndexOf('\\') + 1);
                 if (name.StartsWith(PipePrefix, StringComparison.OrdinalIgnoreCase))
                     result.Add(name);
             }
+            return true;
         }
         catch
         {
-            // best-effort
+            return false;
         }
-        return result;
     }
+}
+
+/// <summary>The Open API clients the connection guard knows about.</summary>
+public enum TeklaChannel
+{
+    Model,
+    Drawing,
+}
+
+/// <summary>
+/// Thrown by <see cref="TeklaRemotingChannel.EnsurePublished"/> INSTEAD of creating an Open API
+/// proxy against a channel that is not published. The message carries cause and action.
+/// </summary>
+public sealed class TeklaChannelUnavailableException : InvalidOperationException
+{
+    public TeklaChannelUnavailableException(string message) : base(message) { }
 }

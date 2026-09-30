@@ -61,7 +61,11 @@ specified` until the MCP server process is restarted (seen on 2021 and 2023, sev
 
 **Plan.**
 
-1. Poisoning guard: channel existence check before the first touch of any `DelegateProxy`.
+1. ~~Poisoning guard~~ — done 2026-09-30 for 2021–2023 (`TeklaRemotingChannel.EnsurePublished`,
+   see `docs/tekla-api-notes.md`). On 2021 a poisoned Model client is a NULL delegate, not an
+   exception (verified) — so step 3's recreate could also revive it, which widens what "poisoned"
+   can mean here. The guard's "connected before, now not published" branch is where the
+   reconnect hooks in; its message still says "restart the server".
 2. Detect staleness with a cheap real call (`new Model().GetInfo()`); classify by exception
    TYPE — `RemotingException` in the chain = stale, `TypeInitializationException` = poisoned
    (only a server restart helps; say so). Messages are localized; never match on text.
@@ -131,11 +135,15 @@ The APIs exist in the Tekla 2021 assemblies (checked by metadata):
 
 ### 6. Smaller follow-ups
 
-- Once both branches above are merged: route `RemotingException` through
-  `TeklaRemotingChannel.DiagnoseConnectionFailure` in `ToolErrorFilter` (net48 only), and
-  mention `expectedSha256` in the scripted-mutation contract of the `ServerInstructions`.
-- Orphaned server processes pile up across client restarts (dozens on the reporting machine,
-  also seen here): exit when the parent MCP client process is gone.
+Done 2026-09-30 (see CHANGELOG): connection failures from any tool go through
+`DiagnoseConnectionFailure`, the server instructions spell out `expectedSha256`, and
+`ShutdownGuard` ends the server with its parent process. Still open:
+
+- **Why the orphans lived is unconfirmed.** Closing stdin stops the server (0.2 s, both TFMs,
+  mock and live backend), so they either never got EOF or hung in shutdown; the parent watch and
+  the 10 s stop deadline cover both. If orphans still appear, capture one's parent chain
+  (`Get-CimInstance Win32_Process`, `ParentProcessId`) before killing it — a parent that is still
+  alive means the client kept its pipes open, which no server-side guard can see.
 
 ### 7. Found after the first write-up (same day)
 

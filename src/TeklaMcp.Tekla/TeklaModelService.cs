@@ -54,7 +54,9 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     private static bool _oneTimeInitDone;
 
-    private static void EnsureTeklaReady()
+    /// <param name="channel">The Open API client the caller is about to create (Model, or
+    /// Drawing for the drawing tools) — the one whose channel must be published.</param>
+    private static void EnsureTeklaReady(TeklaChannel channel = TeklaChannel.Model)
     {
         // Per-version build (issue #11): refuse to talk to a Tekla whose major version differs
         // from the one this build was compiled for — BEFORE any remoting call can fail with
@@ -65,6 +67,10 @@ public sealed partial class TeklaModelService : ITeklaModelService
         // Align() caches its own result and keeps retrying while Tekla publishes no pipes yet,
         // so calling it per-operation makes "start server first, open Tekla later" work.
         TeklaRemotingChannel.Align();
+
+        // ...but only if nothing dials a missing channel in the meantime: a proxy created then is
+        // dead for the process. Throws a plain "not running, nothing touched" error instead.
+        TeklaRemotingChannel.EnsurePublished(channel);
 
         if (_oneTimeInitDone) return;
         _oneTimeInitDone = true;
@@ -123,8 +129,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 {
                     Connected = false,
                     Backend = BackendName,
-                    Message = "Not connected. Is Tekla Structures running with a model open? " +
-                              "(" + TeklaRemotingChannel.Describe() + ")",
+                    Message = TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model),
                 };
             }
 
@@ -2451,8 +2456,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
         var model = new TSM.Model();
         if (!model.GetConnectionStatus())
             throw new InvalidOperationException(
-                "No connection to Tekla Structures. Start Tekla and open a model first. " +
-                "(" + TeklaRemotingChannel.Describe() + ")");
+                TeklaRemotingChannel.NotConnectedMessage(TeklaChannel.Model));
 
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,

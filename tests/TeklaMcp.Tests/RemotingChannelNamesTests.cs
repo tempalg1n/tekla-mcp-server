@@ -131,4 +131,73 @@ public class RemotingChannelNamesTests
     {
         Assert.Null(RemotingChannelNames.WithAssembly(channel, "Tekla.Structures.Model", "Tekla.Structures"));
     }
+
+    // --- Connection guard (backlog §1.1): may block ONLY on a complete 2021–2023 pipe listing ---
+
+    [Fact]
+    public void Guard_sees_the_exact_channel_published()
+    {
+        Assert.Equal(ChannelPublication.Published, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Model-Console:2023.0.0.0", Tekla2023Pipes, listingComplete: true, compiledMajor: 2023));
+    }
+
+    [Fact]
+    public void Guard_matches_pipe_names_case_insensitively()
+    {
+        Assert.Equal(ChannelPublication.Published, RemotingChannelNames.CheckPublished(
+            "tekla.structures.drawing-console:2023.0.0.0", Tekla2023Pipes, true, 2023));
+    }
+
+    [Fact]
+    public void Guard_reports_a_missing_tekla_as_not_published()
+    {
+        // Server started first: nothing Tekla-related is published yet.
+        Assert.Equal(ChannelPublication.NotPublished, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Model-Console:2021.0.0.0", new[] { "Tekla.Macros.Akit-2232-1" }, true, 2021));
+    }
+
+    [Fact]
+    public void Guard_ignores_another_tekla_versions_channels()
+    {
+        // A 2021 build next to a running 2023: the 2021 channel is still not published.
+        Assert.Equal(ChannelPublication.NotPublished, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Model-Console:2021.0.0.0", Tekla2023Pipes, true, 2021));
+    }
+
+    [Fact]
+    public void Guard_sees_the_same_tekla_under_another_suffix()
+    {
+        // The first instance closed; the second one publishes Console-<PID>.
+        var pipes = new[] { "Tekla.Structures.Model-Console-22296:2023.0.0.0" };
+        Assert.Equal(ChannelPublication.PublishedUnderOtherName, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Model-Console:2023.0.0.0", pipes, true, 2023));
+    }
+
+    [Fact]
+    public void Guard_does_not_count_another_assembly_as_the_same_channel()
+    {
+        // Only the base channel of this session is up — the Drawing channel is not.
+        var pipes = new[] { "Tekla.Structures-Console:2023.0.0.0" };
+        Assert.Equal(ChannelPublication.NotPublished, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Drawing-Console:2023.0.0.0", pipes, true, 2023));
+    }
+
+    [Theory]
+    [InlineData("Tekla.Structures.Model-Console:2023.0.0.0", false, 2023)] // listing broke off
+    [InlineData("Tekla.Structures.Model-TeklaStructures-Console:2024.0.4.0", true, 2024)] // no pipes on 2024+
+    [InlineData(null, true, 2023)] // Remoter field not found
+    [InlineData("", true, 2023)]
+    [InlineData("Tekla.Structures.Catalogs-Console:2023.0.0.0", true, 2023)] // not a guarded assembly
+    public void Guard_never_blocks_on_missing_evidence(string? channel, bool complete, int major)
+    {
+        Assert.Equal(ChannelPublication.Unknown, RemotingChannelNames.CheckPublished(
+            channel, new[] { "Tekla.Macros.Akit-2232-1" }, complete, major));
+    }
+
+    [Fact]
+    public void Guard_with_no_listing_is_unknown()
+    {
+        Assert.Equal(ChannelPublication.Unknown, RemotingChannelNames.CheckPublished(
+            "Tekla.Structures.Model-Console:2023.0.0.0", null, true, 2023));
+    }
 }

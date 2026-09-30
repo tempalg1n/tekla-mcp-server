@@ -50,7 +50,12 @@ The server multi-targets **`net8.0`** (mock backend, no Tekla required) and **`n
    - never THROW from the `AssemblyResolve` handler — return null;
    - create `TeklaModelService` only through `TeklaBackendFactory`, i.e. after the version check;
    - keep the 2021–2023 channel alignment (`TeklaRemotingChannel`) away from 2024+ builds, which
-     name their Trimble.Remoting channels themselves.
+     name their Trimble.Remoting channels themselves;
+   - create an Open API client (`new Model()`, `new DrawingHandler()`, a script's own
+     `new Model()`) only after `EnsureTeklaReady(channel)` — its `EnsurePublished` guard refuses
+     while the channel is not published. A client created then is dead for the process (on 2021:
+     no exception, just `GetConnectionStatus() == false` forever). The guard must only block on
+     evidence: every unknown (2024+, a partial pipe listing) lets the call through.
 
    Each of these once turned a transient state into "broken until the server restarts".
 
@@ -91,7 +96,16 @@ Tool errors: the MCP SDK replaces the message of every exception except `McpExce
 bare "An error occurred invoking '…'." — `ToolErrorFilter` (registered in `Program.cs`) sends
 `ErrorText.Flatten(ex)` instead, because a lost Tekla connection used to reach the agent as a
 cause-less tool error (DEV-005). So throw exceptions whose messages say what went wrong and what
-to do; keep `McpException` for argument/validation errors raised in the tool layer.
+to do; keep `McpException` for argument/validation errors raised in the tool layer. In the live
+build the filter also replaces a lost connection (`Core/ConnectionErrors`: a `RemotingException`
+or a failed `Tekla.Structures*` type initializer in the chain) with
+`TeklaRemotingChannel.DiagnoseConnectionFailure` — so a list/query tool must let a connection
+failure PROPAGATE: `tekla_list_drawings` used to catch it and answer `[]`, i.e. "no drawings".
+Acquire the handler/model outside a best-effort `try`.
+
+Process lifetime: `ShutdownGuard` (Server, Windows) ends the process when the parent that launched
+it exits and cuts a shutdown that hangs for 10 s (a Tekla call cannot be cancelled). Closing
+stdin already stops the host; keep both so orphaned servers cannot pile up and hold Tekla.
 
 ### Conventions added for the analytics tools
 

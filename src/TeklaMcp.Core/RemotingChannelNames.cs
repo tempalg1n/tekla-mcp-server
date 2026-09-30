@@ -94,6 +94,58 @@ public static class RemotingChannelNames
     }
 
     /// <summary>
+    /// Whether <paramref name="channel"/> — the name an Open API client is about to dial — is
+    /// published right now, judged from the named-pipe listing. Only 2021–2023 publish pipes, so
+    /// anything else, an incomplete listing or an unknown channel name is
+    /// <see cref="ChannelPublication.Unknown"/>: callers must then behave as before (fail open),
+    /// never block a connection on a guess.
+    /// </summary>
+    public static ChannelPublication CheckPublished(
+        string? channel, IEnumerable<string>? pipes, bool listingComplete, int? compiledMajor)
+    {
+        if (NamesItsOwnChannels(compiledMajor) || !listingComplete || pipes is null ||
+            string.IsNullOrEmpty(channel))
+            return ChannelPublication.Unknown;
+
+        var assembly = AssemblyOf(channel!);
+        if (assembly is null) return ChannelPublication.Unknown;
+
+        var sameAssemblyAndVersion = false;
+        foreach (var pipe in pipes)
+        {
+            if (string.IsNullOrEmpty(pipe)) continue;
+            if (string.Equals(pipe, channel, StringComparison.OrdinalIgnoreCase))
+                return ChannelPublication.Published;
+            if (string.Equals(AssemblyOf(pipe), assembly, StringComparison.OrdinalIgnoreCase) &&
+                SameMajor(pipe, channel!))
+                sameAssemblyAndVersion = true;
+        }
+        return sameAssemblyAndVersion
+            ? ChannelPublication.PublishedUnderOtherName
+            : ChannelPublication.NotPublished;
+    }
+
+    /// <summary>"Tekla.Structures.Model" from "Tekla.Structures.Model-Console:2023.0.0.0".</summary>
+    private static string? AssemblyOf(string channel)
+    {
+        foreach (var assembly in KnownAssemblyNames)
+            if (channel.StartsWith(assembly + "-", StringComparison.OrdinalIgnoreCase))
+                return assembly;
+        return null;
+    }
+
+    private static bool SameMajor(string a, string b) =>
+        MajorOf(a) is int major && major == MajorOf(b);
+
+    private static int? MajorOf(string channel)
+    {
+        var colon = channel.LastIndexOf(':');
+        return colon > 0 && Version.TryParse(channel.Substring(colon + 1), out var version)
+            ? version.Major
+            : (int?)null;
+    }
+
+    /// <summary>
     /// The same channel for another assembly: swaps the leading assembly name and keeps the rest
     /// (session/product segments and version), which is how Tekla names its channels in both the
     /// 2021–2023 and the 2024+ formats. Null when <paramref name="channel"/> does not start with
@@ -106,4 +158,18 @@ public static class RemotingChannelNames
             return null;
         return toAssembly + channel.Substring(fromAssembly.Length);
     }
+}
+
+/// <summary>Result of <see cref="RemotingChannelNames.CheckPublished"/>.</summary>
+public enum ChannelPublication
+{
+    /// <summary>Cannot tell (2024+ build, incomplete pipe listing, unrecognized name) — do not block.</summary>
+    Unknown,
+    /// <summary>The exact channel is published.</summary>
+    Published,
+    /// <summary>The same assembly and Tekla version publishes, but under another session/instance
+    /// suffix (another Windows session, or a second instance's <c>Console-&lt;PID&gt;</c>).</summary>
+    PublishedUnderOtherName,
+    /// <summary>Nothing of this assembly and version is published: that Tekla is not running.</summary>
+    NotPublished,
 }

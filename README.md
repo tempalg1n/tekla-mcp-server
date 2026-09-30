@@ -419,6 +419,10 @@ Releases ship **one zip per Tekla version** — pick the one matching *your* Tek
 > **Why per-version zips?** The Tekla Open API protocol is version-locked, so the server must be compiled for the Tekla it talks to. The zip does **not** bundle Tekla DLLs — it loads them from your installed Tekla at runtime, verifying the version matches. A mismatched zip fails with a clear message naming the right one. If auto-detection of the Tekla `bin` folder fails, set the `TEKLA_BIN_DIR` environment variable. See [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility).
 >
 > **If Tekla is open but the server says "Not connected":** the error message lists the client channel and the `Tekla.Structures.Model-*` named pipes Tekla actually publishes. The server auto-matches the published channel (some setups publish `…-Console:<version>` instead of the default `…-:<version>`). To force a specific channel, set the `TEKLA_MCP_CHANNEL` environment variable to the exact pipe name.
+>
+> **Starting the MCP client before Tekla is fine** (Tekla 2021–2023): until Tekla publishes its channel, tools answer "not reachable … nothing was sent to Tekla" and work as soon as the model is open — no server restart. A server that lost Tekla *after* connecting still needs a restart.
+>
+> **The server exits with its MCP client** — when the process that launched it is gone, or when a shutdown hangs for 10 s. If your launcher exits while keeping the server's stdio open, set `TEKLA_MCP_EXIT_WITH_PARENT=0`.
 
 See [docs/releasing.md](docs/releasing.md) for how maintainers publish releases.
 

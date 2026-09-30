@@ -155,12 +155,38 @@ unit-tested):
   assigned through the public `GenericDelegateProxy.Delegate` setter (2021–2023; 2024+ has an
   internal `DelegateProxy.Initialize()`). **Not implemented yet** — the server tells the user to
   restart it.
-- *Poisoned* — the first touch happened while the channel did not exist: the `DelegateProxy`
-  static ctor throws, the `TypeInitializationException` is cached, and fixing `SESSIONNAME` /
-  `Remoter.ChannelName` afterwards does not help. Only a new process (or AppDomain) recovers.
+- *Poisoned* — the first touch happened while the channel did not exist. Fixing `SESSIONNAME` /
+  `Remoter.ChannelName` afterwards does not help; only a new process (or AppDomain) recovers.
+  Two faces: a cached `TypeInitializationException` (the `DelegateProxy` static ctor threw), or —
+  **verified on Tekla 2021 (NuGet 2021.0.0 from the GAC), 2026-09-30, no Tekla running** — no
+  exception at all: `new Model()` succeeds, `GenericDelegateProxy`'s ctor catches the
+  `RemotingException` ("Failed to connect to an IPC port: file not found" from
+  `CDelegate..ctor`), prints `Connection failed : …` to stdout and leaves `Delegate` null, so
+  `GetConnectionStatus()` answers **false** for the rest of the process, Tekla running or not.
+
+**The poisoning guard** (`TeklaRemotingChannel.EnsurePublished`, called from
+`EnsureTeklaReady` for the Model client and from `GetDrawingHandler` for the Drawing client)
+prevents the second case instead of diagnosing it: before a client is created it reads that
+client's `Remoter.ChannelName` (the Remoter's own static ctor only computes the name — `Align()`
+reads it too) and looks for exactly that pipe. Not published → a
+`TeklaChannelUnavailableException` saying "not reachable, nothing was sent to Tekla, call again
+once the model is open" and no proxy is created, so the next call can still connect. Published
+under another suffix while no client has dialed yet → align again first. It blocks only on
+evidence: 2024+ builds (no pipes — see §3 of `docs/backlog.md`), a pipe listing that broke off,
+or an unreadable channel name let the call through as before. Verified 2026-09-30 on a 2021
+build with no Tekla running: every model, drawing and script tool refuses cleanly and stderr
+shows no `Connection failed`. TODO(windows): the positive half — start Tekla afterwards and
+connect without a server restart — is part of the live acceptance.
+
+With the guard in place, `GetConnectionStatus() == false` while the channel IS published means a
+dead client (a fail-open pass, or Tekla still registering its services when the pipe appeared);
+`NotConnectedMessage` then says "restart the MCP server" instead of "is Tekla running?".
 
 Classification is by exception type, never message text: the .NET remoting messages are
-localized (RU installs). TODO(windows): Tekla 2024+ uses Trimble.Remoting (shared memory +
+localized (RU installs). The same classification (`Core/ConnectionErrors`) decides which tool
+errors `ToolErrorFilter` replaces with `DiagnoseConnectionFailure`'s cause + action: a
+`RemotingException` or a failed `Tekla.Structures*` type initializer anywhere in the chain — not
+IO errors, which the file-exchange tools raise for ordinary file problems. TODO(windows): Tekla 2024+ uses Trimble.Remoting (shared memory +
 named kernel objects, not named pipes — from decompiled assemblies, unverified live), so the
 pipe list in `Describe()` is empty there by design.
 
@@ -530,8 +556,9 @@ this Tekla version" message instead of failing cryptically on the remoting chann
   object types across the 2021–2026 release builds.
 - "Server started before Tekla" flow: `Align()` retries until Tekla publishes its pipes, and
   the resolver re-probes for the Tekla bin on demand — verify a connection succeeds without
-  restarting the server. NOTE: if a Tekla tool call ran while Tekla was down, the Model
-  DelegateProxy's failed type-init is cached by the CLR — only a server restart recovers.
+  restarting the server. A tool call while Tekla is down no longer dials anything (the
+  poisoning guard above) — verify the connection then succeeds once the model is open, on 2021
+  and 2023.
 - SESSIONNAME channel alignment (v0.7.0 field-report fix): on the live machine verify that
   (a) `tekla_create_beam` with `apply=true` creates the beam (stderr shows
   "write-path proxies initialized (ModuleManager configuration: …)"), and (b) the drawing
