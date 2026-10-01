@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tekla 2026 could not connect at all** ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17)).
+  The 2026 install keeps `Tekla.Structures.dll` only in `bin\Net48Runtime`, next to its
+  dependencies `Trimble.Remoting` and `DotNetKit` in `bin`. The server looked for Tekla assemblies
+  in `bin` only, and only for `Tekla*` names, so the first call failed with `FileNotFoundException:
+  Tekla.Structures`, and once that was worked around, the connection failed on `Trimble.Remoting`.
+  The resolver now also searches `Net48Runtime` and supplies any assembly the Open API needs from
+  the Tekla install, outside the `Tekla*` names only when the file is exactly what was asked for
+  (same name and signer, at least the requested version). Reproduced and verified with real Tekla
+  2023 files laid out like 2026; still to be confirmed on a real 2026 install. Users who added
+  `codeBase` entries to `TeklaMcp.Server.exe.config` as a workaround can remove them.
+- **A missing Tekla assembly read as "Is Tekla running with a model open?"** The Open API hides
+  such a failure behind "not connected". `tekla_get_connection_info` now lists the assemblies
+  that could not be loaded and where they were looked for (`assemblyLoadProblems`,
+  `teklaAssemblyFolders`), connection errors lead with them, and a bare `FileNotFoundException` no
+  longer escapes `tekla_get_connection_info`.
+- **On Tekla 2026 the offline API reference was generated without `Tekla.Structures`** (no
+  `Point`, `Vector`, `Identifier`) while its status said "ready". The generator now finds it in
+  `Net48Runtime`, the status warns when the Geometry3d pages are missing, and the cache format is
+  bumped (r3), so incomplete references are regenerated once on first use. Script references
+  also include `Net48Runtime`, and local builds against a 2026 install (`-p:TeklaBinDir`) find
+  `Tekla.Structures.dll` there.
+
 ## [0.8.0] - 2026-09-30
 
 A field-report release: every group below answers a problem observed on a live model

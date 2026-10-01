@@ -23,6 +23,14 @@ namespace TeklaMcp.Tekla;
 /// GAC copy is protocol-compatible by definition). See App.config for why the old anti-GAC
 /// redirects must never come back.
 ///
+/// Issue #17 (Tekla 2026): the install keeps <c>Tekla.Structures.dll</c> in
+/// <c>bin\Net48Runtime</c> and its dependencies <c>Trimble.Remoting</c>/<c>DotNetKit</c> in
+/// <c>bin</c>. The LoadFrom context only finds a DLL's dependencies in the DLL's OWN folder, so
+/// every bind that crosses the two folders reaches this handler — which used to search one folder
+/// and only <c>Tekla*</c> names. It now searches <see cref="ProbeDirectories"/> for any name, and
+/// remembers the Tekla-side binds it could not satisfy (<see cref="LoadProblems"/>): the Open API
+/// swallows some of them inside its own constructors and only reports "not connected".
+///
 /// <see cref="Register"/> must be called once at startup, BEFORE any Tekla type is touched.
 /// </summary>
 public static class TeklaAssemblyResolver
@@ -38,12 +46,42 @@ public static class TeklaAssemblyResolver
     private static readonly TimeSpan MismatchReprobeInterval = TimeSpan.FromSeconds(5);
     private static DateTime _lastLocateUtc = DateTime.MinValue;
 
+    /// <summary>Few on purpose: the list goes into connection messages, not into a log.</summary>
+    private const int MaxLoadProblems = 8;
+    private static readonly List<string> MissOrder = new List<string>();
+    private static readonly Dictionary<string, string> Misses = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> LoggedResolutions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// The Tekla Open API folder assemblies are resolved from (the folder holding
     /// Tekla.Structures.Model.dll — <c>bin</c> on 2023+, <c>nt\bin\plugins</c> on 2021), or null
-    /// if not found.
+    /// if not found. On Tekla 2026 its <c>Net48Runtime</c> subfolder is searched too — see
+    /// <see cref="ProbeDirectories"/>.
     /// </summary>
     public static string? BinDir { get; private set; }
+
+    /// <summary>
+    /// Every folder assemblies are resolved from, in order: <see cref="BinDir"/>, then its
+    /// <c>Net48Runtime</c> subfolder when it exists (Tekla 2026, issue #17). Empty while Tekla has
+    /// not been located. Script references and the offline API reference use the same folders.
+    /// </summary>
+    public static IReadOnlyList<string> ProbeDirectories =>
+        TeklaBinLayout.ProbeDirectories(BinDir, Directory.Exists);
+
+    /// <summary>
+    /// Assemblies the Tekla Open API (or one of its dependencies) asked for and this process could
+    /// not load, first seen first, each with where it was looked for — e.g. "Trimble.Remoting 4.0.0.0
+    /// (needed by Tekla.Structures): not found in C:\…\bin, C:\…\bin\Net48Runtime". A bind that
+    /// succeeds later drops out. Empty when nothing failed.
+    /// </summary>
+    public static IReadOnlyList<string> LoadProblems
+    {
+        get
+        {
+            lock (Gate)
+                return MissOrder.Select(name => Misses[name]).ToList();
+        }
+    }
 
     /// <summary>How <see cref="BinDir"/> was located: "env" | "process" | "registry" | "(not found)".</summary>
     public static string Source { get; private set; } = "(not found)";
@@ -70,7 +108,7 @@ public static class TeklaAssemblyResolver
             Console.Error.WriteLine(
                 $"[tekla] this build is for Tekla {CompiledVersion?.Major.ToString() ?? "?"}; " +
                 (BinDir != null
-                    ? $"resolving Tekla assemblies from: {BinDir} (via {Source})"
+                    ? $"resolving Tekla assemblies from: {string.Join(" + ", ProbeDirectories)} (via {Source})"
                     : "Tekla 'bin' not found. Start Tekla, or set TEKLA_BIN_DIR. " +
                       "Connection will fail until then."));
 
@@ -149,9 +187,28 @@ public static class TeklaAssemblyResolver
 
     private static Assembly? OnAssemblyResolve(object? sender, ResolveEventArgs args)
     {
-        var name = SafeName(args.Name);
-        if (name is null || !name.StartsWith("Tekla", StringComparison.OrdinalIgnoreCase))
+        try
+        {
+            return Resolve(args);
+        }
+        catch (Exception ex)
+        {
+            // Last line of defence for the rule in Resolve: an exception escaping this handler is
+            // cached by the CLR for the AppDomain. Report it and let the bind fail retryably.
+            try { Console.Error.WriteLine($"[tekla] assembly resolver failed for '{args.Name}': {ErrorText.Flatten(ex)}"); }
+            catch { /* stderr is gone — nothing left to tell */ }
             return null;
+        }
+    }
+
+    private static Assembly? Resolve(ResolveEventArgs args)
+    {
+        var requested = SafeAssemblyName(args.Name);
+        var name = requested?.Name;
+        if (requested is null || string.IsNullOrEmpty(name) || TeklaAssemblyProbe.IsSatellite(name!) ||
+            TeklaAssemblyProbe.IsServerAssembly(name!))
+            return null;
+        var teklaName = TeklaAssemblyProbe.IsTeklaName(name!);
 
         // Fires on any thread (tool calls, the script-execution thread) — serialize on the
         // same gate Register uses. Monitor is reentrant, so a recursive resolve on the same
@@ -160,8 +217,8 @@ public static class TeklaAssemblyResolver
         {
             // Tekla may have started AFTER this server (BinDir not found at Register time) —
             // re-probe on Tekla binds so "start server first, open Tekla later" recovers
-            // without a restart.
-            if (BinDir is null)
+            // without a restart. Only on those: every failed bind of the process lands here.
+            if (BinDir is null && teklaName)
             {
                 BinDir = LocateBinDir(out var source);
                 Source = source;
@@ -179,25 +236,122 @@ public static class TeklaAssemblyResolver
             // tool call runs before touching Tekla. The check may re-probe and move BinDir.
             try { EnsureVersionMatch(); }
             catch (TeklaVersionMismatchException) { return null; }
-            if (BinDir is null) return null;
+            var bin = BinDir;
+            if (bin is null) return null;
 
-            var path = Path.Combine(BinDir, name + ".dll");
-            if (!File.Exists(path)) return null;
+            var dirs = ProbeDirectories;
+            var path = TeklaBinLayout.FindAssemblyFile(name, dirs, File.Exists);
+            if (path is null)
+            {
+                RecordMiss(requested, args, dirs, "not found in " + string.Join(", ", dirs));
+                return null;
+            }
+
+            // Outside the Tekla* names the file must BE the requested assembly: Tekla's folders hold
+            // hundreds of third-party DLLs, and every failed bind of this process arrives here.
+            if (!teklaName && !IsAcceptable(requested, path, out var refusal))
+            {
+                RecordMiss(requested, args, dirs, refusal);
+                return null;
+            }
 
             // LoadFrom (not LoadFile, not Load(bytes)): Assembly.Location stays real, LoadFrom
             // caches by path, and the LoadFrom context resolves the DLL's own dependencies
-            // from the same directory without re-entering this handler.
+            // from the same directory without re-entering this handler. Dependencies in the OTHER
+            // probe folder (Tekla 2026: bin ↔ bin\Net48Runtime) come back here.
             try
             {
-                return Assembly.LoadFrom(path);
+                var assembly = Assembly.LoadFrom(path);
+                ForgetMiss(name!);
+                if (!teklaName || !SamePath(Path.GetDirectoryName(path) ?? "", bin))
+                    LogResolution(name!, path);
+                return assembly;
             }
             catch (Exception ex)
             {
                 // Same caching rule as above: report it and let the bind fail retryably.
-                Console.Error.WriteLine($"[tekla] could not load {path}: {ErrorText.Flatten(ex)}");
+                var flat = ErrorText.Flatten(ex);
+                Console.Error.WriteLine($"[tekla] could not load {path}: {flat}");
+                RecordMiss(requested, args, dirs, path + " could not be loaded: " + flat);
                 return null;
             }
         }
+    }
+
+    /// <summary>The identity check for a file answering a non-<c>Tekla*</c> name (see <see cref="TeklaAssemblyProbe.Accepts"/>).</summary>
+    private static bool IsAcceptable(AssemblyName requested, string path, out string refusal)
+    {
+        AssemblyName candidate;
+        try
+        {
+            candidate = AssemblyName.GetAssemblyName(path); // reads metadata only, binds nothing
+        }
+        catch (Exception ex)
+        {
+            refusal = path + " is not a loadable .NET assembly (" + ex.GetType().Name + ")";
+            return false;
+        }
+
+        if (TeklaAssemblyProbe.Accepts(requested, candidate, out var reason))
+        {
+            refusal = "";
+            return true;
+        }
+        refusal = path + ": " + reason;
+        return false;
+    }
+
+    /// <summary>Keeps a failed Tekla-side bind for <see cref="LoadProblems"/>. Caller holds <see cref="Gate"/>.</summary>
+    private static void RecordMiss(AssemblyName requested, ResolveEventArgs args, IReadOnlyList<string> dirs, string reason)
+    {
+        var name = requested.Name ?? "";
+        var requester = Requester(args, dirs, out var requesterInInstall);
+        if (!TeklaAssemblyProbe.ConcernsTekla(name, requester, requesterInInstall)) return;
+
+        var line = TeklaAssemblyProbe.DescribeMiss(requested, requester, reason);
+        if (Misses.ContainsKey(name))
+        {
+            Misses[name] = line; // the latest reason — the folders may have moved meanwhile
+            return;
+        }
+        if (MissOrder.Count >= MaxLoadProblems) return;
+        Misses[name] = line;
+        MissOrder.Add(name);
+        Console.Error.WriteLine("[tekla] could not resolve " + line);
+    }
+
+    /// <summary>Caller holds <see cref="Gate"/>.</summary>
+    private static void ForgetMiss(string name)
+    {
+        if (Misses.Remove(name))
+            MissOrder.RemoveAll(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>The requesting assembly's name, and whether it was loaded from one of the probe folders.</summary>
+    private static string? Requester(ResolveEventArgs args, IReadOnlyList<string> dirs, out bool inInstall)
+    {
+        inInstall = false;
+        try
+        {
+            var requester = args.RequestingAssembly;
+            // A dynamic requester ("Anonymously Hosted DynamicMethods Assembly") names nobody useful.
+            if (requester is null || requester.IsDynamic) return null;
+            var location = requester.Location;
+            var folder = string.IsNullOrEmpty(location) ? null : Path.GetDirectoryName(location);
+            inInstall = !string.IsNullOrEmpty(folder) && dirs.Any(dir => SamePath(dir, folder!));
+            return requester.GetName().Name;
+        }
+        catch
+        {
+            return null; // judge the bind by its own name
+        }
+    }
+
+    /// <summary>Once per name: a non-Tekla* dependency, or a file from a probe folder other than BinDir. Caller holds <see cref="Gate"/>.</summary>
+    private static void LogResolution(string name, string path)
+    {
+        if (LoggedResolutions.Add(name))
+            Console.Error.WriteLine($"[tekla] {name} resolved from {path}");
     }
 
     /// <summary>Version of Tekla.Structures.Model.dll in <see cref="BinDir"/>, probed once. Caller must hold <see cref="Gate"/>.</summary>
@@ -229,9 +383,9 @@ public static class TeklaAssemblyResolver
         return null;
     }
 
-    private static string? SafeName(string fullName)
+    private static AssemblyName? SafeAssemblyName(string fullName)
     {
-        try { return new AssemblyName(fullName).Name; }
+        try { return new AssemblyName(fullName); }
         catch { return null; }
     }
 

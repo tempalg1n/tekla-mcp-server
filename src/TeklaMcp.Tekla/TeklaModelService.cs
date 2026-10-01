@@ -99,7 +99,27 @@ public sealed partial class TeklaModelService : ITeklaModelService
         // All Tekla-touching init lives in EnsureTeklaReady(), called lazily per operation.
     }
 
-    public ConnectionInfo GetConnectionInfo() => WithTeklaIdentity(ProbeConnection());
+    public ConnectionInfo GetConnectionInfo()
+    {
+        ConnectionInfo info;
+        try
+        {
+            info = ProbeConnection();
+        }
+        catch (Exception ex)
+        {
+            // ProbeConnection catches everything it RUNS; this catches what fails before it runs.
+            // Compiling it binds the Open API, so an assembly the resolver cannot supply surfaces at
+            // this call — on Tekla 2026 a bare FileNotFoundException reached the agent (issue #17).
+            info = new ConnectionInfo
+            {
+                Connected = false,
+                Backend = BackendName,
+                Message = TeklaRemotingChannel.DiagnoseConnectionFailure(ex),
+            };
+        }
+        return WithTeklaIdentity(info);
+    }
 
     public WriteTarget GetWriteTarget()
     {
@@ -122,6 +142,8 @@ public sealed partial class TeklaModelService : ITeklaModelService
         {
             info.TeklaBinDir = TeklaAssemblyResolver.BinDir;
             info.TeklaBinDirSource = TeklaAssemblyResolver.Source;
+            info.TeklaAssemblyFolders = TeklaAssemblyResolver.ProbeDirectories.ToList();
+            info.AssemblyLoadProblems = TeklaAssemblyResolver.LoadProblems.ToList();
         }
         catch { }
         info.TeklaProcesses = TeklaRemotingChannel.ListTeklaProcesses();
@@ -1735,7 +1757,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     /// <summary>
     /// Tekla references for script compilation. The assemblies this process has actually loaded
     /// are authoritative — they are what the live connection binds, possibly from the GAC — and
-    /// the resolver's Open API folder only adds what nobody loaded yet (Drawing, Dialog,
+    /// the resolver's Open API folders only add what nobody loaded yet (Drawing, Dialog,
     /// Datatype, Plugins, …). ScriptReferenceSelector drops non-managed files, duplicates and
     /// other Tekla years, and records every decision for tekla_check_csharp. (The folder used to
     /// be the ONLY source whenever it held any Tekla.Structures*.dll, which broke every script on
@@ -1770,15 +1792,16 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
 
         var folderFiles = new List<string>();
-        var bin = TeklaAssemblyResolver.BinDir;
-        if (bin != null)
+        // Every resolver folder, BinDir first: Tekla 2026 keeps Tekla.Structures.dll in
+        // bin\Net48Runtime (issue #17).
+        foreach (var dir in TeklaAssemblyResolver.ProbeDirectories)
         {
             try
             {
                 folderFiles.AddRange(System.IO.Directory
-                    .GetFiles(bin, "Tekla.Structures*.dll", System.IO.SearchOption.TopDirectoryOnly)
+                    .GetFiles(dir, "Tekla.Structures*.dll", System.IO.SearchOption.TopDirectoryOnly)
                     .Concat(System.IO.Directory
-                        .GetFiles(bin, "Tekla.Dialog*.dll", System.IO.SearchOption.TopDirectoryOnly))
+                        .GetFiles(dir, "Tekla.Dialog*.dll", System.IO.SearchOption.TopDirectoryOnly))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
             }

@@ -599,7 +599,7 @@ environment.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TEKLA_BIN_DIR` | auto: the running Tekla process, then the registry | Folder holding the Tekla Open API (`Tekla.Structures.Model.dll` — `nt\bin\plugins` on 2021, `bin` on 2023); its parent or the install root work too. A folder without the Model DLL is ignored with a warning. |
+| `TEKLA_BIN_DIR` | auto: the running Tekla process, then the registry | Folder holding the Tekla Open API (`Tekla.Structures.Model.dll` — `nt\bin\plugins` on 2021, `bin` on 2023+); its parent or the install root work too. A folder without the Model DLL is ignored with a warning. Its `Net48Runtime` subfolder, where Tekla 2026 keeps `Tekla.Structures.dll`, is searched automatically — do not point the variable there. |
 | `TEKLA_MCP_CHANNEL` | auto-matched to the pipes Tekla publishes (2021–2023); Tekla's own names on 2024+ | Exact Model remoting channel (pipe) name to force when auto-matching picks the wrong one; the base and Drawing channels follow. |
 | `TEKLA_MCP_FILE_ROOT` | `%LOCALAPPDATA%\TeklaMcp\exchange` + the open model's folder | `;`-separated roots the file-exchange tools may read and write. Setting it replaces the defaults. |
 | `TEKLA_MCP_EXIT_WITH_PARENT` | on (Windows) | `0` stops the server from exiting when the process that launched it exits. |

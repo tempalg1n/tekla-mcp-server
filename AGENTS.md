@@ -48,7 +48,14 @@ Windows `net48` build.
    bindingRedirects for `Tekla.*`, no `Assembly.Load(byte[])`/`LoadFile` in the resolver —
    both failed on live machines (issue #11; see "Assembly loading history" in
    `docs/tekla-api-notes.md`). When a new Tekla version ships, extend the matrices in
-   `.github/workflows/release.yml` and `ci.yml`. The CLR caches bind failures:
+   `.github/workflows/release.yml` and `ci.yml`. The resolver searches
+   `TeklaAssemblyResolver.ProbeDirectories` — the Open API folder, plus its `Net48Runtime`
+   subfolder where it exists (Tekla 2026 keeps `Tekla.Structures.dll` only there, issue #17) — for
+   ANY name except `*.resources` and the server's own `TeklaMcp.*`; a file answering a
+   non-`Tekla*` name must pass `TeklaAssemblyProbe.Accepts` (name, public key token, version ≥
+   requested). Never narrow it back to one folder or to `Tekla*` names: the LoadFrom context finds
+   a DLL's dependencies only in that DLL's own folder, so every bind across the two folders
+   (`Trimble.Remoting`, `DotNetKit`, …) depends on the handler. The CLR caches bind failures:
    - never THROW from the `AssemblyResolve` handler — return null;
    - create `TeklaModelService` only through `TeklaBackendFactory`, i.e. after the version check;
    - keep the 2021–2023 channel alignment (`TeklaRemotingChannel`) away from 2024+ builds, which
@@ -102,7 +109,7 @@ Where to find things (verify with `ls` — this list is a map, not a contract):
 | reference models / IFC | `Ifc/IfcPlacementReader` | `MockTeklaModelService.cs` | `TeklaModelService.cs` |
 | schematic + view capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
 | drawings | `Models/DrawingInfo.cs`, `Models/DrawingWriteModels.cs` | `MockTeklaModelService.cs` | `TeklaDrawingService.cs`, `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs` |
-| connection lifecycle, assembly loading | `ConnectionErrors`, `ErrorText`, `RemotingChannelNames`, `TeklaBinLayout` | — | `TeklaAssemblyResolver.cs`, `TeklaBackendFactory.cs`, `TeklaRemotingChannel.cs` |
+| connection lifecycle, assembly loading | `ConnectionErrors`, `ErrorText`, `RemotingChannelNames`, `TeklaBinLayout`, `TeklaAssemblyProbe` | — | `TeklaAssemblyResolver.cs`, `TeklaBackendFactory.cs`, `TeklaRemotingChannel.cs` |
 
 Scripting: `ScriptPolicy` (syntax gate), `ScriptApprovalGate` (`expectedSha256` binding),
 `ScriptReferenceSelector` (which Tekla DLLs a script compiles against), `ScriptEngine`,
@@ -552,8 +559,9 @@ dedicated tool exists. Rules for maintaining it:
 - **`TeklaMcp.Scripting` stays Tekla-free and netstandard2.0.** It receives Tekla references from
   the caller: the net48 backend passes the Tekla assemblies LOADED in the process (authoritative —
   what the live connection binds, possibly from the GAC) plus the `Tekla.Structures*.dll` /
-  `Tekla.Dialog*.dll` files in `TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins
-  when installed); the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Both go through
+  `Tekla.Dialog*.dll` files in the resolver's folders (`TeklaAssemblyResolver.ProbeDirectories`:
+  Drawing/Dialog/Datatype/Plugins when installed; on 2026 `bin\Net48Runtime` holds
+  `Tekla.Structures.dll`); the mock passes DLL paths from `TEKLA_MCP_SCRIPT_REF_DIR`. Both go through
   `ScriptReferenceSelector`, which drops non-managed files, duplicate assembly names (the loaded
   one wins) and other Tekla years, and records every decision: `ScriptResult.ReferenceSummary`
   always, `ScriptResult.References` on compile-only checks and compile failures. Never make the
@@ -603,7 +611,9 @@ dedicated tool exists. Rules for maintaining it:
   → generate it in the background (metadata-only `MetadataLoadContext`, temp folder + rename, a
   call waits ≤ 40 s, or not at all when a repository copy can be served meanwhile) → the repository
   `reference/tekla-api`. A failed generation is reported, not retried per call. Bump
-  `ApiReferenceGenerator.FormatVersion` when the output changes. `GetApiReferenceSource()` must
+  `ApiReferenceGenerator.FormatVersion` when the output changes (r3: a 2026 reference cached by
+  v0.8.0 lacks `Tekla.Structures`). `GetApiReferenceSource()` looks the assemblies up across
+  `TeklaAssemblyResolver.ProbeDirectories`, must
   never touch Tekla types or remoting (it reads files only), and `CoreAssemblyNames` stays short —
   generation has to fit the ~60 s client budget. The generated reference stays on the machine: it
   is Trimble content. They must degrade to a "how to generate" hint, never an error.

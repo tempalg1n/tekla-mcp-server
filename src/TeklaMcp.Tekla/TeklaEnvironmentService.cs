@@ -94,9 +94,9 @@ public sealed partial class TeklaModelService
     }
 
     /// <summary>
-    /// The installed Tekla's own Open API assemblies (the resolver's folder — 2021: nt\bin\plugins,
-    /// 2023+: bin), where Tekla also installs the XML docs. No Tekla type is touched and no remoting
-    /// happens: the generator reads metadata from the files.
+    /// The installed Tekla's own Open API assemblies (the resolver's folders — 2021: nt\bin\plugins,
+    /// 2023+: bin, 2026: bin + bin\Net48Runtime), where Tekla also installs the XML docs. No Tekla
+    /// type is touched and no remoting happens: the generator reads metadata from the files.
     /// </summary>
     public ApiReferenceSource? GetApiReferenceSource()
     {
@@ -104,23 +104,29 @@ public sealed partial class TeklaModelService
         {
             var bin = TeklaAssemblyResolver.BinDir;
             if (string.IsNullOrWhiteSpace(bin) || !System.IO.Directory.Exists(bin)) return null;
+            // Every resolver folder: Tekla 2026 keeps Tekla.Structures.dll — the Geometry3d types —
+            // only in bin\Net48Runtime, and a bin-only lookup generated a reference without them
+            // while reporting no warning (issue #17).
+            var folders = TeklaAssemblyResolver.ProbeDirectories;
             var paths = Scripting.ApiReference.CoreAssemblyNames
-                .Select(name => System.IO.Path.Combine(bin, name + ".dll"))
-                .Where(System.IO.File.Exists)
+                .Select(name => TeklaBinLayout.FindAssemblyFile(name, folders, System.IO.File.Exists))
+                .Where(path => path != null)
+                .Select(path => path!)
                 .ToList();
             var modelDll = System.IO.Path.Combine(bin, "Tekla.Structures.Model.dll");
-            if (!paths.Contains(modelDll)) return null;
+            if (!paths.Contains(modelDll, StringComparer.OrdinalIgnoreCase)) return null;
             var version = System.Diagnostics.FileVersionInfo.GetVersionInfo(modelDll).FileVersion;
             if (string.IsNullOrWhiteSpace(version)) version = TeklaAssemblyResolver.CompiledVersion?.ToString() ?? "unknown";
-            return new ApiReferenceSource
+            var source = new ApiReferenceSource
             {
                 VersionKey = "tekla-" + version,
                 AssemblyPaths = paths,
-                XmlDirectories = { bin! },
                 // 2021: some dependencies of nt/bin/plugins live in nt/bin.
                 DependencyDirectories = { System.IO.Path.GetDirectoryName(bin!.TrimEnd('\\', '/')) ?? bin! },
-                Description = "the Tekla " + version + " Open API in " + bin,
+                Description = "the Tekla " + version + " Open API in " + string.Join(" + ", folders),
             };
+            source.XmlDirectories.AddRange(folders);
+            return source;
         }
         catch
         {

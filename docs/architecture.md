@@ -157,7 +157,9 @@ year 2021–2026) because the Open API remoting protocol is version-locked. The 
 shipped; in the live build `Program.cs` starts in a fixed order:
 
 1. `TeklaAssemblyResolver.Register()` — finds the installed Tekla's Open API folder and refuses a
-   Tekla of another year ("wrong build") instead of binding to it.
+   Tekla of another year ("wrong build") instead of binding to it. Assemblies come from that
+   folder and, on Tekla 2026, its `Net48Runtime` subfolder (issue #17); binds it cannot satisfy are
+   reported in `tekla_get_connection_info` (`assemblyLoadProblems`).
 2. `TeklaRemotingChannel.Align()` — on 2021–2023 builds, points the Open API clients at the
    named-pipe channels the running Tekla actually publishes (2024+ name their channels
    themselves and are left alone).

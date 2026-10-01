@@ -45,7 +45,8 @@ The server documents seven assemblies (`ApiReference.CoreAssemblyNames`): `Tekla
 On Windows you can instead point `--dll-dir` at an installed Tekla's Open API folder — `bin` on
 2023+, **`nt\bin\plugins` on 2021** (the server resolves some 2021 dependencies from `nt\bin`
 as well; the CLI has no dependency-only option, so a type whose dependencies are missing is
-skipped with a log line).
+skipped with a log line). On **Tekla 2026** add a second `--dll-dir <bin>\Net48Runtime`: that is
+where `Tekla.Structures.dll` (Geometry3d, `Identifier`, …) lives there (issue #17).
 
 ## Generate
 

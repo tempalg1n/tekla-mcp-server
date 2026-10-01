@@ -39,10 +39,15 @@
     <PackageReference Include="Tekla.Structures.Catalogs" Version="$(TeklaVersion)" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- Alternative compile source: a local Tekla install's DLLs (also NOT copied to output). -->
+  <!-- Alternative compile source: a local Tekla install's DLLs (also NOT copied to output).
+       Tekla 2026 keeps the .NET Framework Tekla.Structures.dll only in bin\Net48Runtime (issue #17). -->
+  <PropertyGroup Condition="'$(TeklaBinDir)' != ''">
+    <TeklaStructuresHintPath>$(TeklaBinDir)\Tekla.Structures.dll</TeklaStructuresHintPath>
+    <TeklaStructuresHintPath Condition="!Exists('$(TeklaStructuresHintPath)') And Exists('$(TeklaBinDir)\Net48Runtime\Tekla.Structures.dll')">$(TeklaBinDir)\Net48Runtime\Tekla.Structures.dll</TeklaStructuresHintPath>
+  </PropertyGroup>
   <ItemGroup Condition="'$(TeklaBinDir)' != ''">
     <Reference Include="Tekla.Structures">
-      <HintPath>$(TeklaBinDir)\Tekla.Structures.dll</HintPath>
+      <HintPath>$(TeklaStructuresHintPath)</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Tekla.Structures.Model">

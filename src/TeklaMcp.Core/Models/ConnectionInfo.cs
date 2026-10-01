@@ -47,6 +47,21 @@ public sealed class ConnectionInfo
     /// <summary>How <see cref="TeklaBinDir"/> was found: env | process | registry | (not found).</summary>
     public string? TeklaBinDirSource { get; set; }
 
+    /// <summary>
+    /// Every folder Tekla assemblies are looked up in, in order: <see cref="TeklaBinDir"/>, then its
+    /// <c>Net48Runtime</c> subfolder on installs that have one (Tekla 2026). Empty on Mock or when
+    /// Tekla was not found.
+    /// </summary>
+    public List<string> TeklaAssemblyFolders { get; set; } = new List<string>();
+
+    /// <summary>
+    /// Assemblies the Tekla Open API asked for that the server could not load, with where it looked,
+    /// e.g. "Trimble.Remoting 4.0.0.0 (needed by Tekla.Structures): not found in …". The Open API
+    /// hides such a failure behind "not connected", so a non-empty list is the cause, not a detail.
+    /// Empty when nothing failed (and on Mock).
+    /// </summary>
+    public List<string> AssemblyLoadProblems { get; set; } = new List<string>();
+
     /// <summary>Running TeklaStructures processes as "PID n started …"; empty on Mock or when none run.</summary>
     public List<string> TeklaProcesses { get; set; } = new List<string>();
 

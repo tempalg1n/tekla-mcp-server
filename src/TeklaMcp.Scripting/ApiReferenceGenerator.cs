@@ -24,8 +24,12 @@ public static class ApiReferenceGenerator
 {
     public static readonly IReadOnlyList<string> DefaultNamespaces = new[] { "Tekla.Structures" };
 
-    /// <summary>Bump when the output changes: cached references carry it in their folder name.</summary>
-    public const int FormatVersion = 2;
+    /// <summary>
+    /// Bump when the output changes: cached references carry it in their folder name.
+    /// 3: the live source also searches bin\Net48Runtime — a Tekla 2026 reference cached as r2 lacks
+    /// Tekla.Structures (Geometry3d) and must not be served again (issue #17).
+    /// </summary>
+    public const int FormatVersion = 3;
 
     /// <summary>Generates into <paramref name="outDir"/>; returns the number of documented types.</summary>
     public static int Generate(

@@ -25,7 +25,9 @@ public static class ModelInfoTools
                  "server answered: server version/runtime/PID/start time, the Tekla version it was built " +
                  "for, where the Tekla assemblies load from, and the running Tekla processes. A server " +
                  "that started BEFORE the Tekla process it should talk to, or a build for another Tekla " +
-                 "year, explains most connection failures. Call this first to verify connectivity.")]
+                 "year, explains most connection failures. A non-empty assemblyLoadProblems is the cause " +
+                 "whatever the message says: the Tekla installation's files could not be loaded, and " +
+                 "restarting Tekla does not help. Call this first to verify connectivity.")]
     public static ConnectionInfo GetConnectionInfo(ITeklaModelService model)
     {
         var info = model.GetConnectionInfo();
