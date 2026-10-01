@@ -153,7 +153,7 @@ var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
     .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
     .FirstOrDefault()?.InformationalVersion;
-var serverVersion = (informationalVersion ?? "0.8.0").Split('+')[0];
+var serverVersion = (informationalVersion ?? "0.8.1").Split('+')[0];
 
 builder.Services
     .AddMcpServer(options =>

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-01
+
+A hotfix for the first Tekla 2026 field report — v0.8.0 could not connect to Tekla 2026 at all —
+plus the Codex plugin card requested by the same reporter. No tools were added or changed (116).
+
 ### Added
 
 - **A "Tekla MCP" plugin card for Codex** ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
@@ -43,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bumped (r3), so incomplete references are regenerated once on first use. Script references
   also include `Net48Runtime`, and local builds against a 2026 install (`-p:TeklaBinDir`) find
   `Tekla.Structures.dll` there.
+
+### Known limitations
+
+- **The Tekla 2026 fix is not yet confirmed on a real 2026 install.** It was reproduced and verified
+  with real Tekla 2023 files laid out like 2026 and checked live on Tekla 2021; the issue #17
+  reporter is asked to confirm. The Tekla 2024 and 2025 layouts are still unknown — reports welcome.
+- How the Codex app displays the card's switches has not been verified by the maintainers.
+- Everything listed under 0.8.0's known limitations still applies.
 
 ## [0.8.0] - 2026-09-30
 
@@ -842,7 +855,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.5.0...v0.6.0

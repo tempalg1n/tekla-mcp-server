@@ -7,7 +7,7 @@ An [MCP](https://modelcontextprotocol.io/) server that connects AI assistants to
 
 Ask natural-language questions about steel structures — weights, counts, materials, profiles, selections — and let the assistant query the open model for you.
 
-> **Status: early development (v0.8.0).** The server builds and runs on Windows and has been exercised on live Tekla 2021 and 2023 models. The Tekla 2024–2026 builds compile but are untested — testers wanted. The tool set is growing; APIs and behavior may change between releases. See [Known limitations](#known-limitations) and [Roadmap](#roadmap).
+> **Status: early development (v0.8.1).** The server builds and runs on Windows and has been exercised on live Tekla 2021 and 2023 models. The Tekla 2024–2026 builds compile; apart from one Tekla 2026 field report ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17), fixed in v0.8.1) they are untested — testers wanted. The tool set is growing; APIs and behavior may change between releases. See [Known limitations](#known-limitations) and [Roadmap](#roadmap).
 
 **Languages:** English (this file) · [Русский](README.ru.md)
 
