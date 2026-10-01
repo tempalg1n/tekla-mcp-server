@@ -84,6 +84,8 @@ tekla-mcp-server/
 │   └── TeklaMcp.Smoke/     ← MCP stdio smoke test (initialize, tools/list, queries)
 ├── tools/
 │   └── TeklaApiDoc/        ← CLI for the offline Tekla Open API reference
+├── integrations/
+│   └── codex/              ← Codex plugin card installer (in every Windows zip under codex\)
 └── scripts/                ← build helper + Python smoke test
 ```
 
@@ -484,7 +486,7 @@ Releases ship **one zip per Tekla version** — pick the one matching *your* Tek
 
 1. Open **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** and download the zip for your Tekla version: `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` … `-tekla2026.zip` (e.g. running Tekla Structures 2023 → `…-tekla2023.zip`).
 2. Extract the zip to a folder (keep all `.dll` files next to the `.exe`).
-3. Open Tekla Structures with a model, and point your MCP client at `TeklaMcp.Server.exe` (see [MCP client configuration](#mcp-client-configuration)).
+3. Open Tekla Structures with a model, and point your MCP client at `TeklaMcp.Server.exe` (see [MCP client configuration](#mcp-client-configuration)). Codex users: the zip's `codex\Install-CodexPlugin.ps1` builds a plugin card instead — see [Codex (plugin card)](#codex-plugin-card).
 4. Ask the assistant to call `tekla_get_connection_info`: it shows the open model, the Tekla version the zip was built for, and where the Tekla assemblies were loaded from.
 
 No further setup is needed — the offline API reference used by the scripting tools is generated from your Tekla on first use. To try the server without Tekla, the `TeklaMcp.Server-X.Y.Z-net8.0-mock.zip` runs the mock backend (needs the .NET 8 runtime; `dotnet TeklaMcp.Server.dll`).
@@ -591,6 +593,53 @@ Example for Claude Desktop, Claude Code, or Cursor (`mcpServers`):
 
 The `env` block is optional; the variables are listed below. The server speaks MCP over stdio: the
 client starts it, and it exits with the client.
+
+### Codex (plugin card)
+
+Codex starts the MCP servers listed in its `config.toml`, but only plugins get a card in its
+Plugins directory. Every Windows release zip ships a `codex` folder whose script builds a
+**Tekla MCP** card for your computer: one server `tekla<year>` per installed Tekla version, each
+with its own switch ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
+
+1. Unpack the zips for your Tekla versions next to each other, e.g.
+   `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2021` and `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026`.
+2. Run the script from one of them:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026\codex\Install-CodexPlugin.ps1
+   ```
+
+3. Quit the Codex app completely (also from the system tray), start it again and open a new thread.
+
+The script finds the installed Teklas in the registry and the unpacked builds (it reads which Tekla
+each one was built for), writes a local marketplace to `%LOCALAPPDATA%\TeklaMcp\codex-marketplace`,
+and installs it with `codex plugin marketplace add` and `codex plugin add` (the CLI on `PATH`, or
+the Codex app's own). Its `.mcp.json` holds this computer's paths, the `TEKLA_BIN_DIR` of each
+Tekla and an explicit `TEKLA_MCP_USE_MOCK`; nothing machine-specific ships in the zip. By default
+the card gets every Tekla version that has both an install and a build. `-Years 2021,2026` picks
+the versions, `-Server` / `-ServerRoot` point at builds elsewhere, `-FileRoot` sets
+`TEKLA_MCP_FILE_ROOT`, `-UseMock` starts the mock backend, `-NoInstall` only prints the commands.
+Run it again after unpacking a new release: the card is regenerated and reinstalled under a new
+version suffix, because Codex caches plugins by version.
+
+**Switches and precedence** (checked with the Codex CLI 0.153.4 in an isolated `CODEX_HOME`):
+
+- A server's switch is stored in `~/.codex/config.toml` as
+  `[plugins."tekla-mcp@tekla-mcp-local".mcp_servers.tekla2026]` `enabled = false`.
+- A direct `[mcp_servers.tekla2026]` table with the same name **replaces** the card's server, even
+  with `enabled = false` (that simply switches the server off), and of two plugins declaring one
+  name only one is started. So do not keep old direct entries "disabled" next to the card: the
+  script lists such definitions after installing, and `-RemoveConflicts` removes them with
+  `codex mcp remove` / `codex plugin remove`.
+- `codex mcp list --json` shows what Codex will actually start; the script prints it for its servers.
+
+**Troubleshooting.** No card: the marketplace was not added, or the app was not restarted. A card
+without tools: the server is switched off or replaced by a same-name definition (above). Tools that
+answer "not connected": that is the Tekla side, see `tekla_get_connection_info`. Checked by the
+maintainers with the CLI 0.153.4 of the Codex app 26.924: generation, installation, the resolved
+servers, and a card server started from its `.mcp.json` against a live Tekla 2021. The issue
+reporter used the same layout with the Codex app 26.928 (CLI 0.159.2). How the switches look inside
+the Codex app has not been verified by the maintainers.
 
 ### Configuration
 

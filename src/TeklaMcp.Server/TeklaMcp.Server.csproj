@@ -51,4 +51,10 @@
     <ProjectReference Include="..\TeklaMcp.Tekla\TeklaMcp.Tekla.csproj" />
   </ItemGroup>
 
+  <!-- The Codex plugin card installer (issue #18) travels with every Windows build, so each release
+       zip has it under codex\: it finds the server builds next to the folder it runs from. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <None Include="..\..\integrations\codex\*" LinkBase="codex" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -16,7 +16,7 @@ Each release includes **one zip per supported Tekla version** plus the mock buil
 | `TeklaMcp.Server-vX.Y.Z-tekla2026.zip` | `2026.0.3` | Tekla Structures 2026 |
 | `TeklaMcp.Server-X.Y.Z-net8.0-mock.zip` | — | Mock backend, development without Tekla |
 
-Users download the **zip matching their Tekla version** (the year in the name). The Open API remoting protocol is version-locked, so a build compiled for one Tekla only talks to that Tekla — a mismatched zip fails fast at runtime with a message naming the right one ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)). Each Tekla zip contains `TeklaMcp.Server.exe` and all dependent assemblies — they must stay in the same directory. The Tekla DLLs themselves are **not** bundled (not redistributable); they load from the locally installed Tekla.
+Users download the **zip matching their Tekla version** (the year in the name). The Open API remoting protocol is version-locked, so a build compiled for one Tekla only talks to that Tekla — a mismatched zip fails fast at runtime with a message naming the right one ([#11](https://github.com/tempalg1n/tekla-mcp-server/issues/11)). Each Tekla zip contains `TeklaMcp.Server.exe` and all dependent assemblies — they must stay in the same directory — plus a `codex` folder with the Codex plugin card installer ([integrations/codex](../integrations/codex), copied by the server project into every `net48` build, [#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)). The Tekla DLLs themselves are **not** bundled (not redistributable); they load from the locally installed Tekla.
 
 When a new Tekla version ships, add a matrix entry (year + latest NuGet package version from https://api.nuget.org/v3-flatcontainer/tekla.structures.model/index.json) to **both** [release.yml](../.github/workflows/release.yml) and [ci.yml](../.github/workflows/ci.yml), and update this table.
 
@@ -177,5 +177,7 @@ While the project is in `0.x`, treat every minor release as potentially breaking
 - [ ] `dotnet build TeklaMcp.sln -c Release -p:TeklaVersion=<v>` succeeds for every version in
   the table above (works on macOS/Linux too; close running TeklaMcp.Server processes first)
 - [ ] New Tekla version released since last time? Add it to the release + CI matrices (see "What gets published")
+- [ ] The Codex installer runs from an unpacked zip without touching Codex:
+  `powershell -NoProfile -ExecutionPolicy Bypass -File <unpacked zip>\codex\Install-CodexPlugin.ps1 -NoInstall -MarketplaceDir <temp folder>`
 - [ ] Tag pushed (`vX.Y.Z`)
 - [ ] GitHub Release contains all Tekla zips + the mock zip

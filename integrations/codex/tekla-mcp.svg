@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- A generic I-beam section: structural steel, not a product logo. -->
+  <rect width="128" height="128" rx="28" fill="#1F5FA8"/>
+  <path fill="#FFFFFF" d="M36 28h56v14H72v44h20v14H36V86h20V42H36z"/>
+</svg>

@@ -88,6 +88,7 @@ Windows `net48` build.
 | `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla). References Core/Mock/Scripting — NOT the Server, so the tool layer is covered only by the smoke |
 | `tests/TeklaMcp.Smoke/` | net8.0 exe | MCP stdio smoke: launches the built server DLL as a real MCP client, checks initialize + `tools/list` + a few calls. Not in `TeklaMcp.sln` |
 | `tools/TeklaApiDoc/` | net8.0 exe | CLI over `ApiReferenceGenerator` (writes `reference/tekla-api/`). Not in `TeklaMcp.sln` |
+| `integrations/codex/` | PowerShell 5.1 | Codex plugin card installer + card template (issue #18), copied by the Server project into every `net48` build under `codex\`, so it runs from an unpacked zip with no repository around it. Keep it ASCII-only (5.1 reads BOM-less scripts as ANSI), write JSON without a BOM, and change Codex only through its CLI (`codex plugin …`, `codex mcp remove`) — never by editing `config.toml`. Test it with an isolated `CODEX_HOME` |
 
 Multi-targeting: in `TeklaMcp.Server.csproj` the `net48` TFM is dropped when
 `$(OS) != Windows_NT`, so non-Windows builds of the SERVER never pull in the Tekla project

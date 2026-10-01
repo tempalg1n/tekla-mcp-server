@@ -187,7 +187,7 @@ tekla_set_udas_from_file apply=true  → запись
 
 1. Откройте **[Releases](https://github.com/tempalg1n/tekla-mcp-server/releases)** и скачайте zip своей версии: `TeklaMcp.Server-vX.Y.Z-tekla2021.zip` … `-tekla2026.zip` (например, для Tekla Structures 2023 — `…-tekla2023.zip`).
 2. Распакуйте архив в папку (все `.dll` должны остаться рядом с `.exe`).
-3. Откройте модель в Tekla Structures и укажите в MCP-клиенте путь к `TeklaMcp.Server.exe` (см. [Подключение MCP-клиента](#подключение-mcp-клиента)).
+3. Откройте модель в Tekla Structures и укажите в MCP-клиенте путь к `TeklaMcp.Server.exe` (см. [Подключение MCP-клиента](#подключение-mcp-клиента)). В Codex вместо этого соберите карточку плагина скриптом `codex\Install-CodexPlugin.ps1` из zip — см. [Codex (карточка плагина)](#codex-карточка-плагина).
 4. Попросите ассистента вызвать `tekla_get_connection_info`: он покажет открытую модель, версию Tekla, под которую собран zip, и откуда загружены сборки Tekla.
 
 Больше ничего настраивать не нужно: офлайн-справочник API для скриптовых инструментов сервер сам сгенерирует из вашей Tekla при первом обращении. Попробовать сервер без Tekla можно с `TeklaMcp.Server-X.Y.Z-net8.0-mock.zip` (нужен .NET 8 runtime; `dotnet TeklaMcp.Server.dll`).
@@ -238,6 +238,25 @@ npx @modelcontextprotocol/inspector dotnet run --project src/TeklaMcp.Server
 ```
 
 Путь — к распакованному zip из релиза или к `src\TeklaMcp.Server\bin\Release\net48\` при сборке из исходников; блок `env` необязателен. Для мок-бэкенда используйте `dotnet run --project …/src/TeklaMcp.Server`.
+
+### Codex (карточка плагина)
+
+Codex запускает MCP-серверы из своего `config.toml`, но карточку в разделе Plugins получают только плагины. В каждом Windows-zip есть папка `codex`, скрипт из которой собирает карточку **Tekla MCP** для вашего компьютера: по серверу `tekla<год>` на каждую установленную версию Tekla, у каждого свой переключатель ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
+
+1. Распакуйте zip-ы для своих версий Tekla рядом друг с другом, например `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2021` и `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026`.
+2. Запустите скрипт из любого из них:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026\codex\Install-CodexPlugin.ps1
+   ```
+
+3. Полностью закройте приложение Codex (и из трея), запустите снова и откройте новый тред.
+
+Скрипт находит установленные Tekla по реестру и распакованные сборки (год сборки читает из неё самой), пишет локальный маркетплейс в `%LOCALAPPDATA%\TeklaMcp\codex-marketplace` и ставит его командами `codex plugin marketplace add` и `codex plugin add` (CLI из `PATH` или встроенный в приложение Codex). В его `.mcp.json` — пути этого компьютера, `TEKLA_BIN_DIR` каждой Tekla и явный `TEKLA_MCP_USE_MOCK`; в zip ничего машинно-зависимого нет. По умолчанию в карточку попадают версии, для которых есть и установка, и сборка; `-Years 2021,2026` выбирает версии, `-Server` / `-ServerRoot` указывают сборки в другом месте, `-FileRoot` задаёт `TEKLA_MCP_FILE_ROOT`, `-UseMock` включает мок-бэкенд, `-NoInstall` только печатает команды. После распаковки нового релиза запустите скрипт снова: карточка пересоберётся и переустановится под новой версией (Codex кэширует плагины по версии).
+
+**Переключатели и приоритет** (проверено на Codex CLI 0.153.4 в изолированном `CODEX_HOME`): переключатель сервера хранится в `~/.codex/config.toml` как `[plugins."tekla-mcp@tekla-mcp-local".mcp_servers.tekla2026]` `enabled = false`. Прямая таблица `[mcp_servers.tekla2026]` с тем же именем **заменяет** сервер карточки — даже с `enabled = false` (тогда сервер просто выключен), а из двух плагинов с одним именем сервера запускается только один. Поэтому не держите старые прямые записи «выключенными» рядом с карточкой: скрипт после установки перечисляет такие определения, а `-RemoveConflicts` удаляет их через `codex mcp remove` / `codex plugin remove`. Что Codex реально запустит, показывает `codex mcp list --json`; скрипт выводит это для своих серверов.
+
+**Если что-то не так.** Нет карточки — маркетплейс не добавлен или приложение не перезапущено. Карточка без инструментов — сервер выключен или заменён одноимённым определением (см. выше). Инструменты отвечают «not connected» — это сторона Tekla, см. `tekla_get_connection_info`. Мейнтейнеры проверили на CLI 0.153.4 из приложения Codex 26.924: генерацию, установку, итоговые серверы и запуск сервера карточки из её `.mcp.json` против живой Tekla 2021. Автор issue собирал такую же раскладку в Codex 26.928 (CLI 0.159.2). Как переключатели выглядят внутри приложения Codex, мейнтейнеры не проверяли.
 
 ### Настройка
 

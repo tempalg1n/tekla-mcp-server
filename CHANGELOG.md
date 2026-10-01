@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A "Tekla MCP" plugin card for Codex** ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
+  Codex lists directly registered MCP servers, but only plugins get a card in its Plugins
+  directory. Every Windows zip now has a `codex` folder: `Install-CodexPlugin.ps1` finds the
+  installed Teklas and the unpacked server builds, writes a local Codex marketplace with one server
+  `tekla<year>` per Tekla version (this computer's paths, each Tekla's `TEKLA_BIN_DIR`, an explicit
+  `TEKLA_MCP_USE_MOCK`) and installs it with the Codex CLI. It also lists MCP servers with the same
+  names defined elsewhere, which Codex starts instead of the card's (a direct `[mcp_servers.*]`
+  entry wins even when disabled), and removes them with `-RemoveConflicts`. Checked with the Codex
+  CLI 0.153.4 in an isolated `CODEX_HOME` and against a live Tekla 2021; how the switches look in
+  the Codex app is not verified by the maintainers.
+
 ### Fixed
 
 - **Tekla 2026 could not connect at all** ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17)).
