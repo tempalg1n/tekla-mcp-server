@@ -165,6 +165,16 @@ versions for issues (`tekla_report_gap` drafts one). The one 2024+ field source 
 `tekla_get_connection_info` output with Tekla running and after a Tekla restart, the server's
 stderr, and whether `EventWaitHandle.TryOpenExisting("<model channel>$S")` sees the channel.
 
+**Issue #17 (Tekla 2026.0.57099.0, 2026-09-30) — the first 2024+ connection report.** v0.8.0 could
+not load the Open API at all: the 2026 install splits it over `bin` and `bin\Net48Runtime`
+(details under "Tekla 2026 split layout" in `docs/tekla-api-notes.md`). With a local `codeBase`
+workaround the reporter got `connected=true` and read-only calls on a real model — the first live
+evidence that the 2024+ transport works without any alignment. The resolver fix is verified with a
+harness and on 2021, not on 2026 itself: ask the reporter to run the fixed `tekla2026` zip WITHOUT
+the workaround, and to send `tekla_get_connection_info` (`teklaAssemblyFolders`,
+`assemblyLoadProblems`) plus stderr. The reporter runs 2021 and 2026 side by side through Codex
+desktop (issue #18).
+
 ### 4. Write outcomes
 
 Shipped in v0.8.0 (see CHANGELOG and the write-result outcome/target rules in AGENTS.md).

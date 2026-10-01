@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-01
+
+A hotfix for the first Tekla 2026 field report — v0.8.0 could not connect to Tekla 2026 at all —
+plus the Codex plugin card requested by the same reporter. No tools were added or changed (116).
+
+### Added
+
+- **A "Tekla MCP" plugin card for Codex** ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
+  Codex lists directly registered MCP servers, but only plugins get a card in its Plugins
+  directory. Every Windows zip now has a `codex` folder: `Install-CodexPlugin.ps1` finds the
+  installed Teklas and the unpacked server builds, writes a local Codex marketplace with one server
+  `tekla<year>` per Tekla version (this computer's paths, each Tekla's `TEKLA_BIN_DIR`, an explicit
+  `TEKLA_MCP_USE_MOCK`) and installs it with the Codex CLI. It also lists MCP servers with the same
+  names defined elsewhere, which Codex starts instead of the card's (a direct `[mcp_servers.*]`
+  entry wins even when disabled), and removes them with `-RemoveConflicts`. Checked with the Codex
+  CLI 0.153.4 in an isolated `CODEX_HOME` and against a live Tekla 2021; how the switches look in
+  the Codex app is not verified by the maintainers.
+
+### Fixed
+
+- **Tekla 2026 could not connect at all** ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17)).
+  The 2026 install keeps `Tekla.Structures.dll` only in `bin\Net48Runtime`, next to its
+  dependencies `Trimble.Remoting` and `DotNetKit` in `bin`. The server looked for Tekla assemblies
+  in `bin` only, and only for `Tekla*` names, so the first call failed with `FileNotFoundException:
+  Tekla.Structures`, and once that was worked around, the connection failed on `Trimble.Remoting`.
+  The resolver now also searches `Net48Runtime` and supplies any assembly the Open API needs from
+  the Tekla install, outside the `Tekla*` names only when the file is exactly what was asked for
+  (same name and signer, at least the requested version). Reproduced and verified with real Tekla
+  2023 files laid out like 2026; still to be confirmed on a real 2026 install. Users who added
+  `codeBase` entries to `TeklaMcp.Server.exe.config` as a workaround can remove them.
+- **A missing Tekla assembly read as "Is Tekla running with a model open?"** The Open API hides
+  such a failure behind "not connected". `tekla_get_connection_info` now lists the assemblies
+  that could not be loaded and where they were looked for (`assemblyLoadProblems`,
+  `teklaAssemblyFolders`), connection errors lead with them, and a bare `FileNotFoundException` no
+  longer escapes `tekla_get_connection_info`.
+- **On Tekla 2026 the offline API reference was generated without `Tekla.Structures`** (no
+  `Point`, `Vector`, `Identifier`) while its status said "ready". The generator now finds it in
+  `Net48Runtime`, the status warns when the Geometry3d pages are missing, and the cache format is
+  bumped (r3), so incomplete references are regenerated once on first use. Script references
+  also include `Net48Runtime`, and local builds against a 2026 install (`-p:TeklaBinDir`) find
+  `Tekla.Structures.dll` there.
+
+### Known limitations
+
+- **The Tekla 2026 fix is not yet confirmed on a real 2026 install.** It was reproduced and verified
+  with real Tekla 2023 files laid out like 2026 and checked live on Tekla 2021; the issue #17
+  reporter is asked to confirm. The Tekla 2024 and 2025 layouts are still unknown — reports welcome.
+- How the Codex app displays the card's switches has not been verified by the maintainers.
+- Everything listed under 0.8.0's known limitations still applies.
+
 ## [0.8.0] - 2026-09-30
 
 A field-report release: every group below answers a problem observed on a live model
@@ -805,7 +855,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.5.0...v0.6.0

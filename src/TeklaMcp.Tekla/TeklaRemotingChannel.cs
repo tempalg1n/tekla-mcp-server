@@ -276,6 +276,8 @@ public static class TeklaRemotingChannel
     /// "Not connected" text for a proxy that answers <c>GetConnectionStatus() == false</c>. When
     /// the channel IS published, the proxy was created while it was not (before this guard, or on
     /// a fail-open) and only a server restart helps — say so instead of "is Tekla running?".
+    /// Assemblies the Open API could not load come first: it swallows that failure inside its own
+    /// constructors, and "is Tekla running?" then sent a user with Tekla open nowhere (issue #17).
     /// </summary>
     public static string NotConnectedMessage(TeklaChannel which)
     {
@@ -288,7 +290,10 @@ public static class TeklaRemotingChannel
               "and the Open API never retries that inside a process. If a model is open in Tekla, restart " +
               "this MCP server (reconnect it in the MCP client)."
             : $"The {api} is not connected. Is Tekla Structures running with a model open?";
-        return text + " (" + Describe() + ")";
+        var problems = LoadProblems();
+        if (problems.Count > 0)
+            text = AssemblyLoadCause(null, problems) + $" (The {api} client itself only reports \"not connected\".)";
+        return text + " (" + SafeDescribe() + ")";
     }
 
     /// <summary>
@@ -432,7 +437,12 @@ public static class TeklaRemotingChannel
         }
     }
 
-    /// <summary>One-line connection diagnostics for "not connected" error messages.</summary>
+    /// <summary>
+    /// One-line connection diagnostics for "not connected" error messages. Mentions Tekla types, so
+    /// it cannot even be compiled while the Open API is unloadable — the failure then happens at the
+    /// CALL, outside the catch below. Callers inside this class go through <see cref="SafeDescribe"/>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     public static string Describe()
     {
         try
@@ -470,7 +480,16 @@ public static class TeklaRemotingChannel
                 return unavailable.Message;
 
         string cause;
-        if (HasInChain<TypeInitializationException>(ex))
+        var problems = LoadProblems();
+        var failedAssembly = FailedAssembly(ex);
+        if (failedAssembly != null ||
+            (problems.Count > 0 && (HasInChain<TypeInitializationException>(ex) || IsFileLoadFailure(ex))))
+        {
+            // Checked first: FileNotFoundException is an IOException, and a type initializer that
+            // failed on a missing assembly is not a channel problem (issue #17).
+            cause = AssemblyLoadCause(failedAssembly, problems);
+        }
+        else if (HasInChain<TypeInitializationException>(ex))
         {
             cause = "The Open API connection failed to initialize — typically this server touched " +
                     "Tekla before Tekla published its channel (server started first, or Tekla was " +
@@ -498,7 +517,63 @@ public static class TeklaRemotingChannel
 
         return cause + " Error: " + TeklaMcp.Core.ErrorText.Flatten(ex) +
                " | Tekla processes: " + DescribeTeklaProcesses() +
-               " | " + Describe() + PipeListingCaveat();
+               " | " + SafeDescribe() + PipeListingCaveat();
+    }
+
+    /// <summary>
+    /// Cause + action for an Open API that cannot load its own assemblies. Not a connection state:
+    /// Tekla may well be running with the model open, and the CLR keeps the failure for the process.
+    /// </summary>
+    private static string AssemblyLoadCause(string? failedAssembly, IReadOnlyList<string> problems)
+    {
+        var what = problems.Count > 0 ? string.Join("; ", problems) : failedAssembly ?? "(see the error)";
+        var folders = TeklaAssemblyResolver.ProbeDirectories;
+        return "The Tekla Open API could not load assemblies it needs: " + what + ". This is about the files of " +
+               "the Tekla installation this server loads the API from (" +
+               (folders.Count > 0 ? string.Join(", ", folders) : "Tekla not located") + "), not about whether " +
+               "Tekla is running — opening the model or restarting Tekla does not help. The failure is cached " +
+               "for this server process: once the files can be found (TEKLA_BIN_DIR, or a server build that " +
+               "knows this Tekla layout), restart this MCP server (reconnect it in the MCP client). If those " +
+               "folders are the right Tekla installation, this is a gap in the server: tekla_report_gap drafts " +
+               "a GitHub issue — include the tekla_get_connection_info output.";
+    }
+
+    /// <summary>The assembly a bind failure in the chain names (display name with a Version), or null.</summary>
+    private static string? FailedAssembly(Exception? ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            var fileName = e switch
+            {
+                FileNotFoundException notFound => notFound.FileName,
+                FileLoadException load => load.FileName,
+                BadImageFormatException image => image.FileName,
+                _ => null,
+            };
+            // A bind names an assembly ("Trimble.Remoting, Version=4.0.0.0, …"); an ordinary missing
+            // file names a path — that is not this kind of failure.
+            if (!string.IsNullOrEmpty(fileName) && fileName!.IndexOf("Version=", StringComparison.OrdinalIgnoreCase) >= 0)
+                return fileName;
+        }
+        return null;
+    }
+
+    private static bool IsFileLoadFailure(Exception ex) =>
+        HasInChain<FileNotFoundException>(ex) || HasInChain<FileLoadException>(ex) ||
+        HasInChain<BadImageFormatException>(ex);
+
+    /// <summary>The resolver's misses; never throws (this runs while reporting another failure).</summary>
+    private static IReadOnlyList<string> LoadProblems()
+    {
+        try { return TeklaAssemblyResolver.LoadProblems; }
+        catch { return Array.Empty<string>(); }
+    }
+
+    /// <summary><see cref="Describe"/> for messages about a failure that may be an unloadable Open API.</summary>
+    private static string SafeDescribe()
+    {
+        try { return Describe(); }
+        catch (Exception ex) { return "diagnostics unavailable: " + TeklaMcp.Core.ErrorText.Flatten(ex); }
     }
 
     private static bool HasInChain<T>(Exception? ex) where T : Exception
@@ -657,10 +732,7 @@ public static class TeklaRemotingChannel
     /// wrong-version Open API folder. Retryable — see <see cref="Align"/>.
     /// </summary>
     private static bool IsTeklaApiUnavailable(Exception ex) =>
-        HasInChain<FileNotFoundException>(ex) ||
-        HasInChain<FileLoadException>(ex) ||
-        HasInChain<BadImageFormatException>(ex) ||
-        HasInChain<TeklaVersionMismatchException>(ex);
+        IsFileLoadFailure(ex) || HasInChain<TeklaVersionMismatchException>(ex);
 
     private static void PatchToSuffix(Assembly assembly, string remoterTypeName, string suffix)
     {

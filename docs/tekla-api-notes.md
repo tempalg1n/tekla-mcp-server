@@ -71,9 +71,10 @@ supported version (2021–2026):
   matrix in `.github/workflows/release.yml` builds every supported version.
 - It does **not** ship the Tekla DLLs (`ExcludeAssets="runtime"` — Trimble's binaries are not
   redistributable). At runtime `TeklaAssemblyResolver` (registered in `Program.cs` for the
-  net48 build) handles `AppDomain.AssemblyResolve` for `Tekla.*`, verifies the installed
-  Tekla's **major version matches the compiled one**, and `Assembly.LoadFrom`s the DLLs from
-  the installed Tekla's `bin`. On a mismatch every Tekla operation fails fast with a clear
+  net48 build) handles `AppDomain.AssemblyResolve` for the Open API and its dependencies,
+  verifies the installed Tekla's **major version matches the compiled one**, and
+  `Assembly.LoadFrom`s the DLLs from the installed Tekla's `bin` (plus `bin\Net48Runtime` on
+  Tekla 2026 — see "Tekla 2026 split layout" below). On a mismatch every Tekla operation fails fast with a clear
   "wrong build for this Tekla version — download …-tekla&lt;year&gt;.zip" message
   (`TeklaAssemblyResolver.EnsureVersionMatch`, also called from `EnsureTeklaReady` so binds
   the resolver never saw — e.g. a same-version GAC copy — are covered too).
@@ -106,7 +107,9 @@ the resolver re-probes whenever a `Tekla.*` bind occurs, so "start the server fi
 later" recovers without a restart. A folder of the WRONG version is re-probed too (at most every
 5 s, from `EnsureVersionMatch`): since v0.8.0 a mismatch no longer sticks for the process
 lifetime, and nothing is ever loaded from the mismatched folder. TODO(windows): the recovery
-itself — right Tekla started after the mismatch was reported — is not verified live.
+itself — right Tekla started after the mismatch was reported — is not verified live. The API
+folder is still found by the Model DLL on Tekla 2026, but there it is not the only folder
+assemblies come from ("Tekla 2026 split layout" below).
 
 **Script references (DEV-005 field report, Tekla 2021, verified 2026-09-29 on the maintainer's
 2021 install).** With `TEKLA_BIN_DIR=…\2021.0\nt\bin`, connecting and reading worked — the core
@@ -259,7 +262,7 @@ analytics, writes, connections, scripts, reference geometry) and the partials
 | Part solids | `Part.GetSolid(SolidCreationTypeEnum)` (all 7 values exist in 2021) → `MinimumPoint`/`MaximumPoint`, `GetFaceEnumerator()` → `Face.Normal`, `Face.OriginPartId`, `GetLoopEnumerator()` → `Loop.GetVertexEnumerator()`; all "in the current plane" → read inside `InGlobalWorkPlane`; vertices read lazily, so the caps also stop the remoting reads | Compiles 2021–2026; TODO(windows) live: loop order/winding, whether `OriginPartId` names the cutting part as documented |
 | Advanced options | `TeklaStructuresSettings.GetAdvancedOption(name, ref string)`, then the `bool`/`int`/`double` overloads only if the string call answered false; `GetAdvancedOptionPaths(name, out List<string>, InvalidPathCallback)` for `asPaths` | ✅ run live on Tekla 2023 (2026-09-30): an unknown option answers `true` with `""`, so an empty value is reported `found=false` ("unset or unknown"). ⚠️ No live record for `asPaths` or the typed fallbacks. The file's header comment still says "compile only" — stale |
 | Catalogs | `new CatalogHandler()` + `GetConnectionStatus()`; `GetLibraryProfileItems` / `GetParametricProfileItems` (`ProfileItemEnumerator.SelectInstances` = `details`), `GetMaterialItems`, `GetComponentItems`, `GetUserPropertyItems([CatalogObjectTypeEnum])`; `UserPropertyItem.GetLabel()` / `GetObjectTypes(ref List)` | Compiles 2021–2026. `GetMaterialItems()` has run live on Tekla 2023 (the reconnect probes, including first use after a client swap); `tekla_list_catalog` itself has no live run recorded. TODO(windows): whether UDA-definition items come fully selected for `details=true` (`UserPropertyItem.Select()` exists if not). Own Catalogs channel — reached only after `GetConnectedModel()` |
-| API reference source | no remoting: the Open API DLLs in `TeklaAssemblyResolver.BinDir` (`ApiReference.CoreAssemblyNames`), cache key `tekla-<FileVersion of Tekla.Structures.Model.dll>`, XML docs from the same folder, dependencies also from its parent (2021: `nt\bin` next to `nt\bin\plugins`) | ✅ verified in a net48 server against Tekla 2021 (1 740 types, ~7 s); a code comment records ~6 s on a 2023 install for an earlier, shorter assembly list; not seen on 2024+ |
+| API reference source | no remoting: the Open API DLLs (`ApiReference.CoreAssemblyNames`) looked up across the resolver's folders (`TeklaAssemblyResolver.ProbeDirectories` — on 2026 `Tekla.Structures.dll` is only in `bin\Net48Runtime`, issue #17), cache key `tekla-<FileVersion of Tekla.Structures.Model.dll>-r<FormatVersion>`, XML docs from the same folders, dependencies also from the API folder's parent (2021: `nt\bin` next to `nt\bin\plugins`); the status warns when the Model, Drawing or Geometry3d pages are missing | ✅ verified in a net48 server against Tekla 2021 (1 740 types, ~7 s; regenerated as r3 in 8 s on 2026-10-01); a code comment records ~6 s on a 2023 install for an earlier, shorter assembly list. ⚠️ A 2026 reference generated by v0.8.0 (r2) lacks Tekla.Structures and still said "ready" — r3 regenerates it; not seen on 2024+ |
 | Enumeration | `GetModelObjectSelector().GetAllObjects()` | Verified; ~50 s on a ~400k-object model before any property is read — scans prefer the part-type chain |
 | Enumeration setup | `ModelObjectEnumerator.AutoFetch = true`, set once per process (static, applies to every enumerator) | Verified in use. The API doc says objects are fetched when the enumerator is CREATED, and that changing the `TransformationPlane` afterwards needs a re-select to refresh values — so enumerators that read coordinates are created inside `InGlobalWorkPlane`. Cost of that creation-time fetch: backlog §7 |
 | Part-type chain | `GetAllObjectsWithType(ModelObjectEnum)` × 8 part types (`PartTypeEnums`); single types via `TypeEnumMap`. `GetAllObjectsWithType(System.Type[])` also exists (2021 included) but is not used | ✅ measured live on a ~470k-object model: ~5 s vs ~52 s for `GetAllObjects()`; the `Type[]` overload is unmeasured (backlog §7) |
@@ -578,9 +581,61 @@ v0.8.0; not yet confirmed on a Tekla 2025 install (the issue #15 reporter's mach
 
 `TeklaAssemblyResolver` now simply `Assembly.LoadFrom`s the matching per-version install's
 DLLs — plain and policy-free. `Assembly.Location` is real again, and script metadata
-references start from the loaded Tekla assemblies plus the DLL files in
-`TeklaAssemblyResolver.BinDir` (Drawing/Dialog/Datatype/Plugins included) — see
+references start from the loaded Tekla assemblies plus the DLL files in the resolver's folders
+(`TeklaAssemblyResolver.ProbeDirectories`; Drawing/Dialog/Datatype/Plugins included) — see
 `TeklaModelService.SelectScriptReferences`.
+
+**Tekla 2026 split layout (issue #17, field report on 2026.0.57099.0, 2026-09-30).** The 2026
+install keeps `Tekla.Structures.Model.dll`, `Trimble.Remoting.dll` and `DotNetKit.dll` in `bin`, but
+`Tekla.Structures.dll` and `Tekla.Structures.Internal.dll` ONLY in `bin\Net48Runtime`; Tekla's own
+process finds them through `<probing privatePath="Net48Runtime"/>` and a codeBase in
+`TeklaStructures.exe.config`, which an external process does not inherit. The NuGet packages point
+the same way: `Tekla.Structures` 2024–2026 ship `net48` + `netstandard2.0`, `Tekla.Structures.Model`
+2026 is `netstandard2.0` only, and the 2026 Model references `Trimble.Remoting`, `DotNetKit`,
+`Newtonsoft.Json`, `Polly`, `SemanticDb.NET`, `Microsoft.Extensions.Logging.Abstractions` 9 and
+`Microsoft.Bcl.AsyncInterfaces` 10. v0.8.0 failed there twice:
+
+1. it searched `bin` only → `FileNotFoundException: Tekla.Structures, Version=2026.0.0.0`;
+2. with `Tekla.Structures` supplied from `Net48Runtime` (the reporter's codeBase workaround), its
+   dependencies `Trimble.Remoting`/`DotNetKit` were never resolved. The LoadFrom context probes a
+   DLL's dependencies in that DLL's OWN folder only, so every bind that crosses `bin` ↔
+   `Net48Runtime` reaches the handler — which answered `Tekla*` names only. `DelegateProxy`'s type
+   initializer failed, and the Open API turned that into `connected=false` plus "Is Tekla running
+   with a model open?" while it was.
+
+While an install keeps the API in one folder (2021 `nt\bin\plugins`, 2023 `bin`; both local
+installs checked), the parent-folder probing hides both gaps — that is why 2021/2023 never showed
+them. The resolver now:
+
+- searches `TeklaAssemblyResolver.ProbeDirectories`: the API folder, then `Net48Runtime` when it
+  exists (`TeklaBinLayout.ProbeDirectories` — the order of Tekla's own config: app base, then
+  privatePath);
+- answers ANY name found there except satellite `*.resources` and the server's own `TeklaMcp.*`.
+  Outside `Tekla*` the file must BE the requested assembly (`TeklaAssemblyProbe.Accepts`: same name,
+  the requested public key token, version ≥ requested — what Tekla's own redirects hand out); every
+  failed bind of the process reaches this handler, and Tekla's folders hold hundreds of third-party
+  DLLs. The server's own redirected dependencies (`Microsoft.Extensions.Logging.Abstractions`,
+  `Microsoft.Bcl.AsyncInterfaces`, both up to 10.0.0.7) bind from the server folder before the
+  handler is ever asked;
+- keeps the Tekla-side binds it could not satisfy (`LoadProblems`, at most 8,
+  `TeklaAssemblyProbe.ConcernsTekla`) and reports them in `tekla_get_connection_info`
+  (`assemblyLoadProblems`, `teklaAssemblyFolders`) and at the head of `NotConnectedMessage` /
+  `DiagnoseConnectionFailure`. The latter checks for a failed assembly bind BEFORE its IOException
+  branch: `FileNotFoundException` is an `IOException` and used to read as "Tekla process is gone".
+  `GetConnectionInfo` also catches what fails while `ProbeConnection` is being COMPILED (it mentions
+  Tekla types) — the first symptom on 2026 reached the agent as a bare `FileNotFoundException`.
+
+Verified: unit tests (`TeklaBinLayoutTests`, `TeklaAssemblyProbeTests`); a harness with real Tekla
+2023 files laid out like 2026 — the non-GAC `Tekla.Structures.WebBrowser` and
+`Tekla.Common.Geometry.Shapes.Tools` in `Net48Runtime`, their dependencies `Newtonsoft.Json`,
+`LibTessDotNet` and `DotNetKit` in `bin`, binds triggered with `Module.ResolveType` on TypeRef tokens
+(no Tekla code runs): the v0.8.0 2023 release fails every cross-folder bind, the fix resolves all of
+them, refuses a too-new `DotNetKit 2099` and reports a missing `Trimble.Remoting` with both folders;
+a read-only live run on Tekla 2021 (2026-10-01: connection, list, summary, `tekla_check_csharp`, API
+reference r3) with `assemblyLoadProblems: []`. A live 2021/2023 run cannot reproduce the 2026
+failure on the maintainer's machine: the GAC holds `Tekla.Structures*` 2021 and 2023, so the core
+API binds from there. TODO(windows): a real 2026 install (the reporter's); the 2024/2025 layouts
+are unknown — `Net48Runtime` is handled wherever it appears.
 
 **What the CLR caches when a bind fails** (probed on .NET Framework 4.8 with a fake strong
 assembly, 2026-09-29):

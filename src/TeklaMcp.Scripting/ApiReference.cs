@@ -82,8 +82,13 @@ public static class ApiReference
             if (!result.Modules.Contains("Drawing"))
                 result.Warnings.Add(
                     "Drawing API pages are missing; regenerate with Tekla.Structures.Drawing.dll.");
+            // A Tekla 2026 reference was generated without Tekla.Structures.dll (it lives in
+            // bin\Net48Runtime) and reported no warning at all (issue #17).
+            if (!result.Modules.Contains("Geometry3d"))
+                result.Warnings.Add(
+                    "Geometry3d pages (Point, Vector, CoordinateSystem) are missing; regenerate with Tekla.Structures.dll.");
             result.Guidance = result.Warnings.Count == 0
-                ? "Offline Tekla API reference is ready (Model + Drawing coverage detected)."
+                ? "Offline Tekla API reference is ready (Model, Drawing and Geometry3d coverage detected)."
                 : "Reference is usable but incomplete: " + string.Join(" ", result.Warnings);
         }
         catch (Exception ex)

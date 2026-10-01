@@ -39,7 +39,7 @@ var tools = await client.ListToolsAsync(
 
 Require(client.ServerInfo.Name == "tekla-mcp",
     "initialize returned unexpected server name: " + client.ServerInfo.Name);
-Require(client.ServerInfo.Version == "0.8.0",
+Require(client.ServerInfo.Version == "0.8.1",
     "initialize returned unexpected server version: " + client.ServerInfo.Version);
 Require(!string.IsNullOrWhiteSpace(client.ServerInstructions),
     "initialize returned no server instructions.");

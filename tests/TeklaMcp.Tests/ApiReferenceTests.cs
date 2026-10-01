@@ -30,6 +30,8 @@ public class ApiReferenceTests : IDisposable
             "# Tekla.Structures.Model.Part  *(class)*\n");
         File.WriteAllText(Path.Combine(_dir, "Tekla.Structures.Drawing.Part.md"),
             "# Tekla.Structures.Drawing.Part  *(class)*\n");
+        File.WriteAllText(Path.Combine(_dir, "Tekla.Structures.Geometry3d.Point.md"),
+            "# Tekla.Structures.Geometry3d.Point  *(class)*\n");
         File.WriteAllText(Path.Combine(_dir, "INDEX.md"), "# index\n");
         Environment.SetEnvironmentVariable(ApiReference.DirEnvVar, _dir);
     }
@@ -88,7 +90,25 @@ public class ApiReferenceTests : IDisposable
         Assert.True(status.TypeCount >= 4);
         Assert.Contains("Model", status.Modules);
         Assert.Contains("Drawing", status.Modules);
+        Assert.Contains("Geometry3d", status.Modules);
         Assert.Empty(status.Warnings);
+    }
+
+    /// <summary>
+    /// Issue #17: on Tekla 2026 the reference was generated without Tekla.Structures.dll (it lives in
+    /// bin\Net48Runtime), so Point/Vector were missing — and the status still said "ready".
+    /// </summary>
+    [Fact]
+    public void Status_warns_when_geometry_pages_are_missing()
+    {
+        File.Delete(Path.Combine(_dir, "Tekla.Structures.Geometry3d.Point.md"));
+
+        var status = ApiReference.GetStatus();
+
+        Assert.True(status.Available);
+        Assert.DoesNotContain("Geometry3d", status.Modules);
+        Assert.Contains(status.Warnings, w => w.Contains("Geometry3d") && w.Contains("Tekla.Structures.dll"));
+        Assert.StartsWith("Reference is usable but incomplete", status.Guidance);
     }
 
     [Fact]

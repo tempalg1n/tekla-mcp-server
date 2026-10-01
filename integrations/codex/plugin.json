@@ -1,0 +1,31 @@
+{
+  "name": "tekla-mcp",
+  "version": "0.0.0",
+  "description": "Work with the Tekla Structures model open on this computer: read, analyze, draw, and edit after a preview.",
+  "author": {
+    "name": "Tekla MCP Server contributors",
+    "url": "https://github.com/tempalg1n/tekla-mcp-server"
+  },
+  "homepage": "https://github.com/tempalg1n/tekla-mcp-server#readme",
+  "repository": "https://github.com/tempalg1n/tekla-mcp-server",
+  "license": "MIT",
+  "keywords": ["tekla", "tekla structures", "bim", "structural engineering", "steel", "mcp"],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Tekla MCP",
+    "shortDescription": "Work with the open Tekla Structures model",
+    "longDescription": "Connects Codex to the local Tekla MCP server: one server per installed Tekla version, each with its own switch. Read and analyze the open model and its drawings, look at pictures of it, and run checked C# scripts. Every change is previewed first and applied only on request.",
+    "developerName": "Tekla MCP Server contributors",
+    "category": "Engineering",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "websiteURL": "https://github.com/tempalg1n/tekla-mcp-server",
+    "defaultPrompt": [
+      "Check the Tekla connection and summarize the model",
+      "Group the steel weight by profile and material",
+      "Find modeling issues in the selected parts"
+    ],
+    "brandColor": "#1F5FA8",
+    "composerIcon": "./assets/tekla-mcp.svg",
+    "logo": "./assets/tekla-mcp.svg"
+  }
+}
