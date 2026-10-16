@@ -129,6 +129,10 @@ geometry of parts and bolts, and approval of scripts by reference. Three tools a
 - **View frames include hidden marks** ([#33](https://github.com/tempalg1n/tekla-mcp-server/issues/33)):
   placement by frame warns when a view has hidden marks, and frames stay stale within the call that
   loaded an attribute file (the result says to re-list).
+- **Drawing objects listed without a model GUID** (found live while testing this release): drawing
+  parts and marks carry only the model ID on Tekla 2021, so `modelGuid` came back empty and a
+  `modelGuid` filter in `tekla_list_drawing_objects` never matched. Listed rows now get their GUID
+  from the model, and the filter matches by the resolved model ID.
 - The net48 server build compiles without warnings again (CS8602 in `DrawingToolHelpers`).
 
 ### Known limitations
@@ -136,11 +140,13 @@ geometry of parts and bolts, and approval of scripts by reference. Three tools a
 - Not run live as tools yet (the recipes they follow were run live by script): every drawing write
   of this release — frame placement, attribute files on views and sections, labels and mark
   renames, standalone marks, custom marks, mark offsets on rescale, dimension placing — the
-  listing of mark contents, dimension sets and view-coordinate geometry (no drawing was open), the
   verification of `tekla_modify_parts` against a real refusal, the typed UDA writes, and the
   distance units of radius, curved and angle dimensions (passed unchanged; angle and curved are
-  documented as paper mm, radius is undocumented). Run live read-only on Tekla 2021: typed UDA
-  reads, the numbering status, curved Beams, `modelOpen`, a script run by `checkId`.
+  documented as paper mm, radius is undocumented). Run live and read-only on Tekla 2021 with this
+  build (model 3155, an open GA drawing): typed UDA reads, the numbering status, curved Beams,
+  `modelOpen`, a script run by `checkId` with `GetType().Name`, view frames and labels, mark
+  contents and empty marks, dimension sets in both units, part geometry in view coordinates, and the
+  model GUIDs of drawing objects.
 - Renaming a detail view's mark can miss it: detail marks do not always enumerate on Tekla 2021, and
   the mark is found by its name (the Open API has no mark ↔ view link).
 - Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
