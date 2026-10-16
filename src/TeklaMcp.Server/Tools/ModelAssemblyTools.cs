@@ -18,9 +18,10 @@ namespace TeklaMcp.Server.Tools;
 /// detect them).
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelAssemblyTools
 {
-    [McpServerTool(Name = "tekla_list_assemblies")]
+    [McpServerTool(Name = "tekla_list_assemblies", ReadOnly = true, OpenWorld = false)]
     [Description("List assemblies grouped by assembly mark (ASSEMBLY_POS): part count and total " +
                  "weight per mark, sorted by weight. Optional filters narrow the scope. " +
                  "Requires the model to be numbered.")]
@@ -52,7 +53,7 @@ public static class ModelAssemblyTools
         return rows;
     }
 
-    [McpServerTool(Name = "tekla_count_assemblies")]
+    [McpServerTool(Name = "tekla_count_assemblies", ReadOnly = true, OpenWorld = false)]
     [Description("Count distinct assembly marks (ASSEMBLY_POS) — i.e. how many unique fabricated " +
                  "assembly types exist. Optional filters narrow the scope.")]
     public static int CountAssemblies(
@@ -72,7 +73,7 @@ public static class ModelAssemblyTools
             .Count();
     }
 
-    [McpServerTool(Name = "tekla_get_assembly_parts")]
+    [McpServerTool(Name = "tekla_get_assembly_parts", ReadOnly = true, OpenWorld = false)]
     [Description("List all parts that belong to a given assembly mark (ASSEMBLY_POS), e.g. 'B1'. " +
                  "Returns the parts that share that mark with their core properties.")]
     public static IReadOnlyList<ModelObjectInfo> GetAssemblyParts(

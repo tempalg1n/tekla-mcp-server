@@ -16,9 +16,10 @@ namespace TeklaMcp.Server.Tools;
 /// whitelist — see TeklaMcp.Core.FileExchange.FilePathPolicy.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Files)]
 public static class ModelFileExchangeTools
 {
-    [McpServerTool(Name = "tekla_export_parts_file")]
+    [McpServerTool(Name = "tekla_export_parts_file", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description(
         "Export model objects TO A FILE ON DISK — the response carries counters only, never the " +
         "rows. Use this instead of tekla_export_objects / tekla_find_objects whenever the result " +
@@ -67,6 +68,7 @@ public static class ModelFileExchangeTools
         [Description("Append to an existing file instead of replacing it. Required for every page after the first.")]
         bool append = false)
     {
+        ServerMode.ThrowIfReadOnly("tekla_export_parts_file (it writes a file)");
         var query = new ObjectQuery
         {
             Type = type,
@@ -96,7 +98,7 @@ public static class ModelFileExchangeTools
         });
     }
 
-    [McpServerTool(Name = "tekla_set_udas_from_file")]
+    [McpServerTool(Name = "tekla_set_udas_from_file", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description(
         "Write UDA values to many objects at once from a jsonl/csv file keyed by Tekla GUID — " +
         "the way to apply a result computed outside the model (e.g. a geometric reconciliation) " +
@@ -141,7 +143,7 @@ public static class ModelFileExchangeTools
             Cursor = cursor,
         }));
 
-    [McpServerTool(Name = "tekla_export_reference_objects_file")]
+    [McpServerTool(Name = "tekla_export_reference_objects_file", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description(
         "Export reference-model (IFC) objects TO A FILE ON DISK: external IFC GUID, entity, name, " +
         "description, objectType, reference model title, world AABB and placement (origin + X/Y/Z " +
@@ -183,7 +185,9 @@ public static class ModelFileExchangeTools
         string? cursor = null,
         [Description("Append to an existing file instead of replacing it. Required for every page after the first.")]
         bool append = false)
-        => model.ExportReferenceObjectsToFile(new ReferenceExportRequest
+    {
+        ServerMode.ThrowIfReadOnly("tekla_export_reference_objects_file (it writes a file)");
+        return model.ExportReferenceObjectsToFile(new ReferenceExportRequest
         {
             Path = path,
             Format = format,
@@ -197,4 +201,5 @@ public static class ModelFileExchangeTools
             Cursor = cursor,
             Append = append,
         });
+    }
 }

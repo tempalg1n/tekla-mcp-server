@@ -17,6 +17,7 @@ their findings stay here because the open remainder builds on them.
 | 7 | Found after the first write-up | Fixes shipped. **Open:** AutoFetch snapshot cost, `GetAllObjectsWithType(Type[])` timing, partial version-mismatch recovery |
 | 8 | `tekla_analyze_by_material` is an unpaged whole-model scan | **Open** (found in the v0.8.0 release review) |
 | 9 | `tekla_export_drawings_pdf` writes outside the file allow-list | **By design** (user's responsibility, warned); opt-in restriction possible later |
+| 10 | Read-only mode: what it leaves out, how far its guard reaches | Shipped (annotations, `TEKLA_MCP_READ_ONLY`, `TEKLA_MCP_TOOLSETS`). **Open:** read-only scripting, a read-only view capture, the guard at the backend boundary |
 
 The per-API verification ledger and the full list of live runs still pending are in
 [docs/tekla-api-notes.md](tekla-api-notes.md) ("Live validation still pending").
@@ -348,3 +349,36 @@ day, #34–#41. Deferred, most valuable first:
   coordinates.
 - **#29 filter detail:** a ContourPlate's view-filter `PROFILE` is only the thickness (`PL6`), not
   `PL6*240` — a future `.vi.filter` writer should warn or offer "thickness + class".
+
+---
+
+## Tool annotations and read-only mode (2026-10-16)
+
+### 10. What read-only mode leaves out, and how far its guard reaches
+
+Annotations, `TEKLA_MCP_READ_ONLY` and `TEKLA_MCP_TOOLSETS` shipped together (v0.9.0). Verified: the MCP smoke (default, read-only and `drawings` launches) and the unit
+tests in `ToolExposureTests`; not run against live Tekla, and no MCP client's approval UX was
+checked against the new hints.
+
+Deliberately left out, each a candidate if operators ask:
+
+- **Read-only scripting.** `tekla_run_csharp` is hidden in read-only mode and refuses every run,
+  because `ScriptPolicy` decides "mutating" syntactically and is allowed false negatives. Offering
+  scripts there needs a stronger guarantee first (e.g. a run-time proxy that rejects
+  `Insert`/`Modify`/`Delete`/`CommitChanges`), not just `allowMutations=false`.
+- **`tekla_capture_view` without targets** is a pure read, but the tool can zoom, rotate and
+  highlight, so it is annotated as a writer and hidden. A separate read-only tool (no
+  `guids`/`direction`/`useSelection`) could be served in read-only mode.
+- **`tekla_report_gap`** appends to `%LOCALAPPDATA%\TeklaMcp\capability-requests.log` and is
+  therefore hidden too; the instructions tell the agent to describe the gap to the user instead. A
+  variant that returns the draft without logging would be read-only.
+- **`Title` annotations** are not set; clients fall back to the tool name.
+
+**How far the runtime guard reaches.** `ServerMode.ThrowIfReadOnly` sits in
+`ToolHelpers.ResolveTarget` (every `Write(...)` wrapper), in `tekla_run_csharp` and in the six
+tools that act outside the wrappers. It is not at the backend boundary: a future tool that calls a
+mutating `ITeklaModelService` member directly, bypasses the wrapper (already a bug per AGENTS.md)
+AND is annotated `ReadOnly = true` would still write. A decorator over `ITeklaModelService` that
+refuses the mutating members in read-only mode would close that, at the price of forwarding the
+whole interface. The guard is also not exercised end to end: in read-only mode no registered tool
+reaches it, so it is covered by code review, not by the smoke.

@@ -47,6 +47,15 @@ public sealed class ConnectionInfo
     /// <summary>Local start time of the MCP server process (ISO 8601 with offset).</summary>
     public string ServerStartedAt { get; set; } = "";
 
+    /// <summary>
+    /// True when the operator started the server read-only (TEKLA_MCP_READ_ONLY): only read tools are
+    /// served and every write path refuses.
+    /// </summary>
+    public bool ServerReadOnly { get; set; }
+
+    /// <summary>The toolsets this server serves (TEKLA_MCP_TOOLSETS); all of them unless the operator narrowed it.</summary>
+    public List<string> ServerToolsets { get; set; } = new List<string>();
+
     /// <summary>Tekla Open API version this build was compiled for; only one Tekla year works. Null on Mock.</summary>
     public string? CompiledTeklaVersion { get; set; }
 

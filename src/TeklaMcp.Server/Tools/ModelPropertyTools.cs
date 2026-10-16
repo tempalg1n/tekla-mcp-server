@@ -13,9 +13,10 @@ namespace TeklaMcp.Server.Tools;
 /// UDAs, or built-ins (GUID, ID, NAME, CLASS, PROFILE, MATERIAL, WEIGHT, LENGTH, ASSEMBLY_POS).
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelPropertyTools
 {
-    [McpServerTool(Name = "tekla_get_properties")]
+    [McpServerTool(Name = "tekla_get_properties", ReadOnly = true, OpenWorld = false)]
     [Description("Read arbitrary properties for one object by GUID. Names can be report properties " +
                  "(e.g. VOLUME, AREA, HEIGHT, WIDTH, PROFILE_TYPE), UDAs, or built-ins (GUID, ID, " +
                  "NAME, CLASS, PROFILE, MATERIAL, WEIGHT, LENGTH, ASSEMBLY_POS). Pass names " +

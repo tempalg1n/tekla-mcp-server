@@ -15,9 +15,10 @@ namespace TeklaMcp.Server.Tools;
 /// (apply=false) and tag changes with MCP_ORIGIN.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelGeneratorTools
 {
-    [McpServerTool(Name = "tekla_create_beam_between_grids")]
+    [McpServerTool(Name = "tekla_create_beam_between_grids", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a beam between two grid intersections at an elevation: from " +
                  "(gridXFrom, gridY) to (gridXTo, gridY) at z. Resolves axis labels via the model " +
                  "grids — e.g. 'between axes 1 and 2 along axis Д at +6.000'. Preview unless apply=true.")]
@@ -55,7 +56,7 @@ public static class ModelGeneratorTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_create_column_grid")]
+    [McpServerTool(Name = "tekla_create_column_grid", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create vertical columns at every intersection of given X and Y coordinate lists " +
                  "(mm), from bottomZ to topZ. Coordinate lists like '0,6000,12000'. Preview unless apply=true.")]
     public static WriteResult CreateColumnGrid(
@@ -86,7 +87,7 @@ public static class ModelGeneratorTools
         return ToolHelpers.Write(model, expectedModelPath, () => model.CreateParts(specs, apply));
     }
 
-    [McpServerTool(Name = "tekla_generate_frame")]
+    [McpServerTool(Name = "tekla_generate_frame", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Generate a rectangular steel frame: columns at a grid of bays plus connecting " +
                  "beams at each story level. baysX/baysY are the number of bays (columns = bays+1) " +
                  "along each direction. Preview unless apply=true — preview returns the full plan/count.")]
@@ -150,7 +151,7 @@ public static class ModelGeneratorTools
         });
     }
 
-    [McpServerTool(Name = "tekla_straighten_columns")]
+    [McpServerTool(Name = "tekla_straighten_columns", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Find near-vertical members whose top is not directly above the bottom (out of " +
                  "plumb beyond toleranceMm) and make them vertical by aligning both ends over the " +
                  "bottom point's X/Y. Use for 'fix crooked columns'. Preview unless apply=true.")]
@@ -197,7 +198,7 @@ public static class ModelGeneratorTools
         });
     }
 
-    [McpServerTool(Name = "tekla_fix_column_handles")]
+    [McpServerTool(Name = "tekla_fix_column_handles", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Find near-vertical members modeled with inverted handles (start handle above the " +
                  "end handle) and swap their handles so the bottom handle is at the lower point. Use " +
                  "for 'fix flipped columns' (modeled as beams). Preview unless apply=true.")]

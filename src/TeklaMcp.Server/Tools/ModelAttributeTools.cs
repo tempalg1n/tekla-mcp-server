@@ -14,9 +14,10 @@ namespace TeklaMcp.Server.Tools;
 /// tools (<c>tekla_group_weight_by groupBy='uda:...'</c>) or filters (udaName/udaEquals).
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Analytics)]
 public static class ModelAttributeTools
 {
-    [McpServerTool(Name = "tekla_find_attributes_by_value")]
+    [McpServerTool(Name = "tekla_find_attributes_by_value", ReadOnly = true, OpenWorld = false)]
     [Description("Find which attribute names hold a known value (useful when you know 'BK1' or 'Approved' but not " +
                  "whether it lives in USER_FIELD_1, a report property, ...). Checks each scanned object against a " +
                  "candidate name list (common UDAs incl. USER_FIELD_1..4 + any names you pass). READ THE RESULT " +
@@ -36,7 +37,7 @@ public static class ModelAttributeTools
         [Description("Scan only the current Tekla UI selection. Default false.")] bool useSelection = false)
         => model.FindAttributesByValue(value, ParseList(candidateAttributes), exactMatch, objectLimit, resultLimit, partsOnly, useSelection);
 
-    [McpServerTool(Name = "tekla_discover_udas")]
+    [McpServerTool(Name = "tekla_discover_udas", ReadOnly = true, OpenWorld = false)]
     [Description("Discover which UDA fields actually exist on model objects: field names with fill counts, distinct " +
                  "value counts and most frequent values, from a bounded sample. Use this FIRST on an unfamiliar " +
                  "model — it replaces guessing candidate field names. SAMPLE-BASED: reading all UDAs of one object " +

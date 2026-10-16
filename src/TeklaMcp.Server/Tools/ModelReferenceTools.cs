@@ -9,9 +9,10 @@ namespace TeklaMcp.Server.Tools;
 
 /// <summary>Semantic and geometric inspection of IFC/reference-model objects.</summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelReferenceTools
 {
-    [McpServerTool(Name = "tekla_get_reference_geometry")]
+    [McpServerTool(Name = "tekla_get_reference_geometry", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Get semantic metadata and WORLD geometry for IFC/reference-model objects: external IFC " +
         "GUID, entity (e.g. IFCWINDOW), OverallWidth/Height, world AABB, placement (origin + " +

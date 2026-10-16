@@ -18,6 +18,7 @@ namespace TeklaMcp.Server.Tools;
 /// plus a JSON text block that maps what is on the picture back to GUIDs and model millimetres.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Visual)]
 public static class ModelVisualTools
 {
     private static readonly JsonSerializerOptions Json = new JsonSerializerOptions(JsonSerializerDefaults.Web)
@@ -46,7 +47,7 @@ public static class ModelVisualTools
         }
     }
 
-    [McpServerTool(Name = "tekla_render_schematic")]
+    [McpServerTool(Name = "tekla_render_schematic", ReadOnly = true, OpenWorld = false)]
     [Description(
         "BETA — the drawing is an early version: on dense models it can look cluttered, and it is a simplified " +
         "sketch, not a rendering. If the picture does not answer your question, narrow the scope (guids, filters, " +
@@ -172,7 +173,7 @@ public static class ModelVisualTools
         return Answer(image, render);
     }
 
-    [McpServerTool(Name = "tekla_capture_view")]
+    [McpServerTool(Name = "tekla_capture_view", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description(
         "SCREENSHOT of a LIVE Tekla model view — exactly what Tekla renders (real profiles, bolts, welds, cuts, " +
         "reference models, class colours) — returned as an image you can look at, plus JSON (view, camera, legend). " +
@@ -204,6 +205,7 @@ public static class ModelVisualTools
         [Description("Maximum picture height in px. Default 1024.")] int maxHeight = 1024,
         [Description("jpeg (default) | png.")] string format = "jpeg")
     {
+        ServerMode.ThrowIfReadOnly("tekla_capture_view (it can zoom, rotate and highlight the user's Tekla view)");
         var result = model.CaptureView(new ViewCaptureRequest
         {
             ViewName = viewName,

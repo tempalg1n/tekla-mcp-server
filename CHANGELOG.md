@@ -79,6 +79,25 @@ geometry of parts and bolts, and approval of scripts by reference. Three tools a
 - `connectionInfo.modelOpen` ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8),
   `previewTotal`/`previewTruncated` on part write results, and `drawingSaved` on drawing write
   results ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
+- **MCP tool annotations on every tool.** Each of the 119 tools now says whether it only reads
+  (`readOnlyHint`, 49 tools), and the 70 others whether they can modify or delete what exists
+  (`destructiveHint`) and whether a repeat changes anything more (`idempotentHint`); all are
+  `openWorldHint=false`. Clients such as Claude Desktop and Codex use these to approve reads
+  without asking and to ask before writes. The hints describe what a tool can do with
+  `apply=true`, not its preview default; selection, `tekla_capture_view` and `tekla_open_drawing`
+  count as (non-destructive) writers because they change the Tekla UI, and the file exports and
+  `tekla_report_gap` because they write files. The MCP smoke now fails on a tool without hints.
+- **Read-only mode: `TEKLA_MCP_READ_ONLY=1`.** The server then serves only the 49 read-only tools
+  (no writes, no `tekla_run_csharp`, no selection or view capture, no file exports), says so in
+  its instructions and in `tekla_get_connection_info` (`serverReadOnly`), and the write paths
+  refuse at runtime as well — the write wrappers, the script tool and the tools that write outside
+  the wrappers — so a tool annotated read-only by mistake still cannot write. A value other than
+  `0`/`false`/`no`/`off` (or unset) turns it on.
+- **Toolsets: `TEKLA_MCP_TOOLSETS`** (`core`, `model`, `analytics`, `files`, `drawings`,
+  `scripting`, `visual`; `core` is always served) narrows `tools/list` for clients that load every
+  tool description into the context: the full list is about 208k characters, the 53 drawing
+  tools alone about 85k. Not a safety feature. An unknown name stops the server with a message
+  instead of hiding tools. `tekla_get_connection_info` reports the served set (`serverToolsets`).
 
 ### Fixed
 

@@ -10,9 +10,10 @@ namespace TeklaMcp.Server.Tools;
 
 /// <summary>Active-drawing view, annotation, graphic, dimension and mark editing.</summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Drawings)]
 public static class DrawingContentTools
 {
-    [McpServerTool(Name = "tekla_create_drawing_view")]
+    [McpServerTool(Name = "tekla_create_drawing_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a front/top/back/bottom/3D view on an ACTIVE assembly/single-part/" +
                  "cast-unit drawing (not GA). insertionPoint is on the sheet in paper mm. " +
                  "Preview unless apply=true.")]
@@ -52,7 +53,7 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_create_ga_drawing_view")]
+    [McpServerTool(Name = "tekla_create_ga_drawing_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a model view on the ACTIVE general-arrangement drawing from explicit " +
                  "global model coordinate systems and a restriction box. insertionPoint is on " +
                  "the sheet in paper mm; restriction bounds are in view coordinates. By default " +
@@ -167,7 +168,7 @@ public static class DrawingContentTools
         return crossX * crossX + crossY * crossY + crossZ * crossZ < 1e-18;
     }
 
-    [McpServerTool(Name = "tekla_create_section_view")]
+    [McpServerTool(Name = "tekla_create_section_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a straight or curved section view from an existing view on the ACTIVE " +
                  "drawing. Cut points are view-local; insertionPoint is sheet paper mm. The section " +
                  "looks along the cut direction rotated +90° in the source view (a cut drawn upwards " +
@@ -229,7 +230,7 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_create_detail_view")]
+    [McpServerTool(Name = "tekla_create_detail_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a detail view from an existing view on the ACTIVE drawing. center/boundary/" +
                  "label are view-local; insertionPoint is sheet paper mm. attributeFile is loaded after " +
                  "creation, keeping name, scale, label and restriction box; the created detail mark is " +
@@ -277,7 +278,7 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_modify_drawing_view")]
+    [McpServerTool(Name = "tekla_modify_drawing_view", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Modify one ACTIVE-drawing view by non-zero session ID/ID2 or ephemeral index: " +
                  "name, sheet origin/frame size, scale and rotations, or load a saved view attributes " +
                  "file (attributeFile, e.g. one carrying a part filter and neighbour-part filter) while " +
@@ -378,7 +379,7 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_delete_drawing_view")]
+    [McpServerTool(Name = "tekla_delete_drawing_view", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Delete one view and its children from the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult DeleteDrawingView(
         ITeklaModelService model,
@@ -398,7 +399,7 @@ public static class DrawingContentTools
             },
         }, apply));
 
-    [McpServerTool(Name = "tekla_create_drawing_objects")]
+    [McpServerTool(Name = "tekla_create_drawing_objects", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Batch-create up to 200 annotations/graphics/dimensions/marks in the ACTIVE " +
                  "drawing. Structured DrawingObjectSpec items. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingObjects(
@@ -409,7 +410,7 @@ public static class DrawingContentTools
         ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingObjects(
             (objects ?? new List<DrawingObjectSpec>()).Take(200).ToList(), apply));
 
-    [McpServerTool(Name = "tekla_create_drawing_text")]
+    [McpServerTool(Name = "tekla_create_drawing_text", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create text in a view (view-local/model coordinates) or on the sheet (paper mm). " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingText(
@@ -427,7 +428,7 @@ public static class DrawingContentTools
             attributeFile, text: text, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_line")]
+    [McpServerTool(Name = "tekla_create_drawing_line", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a line in the ACTIVE drawing. Points use view-local/model/sheet coordinates. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingLine(
@@ -445,7 +446,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_rectangle")]
+    [McpServerTool(Name = "tekla_create_drawing_rectangle", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a rectangle from two opposite points in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingRectangle(
         ITeklaModelService model,
@@ -462,7 +463,7 @@ public static class DrawingContentTools
             attributeFile, angleDegrees: angleDegrees, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_circle")]
+    [McpServerTool(Name = "tekla_create_drawing_circle", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a circle in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingCircle(
         ITeklaModelService model,
@@ -479,7 +480,7 @@ public static class DrawingContentTools
             attributeFile, radius: radius, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_arc")]
+    [McpServerTool(Name = "tekla_create_drawing_arc", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create an arc from three points, or two points plus radius. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingArc(
         ITeklaModelService model,
@@ -496,7 +497,7 @@ public static class DrawingContentTools
             attributeFile, radius: radius, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_polyline")]
+    [McpServerTool(Name = "tekla_create_drawing_polyline", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a polyline in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingPolyline(
         ITeklaModelService model,
@@ -513,7 +514,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_polygon")]
+    [McpServerTool(Name = "tekla_create_drawing_polygon", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a closed polygon in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingPolygon(
         ITeklaModelService model,
@@ -530,7 +531,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_revision_cloud")]
+    [McpServerTool(Name = "tekla_create_revision_cloud", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a revision cloud in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateRevisionCloud(
         ITeklaModelService model,
@@ -547,7 +548,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_straight_dimension")]
+    [McpServerTool(Name = "tekla_create_straight_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a straight dimension set in a real view of the ACTIVE drawing. Distance " +
                  "is paper mm (the server multiplies it by the view scale, which is what Tekla " +
                  "expects); Tekla offsets the line from the OUTERMOST point of the set along " +
@@ -586,7 +587,7 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath, placing: normalizedPlacing);
     }
 
-    [McpServerTool(Name = "tekla_create_angle_dimension")]
+    [McpServerTool(Name = "tekla_create_angle_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create an angle dimension from origin, point1, point2. Distance is paper mm. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateAngleDimension(
@@ -603,7 +604,7 @@ public static class DrawingContentTools
             attributeFile, distance: distance, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_radius_dimension")]
+    [McpServerTool(Name = "tekla_create_radius_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a radius dimension from three arc points: start, a point on the arc " +
                  "between, end — in either direction. Tekla draws the arc clockwise from point 1 " +
                  "to point 3, so the server swaps points 1 and 3 when they run counter-clockwise " +
@@ -625,7 +626,7 @@ public static class DrawingContentTools
             attributeFile, distance: distance, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_curved_dimension")]
+    [McpServerTool(Name = "tekla_create_curved_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a radial or orthogonal curved dimension. First 3 points define the arc; " +
                  "remaining points are dimension points. Preview unless apply=true.")]
     public static DrawingWriteResult CreateCurvedDimension(
@@ -657,7 +658,7 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath);
     }
 
-    [McpServerTool(Name = "tekla_create_drawing_mark")]
+    [McpServerTool(Name = "tekla_create_drawing_mark", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a mark for a model object already represented in a target view. Optional: " +
                  "leaderStart (a point on the VISIBLE part — a member mark with default placing sits at " +
                  "the part's midpoint, often outside a detail view, and still counts in the view frame), " +
@@ -747,7 +748,7 @@ public static class DrawingContentTools
         CreateOne(model, "section_mark", points, viewId, viewId2, -1, coordinateSpace,
             markAttributeFile, text: markName, apply: apply, expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_level_mark")]
+    [McpServerTool(Name = "tekla_create_level_mark", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a level mark from insertion and base points. Preview unless apply=true.")]
     public static DrawingWriteResult CreateLevelMark(
         ITeklaModelService model,
@@ -778,7 +779,7 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath);
     }
 
-    [McpServerTool(Name = "tekla_create_drawing_symbol")]
+    [McpServerTool(Name = "tekla_create_drawing_symbol", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a symbol from a Tekla .sym library in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingSymbol(
         ITeklaModelService model,
@@ -796,7 +797,7 @@ public static class DrawingContentTools
             attributeFile, symbolFile: symbolFile, symbolIndex: symbolIndex, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_modify_drawing_objects")]
+    [McpServerTool(Name = "tekla_modify_drawing_objects", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Batch edit active-drawing objects: change Text contents, move, set visibility, " +
                  "or load an attributes file; on marks also set insertionPoint, leaderStart (puts the mark " +
                  "on a leader line) and contentText. Address by non-zero session Object ID:ID2 or current " +
@@ -857,7 +858,7 @@ public static class DrawingContentTools
             limit));
     }
 
-    [McpServerTool(Name = "tekla_delete_drawing_objects")]
+    [McpServerTool(Name = "tekla_delete_drawing_objects", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Delete matched objects from the ACTIVE drawing by non-zero session IDs/type/selection. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult DeleteDrawingObjects(
@@ -880,7 +881,7 @@ public static class DrawingContentTools
             limit));
     }
 
-    [McpServerTool(Name = "tekla_merge_drawing_marks")]
+    [McpServerTool(Name = "tekla_merge_drawing_marks", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Merge compatible Mark objects in the ACTIVE drawing. Address by IDs or use " +
                  "the current selection. Preview unless apply=true.")]
     public static DrawingWriteResult MergeDrawingMarks(
@@ -900,7 +901,7 @@ public static class DrawingContentTools
             "merge", apply, limit));
     }
 
-    [McpServerTool(Name = "tekla_split_drawing_marks")]
+    [McpServerTool(Name = "tekla_split_drawing_marks", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Split merged Mark/MarkSet objects in the ACTIVE drawing. Address by IDs or use " +
                  "the current selection. Preview unless apply=true.")]
     public static DrawingWriteResult SplitDrawingMarks(

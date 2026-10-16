@@ -124,9 +124,13 @@ internal static class ToolHelpers
         "call is refused before anything is written. Recommended whenever several Tekla instances or " +
         "models are in play.";
 
-    /// <summary>The model a write would go to now; throws (nothing written) on a mismatch.</summary>
+    /// <summary>
+    /// The model a write would go to now; throws (nothing written) on a mismatch — and in read-only
+    /// mode, which every Write(...) wrapper reaches through here before the backend is called.
+    /// </summary>
     public static WriteTarget ResolveTarget(ITeklaModelService model, string? expectedModelPath)
     {
+        ServerMode.ThrowIfReadOnly("this write (previews included)");
         var target = model.GetWriteTarget();
         if (!string.IsNullOrWhiteSpace(expectedModelPath) &&
             !ModelPaths.Same(expectedModelPath, target.ModelPath))

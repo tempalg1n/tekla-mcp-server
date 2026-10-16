@@ -13,9 +13,10 @@ namespace TeklaMcp.Server.Tools;
 /// then shape the result into something directly useful to the user/LLM.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Analytics)]
 public static class ModelAnalysisTools
 {
-    [McpServerTool(Name = "tekla_analyze_by_material")]
+    [McpServerTool(Name = "tekla_analyze_by_material", ReadOnly = true, OpenWorld = false)]
     [Description("Bill-of-material style breakdown by material grade: object count and total " +
                  "weight (kg) per material, sorted by weight descending.")]
     public static IReadOnlyList<MaterialBreakdownRow> AnalyzeByMaterial(ITeklaModelService model)

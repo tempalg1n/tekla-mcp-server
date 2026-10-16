@@ -96,6 +96,16 @@ tekla-mcp-server/
 All tools use the `tekla_` prefix. The current build exposes **119 tools** in total, including
 **53 drawing-specific tools**.
 
+Every tool declares MCP **tool annotations**, so clients such as Claude Desktop or Codex can
+approve reads without asking and ask before writes: 49 tools are `readOnlyHint=true`; the other 70
+also say whether they are `destructiveHint` (can modify or delete what is there) and
+`idempotentHint`. The hints describe what a tool can do with `apply=true`, not its preview
+default. Selection (`tekla_select_objects`, `tekla_select_drawing_objects`), `tekla_capture_view`
+and `tekla_open_drawing` change only the Tekla UI and are marked as non-destructive writers; the
+file exports, `tekla_export_drawings_pdf` and `tekla_report_gap` write files and are not
+read-only either. An operator can also start the server **read-only** or with fewer toolsets — see
+[Read-only mode and toolsets](#read-only-mode-and-toolsets).
+
 | Tool | Description |
 |---|---|
 | `tekla_get_connection_info` | Check whether a model is open; return name, path, active backend, and which server answered (version, PID, start time, Tekla build/bin folder, running Tekla processes, `lastReconnect`). A lost connection is explained with cause and action instead of a raw remoting error. |
@@ -659,6 +669,36 @@ environment.
 | `TEKLA_MCP_SCRIPT_REF_DIR` | unset | Mock backend only: folder with `Tekla.Structures*.dll` so `tekla_check_csharp` can compile and the API reference can be generated without Tekla. |
 | `TEKLA_MCP_USE_MOCK` | unset | `1` forces the mock backend in the Windows (`net48`) build. |
 | `TEKLA_MCP_ISSUES_URL` | this repository's new-issue page | Where `tekla_report_gap` drafts point, e.g. an internal tracker. |
+| `TEKLA_MCP_READ_ONLY` | off | `1` (or `true`/`yes`/`on`) serves only read tools and makes every write path refuse — see below. Any value other than `0`/`false`/`no`/`off` also turns it on. |
+| `TEKLA_MCP_TOOLSETS` | all | Comma-separated toolsets to serve, e.g. `model,analytics` — see below. An unknown name stops the server. |
+
+#### Read-only mode and toolsets
+
+**`TEKLA_MCP_READ_ONLY=1`** is for an agent that may look but not touch. The server then lists
+only the 49 tools annotated `readOnlyHint=true` — no model or drawing writes, no
+`tekla_run_csharp` (whether a script mutates is decided by a syntax check, which read-only mode
+does not rely on), no selection or view capture, no file exports, no `tekla_report_gap`. It is
+also enforced at runtime, not only by hiding tools: every write wrapper, the script tool and the
+tools that write outside the wrappers refuse with a message naming the switch, so a tool annotated
+read-only by mistake still cannot write. The server instructions tell the agent that it runs
+read-only, and `tekla_get_connection_info` reports `serverReadOnly`.
+
+**`TEKLA_MCP_TOOLSETS`** trims `tools/list` for clients that load every tool description into the
+context (the full list is about 208k characters; read-only mode alone cuts it to about 67k).
+`core` is always served. It hides tools; it is not a safety feature — combine it with read-only
+mode for that.
+
+| Toolset | Tools | What |
+|---|---|---|
+| `core` | 4 | `tekla_get_connection_info`, `tekla_get_model_summary`, `tekla_get_numbering_status`, `tekla_report_gap` — always on |
+| `model` | 42 | queries, properties, geometry, grids, reference models, assemblies, environment, UDAs, part/connection/component writes, generators, model save/open |
+| `analytics` | 10 | count / sum / group / distinct values, material breakdown, attribute search and UDA discovery, QA checks, selection, table export |
+| `files` | 3 | `tekla_export_parts_file`, `tekla_set_udas_from_file`, `tekla_export_reference_objects_file` |
+| `drawings` | 53 | every drawing tool (about 85k characters on its own) |
+| `scripting` | 5 | `tekla_run_csharp`, `tekla_check_csharp`, API reference search and docs |
+| `visual` | 2 | `tekla_capture_view`, `tekla_render_schematic` |
+
+Both switches are read once at startup; restart the server (the MCP client) after changing them.
 
 ---
 

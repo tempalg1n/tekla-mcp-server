@@ -14,9 +14,10 @@ namespace TeklaMcp.Server.Tools;
 /// description obliges the agent to get the user's explicit go-ahead before setting it.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Scripting)]
 public static class ModelScriptTools
 {
-    [McpServerTool(Name = "tekla_run_csharp")]
+    [McpServerTool(Name = "tekla_run_csharp", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description(
         "ESCAPE HATCH — run a short C# script against the live Tekla model with the full Tekla Open API. " +
         "Use ONLY when no dedicated tekla_* tool covers the need; prefer dedicated tools (they are faster and safer). " +
@@ -124,6 +125,18 @@ public static class ModelScriptTools
             code = checkedCode;
         }
         code ??= "";
+        // Read-only mode refuses every run, not only allowMutations=true: whether a script mutates is
+        // decided by a syntax-level policy, which is not a guarantee read-only mode can stand on.
+        if (ServerMode.ReadOnly)
+            return new ScriptResult
+            {
+                Success = false,
+                Stage = "policy",
+                CodeSha256 = ScriptEngine.ComputeCodeSha256(code),
+                Error = ToolExposure.ReadOnlyRefusal("tekla_run_csharp"),
+                Guidance = "Nothing was compiled or executed. tekla_check_csharp still compiles a script without running it.",
+            };
+
         var rejected = ScriptApprovalGate.Check(code, allowMutations, expectedSha256);
         if (rejected != null) return rejected;
 
@@ -155,7 +168,7 @@ public static class ModelScriptTools
         return result;
     }
 
-    [McpServerTool(Name = "tekla_check_csharp")]
+    [McpServerTool(Name = "tekla_check_csharp", ReadOnly = true, OpenWorld = false)]
     [Description(
         "COMPILE-ONLY safety check for the exact C# source intended for tekla_run_csharp. Applies the same banned-API " +
         "policy, resolves all installed Tekla.Structures*.dll references (including Drawing/Dialog when present), and " +
@@ -192,7 +205,7 @@ public static class ModelScriptTools
         return result;
     }
 
-    [McpServerTool(Name = "tekla_search_api")]
+    [McpServerTool(Name = "tekla_search_api", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Search the local Tekla Open API reference by keywords (type names + member signature lines). " +
         "ALWAYS verify signatures here before writing a tekla_run_csharp script — do not guess API members. " +
@@ -206,7 +219,7 @@ public static class ModelScriptTools
         [Description("Max matching types to return (default 10, max 50).")] int limit = 10)
         => ApiReference.Search(query ?? "", limit, model.GetApiReferenceSource());
 
-    [McpServerTool(Name = "tekla_get_api_doc")]
+    [McpServerTool(Name = "tekla_get_api_doc", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Read the full local reference page for ONE Tekla Open API type: every constructor/property/method " +
         "signature with summaries (Markdown). Accepts a short name ('Beam') or a full name " +
@@ -217,7 +230,7 @@ public static class ModelScriptTools
         [Description("Truncate the page to this many characters (default 24000).")] int maxChars = 24_000)
         => ApiReference.GetTypeDoc(typeName ?? "", maxChars, model.GetApiReferenceSource());
 
-    [McpServerTool(Name = "tekla_get_api_reference_status")]
+    [McpServerTool(Name = "tekla_get_api_reference_status", ReadOnly = true, OpenWorld = false)]
     [Description("Check whether the offline Tekla Open API reference is available and return its " +
                  "resolved directory, origin (generated from the installed Tekla / configured / repository) " +
                  "or exact setup guidance. Call this before a scripting session — on the first call for a " +

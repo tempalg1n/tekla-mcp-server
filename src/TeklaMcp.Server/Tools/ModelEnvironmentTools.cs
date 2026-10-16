@@ -11,9 +11,10 @@ namespace TeklaMcp.Server.Tools;
 /// development kept scripting around (DEV-005, backlog §5).
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelEnvironmentTools
 {
-    [McpServerTool(Name = "tekla_get_advanced_options")]
+    [McpServerTool(Name = "tekla_get_advanced_options", ReadOnly = true, OpenWorld = false)]
     [Description("Read advanced options (XS_* variables) as the running Tekla resolves them for the open " +
                  "model — environment, firm, project and model settings already merged. Use it instead of " +
                  "guessing folders: XS_MACRO_DIRECTORY (macro/plugin folders), XS_FIRM, XS_PROJECT, XS_SYSTEM, " +
@@ -28,7 +29,7 @@ public static class ModelEnvironmentTools
         bool asPaths = false)
         => model.GetAdvancedOptions(ToolHelpers.ParseList(names), asPaths);
 
-    [McpServerTool(Name = "tekla_list_catalog")]
+    [McpServerTool(Name = "tekla_list_catalog", ReadOnly = true, OpenWorld = false)]
     [Description("List an environment catalog of the running Tekla: kind = profiles (library profiles), " +
                  "parametric_profiles, materials, components (connections, components, details, seams, custom " +
                  "parts, plugins — with their numbers), or uda_definitions (every defined user attribute, with " +
