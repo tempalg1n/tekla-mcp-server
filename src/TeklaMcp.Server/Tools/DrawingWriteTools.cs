@@ -11,9 +11,10 @@ namespace TeklaMcp.Server.Tools;
 /// Drawing navigation/lifecycle/output. Every state-changing operation is preview-by-default.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Drawings)]
 public static class DrawingWriteTools
 {
-    [McpServerTool(Name = "tekla_open_drawing")]
+    [McpServerTool(Name = "tekla_open_drawing", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Open one drawing in the Tekla drawing editor by opaque key or unambiguous exact " +
                  "mark. Refuses to replace another active drawing. Preview unless apply=true.")]
     public static DrawingWriteResult OpenDrawing(
@@ -24,7 +25,7 @@ public static class DrawingWriteTools
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         ToolHelpers.Write(model, expectedModelPath, () => model.OpenDrawing(keyOrMark, showDrawing, apply));
 
-    [McpServerTool(Name = "tekla_save_drawing")]
+    [McpServerTool(Name = "tekla_save_drawing", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Save the active drawing. Preview unless apply=true.")]
     public static DrawingWriteResult SaveDrawing(
         ITeklaModelService model,
@@ -32,7 +33,7 @@ public static class DrawingWriteTools
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         ToolHelpers.Write(model, expectedModelPath, () => model.SaveActiveDrawing(apply));
 
-    [McpServerTool(Name = "tekla_close_drawing")]
+    [McpServerTool(Name = "tekla_close_drawing", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Close the active drawing. Preview unless apply=true. save=false explicitly " +
                  "DISCARDS unsaved editor changes.")]
     public static DrawingWriteResult CloseDrawing(
@@ -42,7 +43,7 @@ public static class DrawingWriteTools
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         ToolHelpers.Write(model, expectedModelPath, () => model.CloseActiveDrawing(save, apply));
 
-    [McpServerTool(Name = "tekla_create_drawing")]
+    [McpServerTool(Name = "tekla_create_drawing", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create one assembly/single-part/cast-unit/GA drawing. The drawing editor must be " +
                  "closed. modelGuid is required except for GA. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawing(
@@ -66,7 +67,7 @@ public static class DrawingWriteTools
             },
         }, apply));
 
-    [McpServerTool(Name = "tekla_create_drawings")]
+    [McpServerTool(Name = "tekla_create_drawings", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Batch-create up to 50 assembly/single-part/cast-unit/GA drawings. The editor " +
                  "must be closed. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawings(
@@ -76,7 +77,7 @@ public static class DrawingWriteTools
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
         ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawings((drawings ?? new List<DrawingSpec>()).Take(50).ToList(), apply));
 
-    [McpServerTool(Name = "tekla_create_drawings_from_rule")]
+    [McpServerTool(Name = "tekla_create_drawings_from_rule", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create drawings using a saved Tekla AutoDrawing rule (safer than attempting " +
                  "arbitrary drawing cloning). The editor must be closed. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingsFromRule(
@@ -90,7 +91,7 @@ public static class DrawingWriteTools
             ToolHelpers.ParseList(modelGuids).Take(50).ToList(),
             apply));
 
-    [McpServerTool(Name = "tekla_modify_drawings")]
+    [McpServerTool(Name = "tekla_modify_drawings", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Modify name/titles/status flags on matched drawing-list rows. Null fields stay " +
                  "unchanged. Preview unless apply=true; capped by limit.")]
     public static DrawingWriteResult ModifyDrawings(
@@ -127,7 +128,7 @@ public static class DrawingWriteTools
             apply,
             limit));
 
-    [McpServerTool(Name = "tekla_delete_drawings")]
+    [McpServerTool(Name = "tekla_delete_drawings", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Delete matched drawings. Active drawing cannot be deleted. Preview unless " +
                  "apply=true; capped by limit.")]
     public static DrawingWriteResult DeleteDrawings(
@@ -159,7 +160,7 @@ public static class DrawingWriteTools
             expectedModelPath: expectedModelPath);
     }
 
-    [McpServerTool(Name = "tekla_issue_drawings")]
+    [McpServerTool(Name = "tekla_issue_drawings", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Issue matched drawings. Preview unless apply=true; capped by limit.")]
     public static DrawingWriteResult IssueDrawings(
         ITeklaModelService model,
@@ -172,7 +173,7 @@ public static class DrawingWriteTools
         Operate(model, "issue", keyIn, null, markContains, null, selectedOnly, limit, apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_unissue_drawings")]
+    [McpServerTool(Name = "tekla_unissue_drawings", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Unissue matched drawings. Preview unless apply=true; capped by limit.")]
     public static DrawingWriteResult UnissueDrawings(
         ITeklaModelService model,
@@ -185,7 +186,7 @@ public static class DrawingWriteTools
         Operate(model, "unissue", keyIn, null, markContains, null, selectedOnly, limit, apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_update_drawings")]
+    [McpServerTool(Name = "tekla_update_drawings", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Update matched drawings from the model. Numbering must be up to date; active " +
                  "drawing cannot be updated. Preview unless apply=true.")]
     public static DrawingWriteResult UpdateDrawings(
@@ -199,7 +200,7 @@ public static class DrawingWriteTools
         Operate(model, "update", keyIn, null, markContains, null, selectedOnly, limit, apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_place_drawing_views")]
+    [McpServerTool(Name = "tekla_place_drawing_views", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Auto-place views on the matched ACTIVE drawing. Use a key for the active " +
                  "drawing; preview unless apply=true.")]
     public static DrawingWriteResult PlaceDrawingViews(
@@ -222,7 +223,7 @@ public static class DrawingWriteTools
             "place_views", null, apply, 1));
     }
 
-    [McpServerTool(Name = "tekla_export_drawings_pdf")]
+    [McpServerTool(Name = "tekla_export_drawings_pdf", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Export matched CLOSED drawings to PDF using Tekla printing. outputFile must be " +
                  "an explicit absolute path; for multiple drawings use {mark}/{name} so paths are unique. " +
                  "Preview unless apply=true. WARNING: unlike the file-exchange tools, outputFile is NOT " +

@@ -13,9 +13,10 @@ namespace TeklaMcp.Server.Tools;
 /// conservative; tune the predicates to your team's conventions.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Analytics)]
 public static class ModelQaTools
 {
-    [McpServerTool(Name = "tekla_find_modeling_issues")]
+    [McpServerTool(Name = "tekla_find_modeling_issues", ReadOnly = true, OpenWorld = false)]
     [Description("Run model-quality checks over the objects in scope and report likely problems, " +
                  "grouped by issue with sample GUIDs. Checks: missing material, missing profile, " +
                  "missing class, zero/absent weight, and not-numbered (empty assembly position). " +

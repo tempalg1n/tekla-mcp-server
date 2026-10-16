@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using TeklaMcp.Core;
 using TeklaMcp.Mock;
+using TeklaMcp.Server; // WithSelectedTools
 
 // ---------------------------------------------------------------------------
 // Tekla MCP server — entry point.
@@ -18,6 +19,29 @@ using TeklaMcp.Mock;
 // Console.WriteLine("Connection failed : …") when a remoting channel fails — one such line
 // would corrupt the JSON-RPC framing. Route all Console.Out writers to stderr up front.
 Console.SetOut(Console.Error);
+
+// --- Operator switches (ToolExposure) -----------------------------------------
+// TEKLA_MCP_READ_ONLY serves only tools annotated ReadOnly = true and makes every write path refuse
+// (ServerMode); a value it does not recognize turns it ON. TEKLA_MCP_TOOLSETS narrows tools/list to
+// whole tool files; an unknown name stops the server rather than silently hiding tools.
+var readOnly = ToolExposure.ParseReadOnly(
+    Environment.GetEnvironmentVariable(ToolExposure.ReadOnlyVariable), out var readOnlyWarning);
+if (readOnlyWarning != null) Console.Error.WriteLine("[tekla-mcp] " + readOnlyWarning);
+var toolsets = ToolExposure.ParseToolsets(
+    Environment.GetEnvironmentVariable(ToolExposure.ToolsetsVariable), out var toolsetsError);
+if (toolsetsError != null)
+{
+    Console.Error.WriteLine("[tekla-mcp] " + toolsetsError);
+    return 2;
+}
+TeklaMcp.Server.ServerMode.Configure(readOnly, toolsets);
+var allTools = TeklaMcp.Server.ToolRegistration.Discover();
+var servedTools = TeklaMcp.Server.ToolRegistration.Select(allTools, readOnly, toolsets);
+if (readOnly || toolsets != null)
+    Console.Error.WriteLine(
+        "[tekla-mcp] serving " + servedTools.Count + " of " + allTools.Count + " tools" +
+        (readOnly ? "; read-only mode (" + ToolExposure.ReadOnlyVariable + ")" : "") +
+        (toolsets != null ? "; toolsets " + string.Join(",", toolsets) : "") + ".");
 
 // The server has no appsettings/user-secrets dependency. Disabling generic-host defaults keeps
 // stdio startup deterministic and avoids host configuration/file-watcher stalls when a net8
@@ -164,10 +188,12 @@ builder.Services
             Title = "Tekla MCP Server",
             Version = serverVersion,
         };
-        options.ServerInstructions = serverInstructions;
+        // A reduced tool surface is announced first: the regular text names tools that may be missing.
+        options.ServerInstructions = ToolExposure.DescribeMode(readOnly, toolsets) + serverInstructions;
     })
     .WithStdioServerTransport()
-    .WithToolsFromAssembly() // discovers [McpServerToolType] classes in this assembly
+    // The [McpServerTool] methods of this assembly that the operator's switches allow (ToolRegistration).
+    .WithSelectedTools(servedTools)
     // Pass the real exception text to the agent instead of the SDK's bare
     // "An error occurred invoking '<tool>'." (see ToolErrorFilter).
     .WithRequestFilters(filters => filters.AddCallToolFilter(
@@ -177,3 +203,4 @@ var app = builder.Build();
 // End with the MCP client and never hang in shutdown (orphaned servers, see ShutdownGuard).
 TeklaMcp.Server.ShutdownGuard.Start(app.Services.GetRequiredService<IHostApplicationLifetime>());
 await app.RunAsync();
+return 0;

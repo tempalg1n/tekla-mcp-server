@@ -13,9 +13,10 @@ namespace TeklaMcp.Server.Tools;
 /// Created/modified objects are tagged with the MCP_ORIGIN UDA for traceability.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelWriteTools
 {
-    [McpServerTool(Name = "tekla_create_beam")]
+    [McpServerTool(Name = "tekla_create_beam", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a beam between two GLOBAL points (mm). Preview unless apply=true.")]
     public static WriteResult CreateBeam(
         ITeklaModelService model,
@@ -52,7 +53,7 @@ public static class ModelWriteTools
             }
         }, apply));
 
-    [McpServerTool(Name = "tekla_create_beams")]
+    [McpServerTool(Name = "tekla_create_beams", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create up to 200 beams in ONE batch. Each item uses PartSpec Start/End/Profile " +
                  "and optional material/class/name/position/matchPositionGuid. Kind is forced to " +
                  "'beam'. Preview unless apply=true.")]
@@ -70,7 +71,7 @@ public static class ModelWriteTools
         return result;
     }
 
-    [McpServerTool(Name = "tekla_create_column")]
+    [McpServerTool(Name = "tekla_create_column", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a vertical column at (x,y) from bottomZ to topZ (mm). Preview unless apply=true.")]
     public static WriteResult CreateColumn(
         ITeklaModelService model,
@@ -95,7 +96,7 @@ public static class ModelWriteTools
             }
         }, apply));
 
-    [McpServerTool(Name = "tekla_create_plate")]
+    [McpServerTool(Name = "tekla_create_plate", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a contour plate from 3+ GLOBAL points 'x,y,z; x,y,z; ...' and a profile " +
                  "like 'PL20'. Preview unless apply=true.")]
     public static WriteResult CreatePlate(
@@ -117,7 +118,7 @@ public static class ModelWriteTools
             }
         }, apply));
 
-    [McpServerTool(Name = "tekla_modify_part")]
+    [McpServerTool(Name = "tekla_modify_part", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Modify one part by GUID: set any of profile/material/class/name, and/or move its " +
                  "endpoints. Provide newStart/newEnd as 'x,y,z'. Preview unless apply=true.")]
     public static WriteResult ModifyPart(
@@ -155,7 +156,7 @@ public static class ModelWriteTools
             }
         }, apply));
 
-    [McpServerTool(Name = "tekla_modify_parts")]
+    [McpServerTool(Name = "tekla_modify_parts", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Modify up to 200 parts in ONE batch — the batch form of tekla_modify_part. Each " +
                  "item addresses a part by GUID and may set profile/material/class/name, move " +
                  "endpoints, swap handles, and set Position (plane/rotation/depth + offsets) or " +
@@ -177,7 +178,7 @@ public static class ModelWriteTools
         return result;
     }
 
-    [McpServerTool(Name = "tekla_swap_handles")]
+    [McpServerTool(Name = "tekla_swap_handles", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Swap the start/end handles of parts matching filters (re-orient wrongly-modeled " +
                  "members). Preview unless apply=true. Capped by limit.")]
     public static WriteResult SwapHandles(
@@ -200,7 +201,7 @@ public static class ModelWriteTools
         return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyParts(mods, apply));
     }
 
-    [McpServerTool(Name = "tekla_delete_objects")]
+    [McpServerTool(Name = "tekla_delete_objects", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Delete objects matching filters (or an explicit GUID list). Preview unless " +
                  "apply=true. Capped by limit (default 200).")]
     public static WriteResult DeleteObjects(

@@ -17,6 +17,7 @@ namespace TeklaMcp.Server.Tools;
 /// silently recompute the vector while still reporting success.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelConnectionTools
 {
     private const string UpVectorQuirkWarning =
@@ -24,7 +25,7 @@ public static class ModelConnectionTools
         "mode and the value you passed will NOT be stored (the write still reports success). " +
         "Omit autoDirection to let the tool use NA.";
 
-    [McpServerTool(Name = "tekla_analyze_profile_connections")]
+    [McpServerTool(Name = "tekla_analyze_profile_connections", ReadOnly = true, OpenWorld = false)]
     [Description("Estimate unique connection types for members of a profile by checking " +
                  "which objects are near beam end points (geometric heuristic).")]
     public static ProfileConnectionSummary AnalyzeProfileConnections(
@@ -34,7 +35,7 @@ public static class ModelConnectionTools
         [Description("Maximum number of source objects to analyze. Default 1000.")] int limit = 1000)
         => model.AnalyzeConnectionsForProfile(profile, toleranceMm, limit);
 
-    [McpServerTool(Name = "tekla_list_connections")]
+    [McpServerTool(Name = "tekla_list_connections", ReadOnly = true, OpenWorld = false)]
     [Description("List real Tekla connections/components attached to a part GUID, including the " +
                  "component's exact Name/Number, primary/secondary GUIDs, UpVector and status. " +
                  "Use this to read Cyrillic custom-component names from an existing detail. " +
@@ -46,7 +47,7 @@ public static class ModelConnectionTools
         [Description("Part GUID whose attached components should be listed.")] string partGuid)
         => model.GetConnections(partGuid);
 
-    [McpServerTool(Name = "tekla_find_connections")]
+    [McpServerTool(Name = "tekla_find_connections", ReadOnly = true, OpenWorld = false)]
     [Description("Find connections across MANY parts at once and aggregate them by component " +
                  "name — 'what is attached along this axis / to my selection, besides the usual " +
                  "node?'. Scope the parts with the usual filters (or useSelection), optionally " +
@@ -127,7 +128,7 @@ public static class ModelConnectionTools
         };
     }
 
-    [McpServerTool(Name = "tekla_modify_connections")]
+    [McpServerTool(Name = "tekla_modify_connections", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Re-orient EXISTING connections (one GUID or a whole list) without deleting them: " +
                  "set the up vector, the auto-direction mode, and/or load a saved attributes file. " +
                  "This is the reliable way to mass-change UpVector — a raw Open API write under " +
@@ -167,7 +168,7 @@ public static class ModelConnectionTools
         return WarnOnDiscardedUpVector(result, parsedUpVector, autoDirection);
     }
 
-    [McpServerTool(Name = "tekla_create_connection")]
+    [McpServerTool(Name = "tekla_create_connection", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Create a Tekla Connection after resolving primary/secondary parts. Geometry is " +
                  "committed once before component insertion to avoid the fresh-part race. Negative " +
                  "number means a custom connection. Tekla rejects a second connection on a pair " +
@@ -204,7 +205,7 @@ public static class ModelConnectionTools
         return WarnOnDiscardedUpVector(result, parsedUpVector, autoDirection);
     }
 
-    [McpServerTool(Name = "tekla_copy_connection")]
+    [McpServerTool(Name = "tekla_copy_connection", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Copy a connection's identity/orientation from an existing part to new primary/" +
                  "secondary parts. Reads the exact component Name (including Cyrillic), Number, " +
                  "UpVector and AutoDirection. Tekla does not enumerate arbitrary custom attributes; " +
@@ -296,7 +297,7 @@ public static class ModelConnectionTools
         catch { return ""; }
     }
 
-    [McpServerTool(Name = "tekla_create_component")]
+    [McpServerTool(Name = "tekla_create_component", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Insert a plugin, custom component or system component with an ORDERED input list — the " +
                  "way to place what tekla_create_connection (primary + secondaries) cannot: plugins that take " +
                  "points, point pairs, polygons and objects in a specific order. inputs items: " +

@@ -10,19 +10,20 @@ namespace TeklaMcp.Server.Tools;
 
 /// <summary>Drawing-list, active-editor, view and drawing-object discovery.</summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Drawings)]
 public static class DrawingQueryTools
 {
-    [McpServerTool(Name = "tekla_get_drawing_status")]
+    [McpServerTool(Name = "tekla_get_drawing_status", ReadOnly = true, OpenWorld = false)]
     [Description("Check Drawing API connectivity and return the active drawing/editor state.")]
     public static DrawingStatusInfo GetDrawingStatus(ITeklaModelService model) =>
         model.GetDrawingStatus();
 
-    [McpServerTool(Name = "tekla_get_active_drawing")]
+    [McpServerTool(Name = "tekla_get_active_drawing", ReadOnly = true, OpenWorld = false)]
     [Description("Return the currently open drawing, or null when the drawing editor is closed.")]
     public static DrawingInfo? GetActiveDrawing(ITeklaModelService model) =>
         model.GetDrawingStatus().ActiveDrawing;
 
-    [McpServerTool(Name = "tekla_list_drawings")]
+    [McpServerTool(Name = "tekla_list_drawings", ReadOnly = true, OpenWorld = false)]
     [Description("List/search the Tekla drawing list. Each result includes an opaque best-available " +
                  "key, session ID/ID2, type, mark/titles, source model GUID, status flags and dates. " +
                  "If ID/ID2 are zero the fallback key may change after metadata edits; re-list.")]
@@ -47,14 +48,14 @@ public static class DrawingQueryTools
                 isIssued, isLocked, isReadyForIssue, selectedOnly),
             limit);
 
-    [McpServerTool(Name = "tekla_get_selected_drawings")]
+    [McpServerTool(Name = "tekla_get_selected_drawings", ReadOnly = true, OpenWorld = false)]
     [Description("Return drawings currently selected in Tekla's Drawing List dialog.")]
     public static IReadOnlyList<DrawingInfo> GetSelectedDrawings(
         ITeklaModelService model,
         [Description("Maximum rows (default 200).")] int limit = 200) =>
         model.FindDrawings(new DrawingQuery { SelectedOnly = true }, limit);
 
-    [McpServerTool(Name = "tekla_get_drawing_summary")]
+    [McpServerTool(Name = "tekla_get_drawing_summary", ReadOnly = true, OpenWorld = false)]
     [Description("Aggregate drawing count/status/type metrics without opening any drawing.")]
     public static DrawingSummary GetDrawingSummary(
         ITeklaModelService model,
@@ -84,7 +85,7 @@ public static class DrawingQueryTools
         return summary;
     }
 
-    [McpServerTool(Name = "tekla_find_drawing_issues")]
+    [McpServerTool(Name = "tekla_find_drawing_issues", ReadOnly = true, OpenWorld = false)]
     [Description("Run drawing-list QA heuristics: issued-but-modified, stale/check-needed, " +
                  "missing mark/name and ready-for-issue drawings that are not up to date.")]
     public static DrawingQaReport FindDrawingIssues(
@@ -112,7 +113,7 @@ public static class DrawingQueryTools
         return report;
     }
 
-    [McpServerTool(Name = "tekla_get_drawing_model_objects")]
+    [McpServerTool(Name = "tekla_get_drawing_model_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Return full model Identifier values (ID, ID2, GUID) represented by one drawing. " +
                  "Use the opaque key from tekla_list_drawings; an unambiguous exact mark also works.")]
     public static DrawingModelObjectResult GetDrawingModelObjects(
@@ -122,21 +123,21 @@ public static class DrawingQueryTools
         [Description("Page size (default 500, maximum 5000).")] int limit = 500) =>
         model.GetDrawingModelObjects(keyOrMark, offset, limit);
 
-    [McpServerTool(Name = "tekla_get_drawing_sheet")]
+    [McpServerTool(Name = "tekla_get_drawing_sheet", ReadOnly = true, OpenWorld = false)]
     [Description("Return the ACTIVE drawing sheet's actual container width, height and origin in " +
                  "paper millimetres, plus the configured layout sheet size and auto-size mode. " +
                  "Actual and configured sizes are separate because auto-sized drawings may differ.")]
     public static DrawingSheetInfo GetDrawingSheet(ITeklaModelService model) =>
         model.GetDrawingSheet();
 
-    [McpServerTool(Name = "tekla_list_drawing_views")]
+    [McpServerTool(Name = "tekla_list_drawing_views", ReadOnly = true, OpenWorld = false)]
     [Description("List all nested views on the active drawing: best-available session View ID/ID2, " +
                  "ephemeral index, name/type, paper frame, scale, restriction box and coordinate systems. " +
                  "Re-list after structural edits.")]
     public static IReadOnlyList<DrawingViewInfo> ListDrawingViews(ITeklaModelService model) =>
         model.GetDrawingViews();
 
-    [McpServerTool(Name = "tekla_list_drawing_objects")]
+    [McpServerTool(Name = "tekla_list_drawing_objects", ReadOnly = true, OpenWorld = false)]
     [Description("List/filter objects in the active drawing. Returns best-available session Object/View " +
                  "IDs, model identifier, geometry/text/visibility and optional UDAs. Prefer non-zero " +
                  "ID:ID2; otherwise use selection/current index and re-list after structural edits. " +
@@ -164,7 +165,7 @@ public static class DrawingQueryTools
                 modelGuid, textContains, useSelection, recursive, includeGeometry, includeUdas),
             limit);
 
-    [McpServerTool(Name = "tekla_get_selected_drawing_objects")]
+    [McpServerTool(Name = "tekla_get_selected_drawing_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Return objects currently selected in the active drawing editor.")]
     public static IReadOnlyList<DrawingObjectInfo> GetSelectedDrawingObjects(
         ITeklaModelService model,
@@ -178,7 +179,7 @@ public static class DrawingQueryTools
             IncludeUdas = includeUdas,
         }, limit);
 
-    [McpServerTool(Name = "tekla_select_drawing_objects")]
+    [McpServerTool(Name = "tekla_select_drawing_objects", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Select/highlight matching objects in the active drawing editor. UI side effect only.")]
     public static DrawingSelectionResult SelectDrawingObjects(
         ITeklaModelService model,
@@ -188,12 +189,15 @@ public static class DrawingQueryTools
         [Description("Session View ID2.")] int? viewId2 = null,
         [Description("Exact represented model GUID.")] string? modelGuid = null,
         [Description("Text substring.")] string? textContains = null,
-        [Description("Maximum selected objects (default 200).")] int limit = 200) =>
-        model.SelectDrawingObjects(
+        [Description("Maximum selected objects (default 200).")] int limit = 200)
+    {
+        ServerMode.ThrowIfReadOnly("tekla_select_drawing_objects (it replaces the drawing editor selection)");
+        return model.SelectDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds: objectIds, types: types, viewId: viewId, viewId2: viewId2,
                 modelGuid: modelGuid, textContains: textContains),
             limit);
+    }
 
     private static void Bump(IDictionary<string, int> dictionary, string value)
     {

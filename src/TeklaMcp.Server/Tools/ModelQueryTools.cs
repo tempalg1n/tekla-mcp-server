@@ -8,9 +8,10 @@ namespace TeklaMcp.Server.Tools;
 
 /// <summary>Tools for listing, filtering and looking up individual model objects.</summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelQueryTools
 {
-    [McpServerTool(Name = "tekla_list_objects")]
+    [McpServerTool(Name = "tekla_list_objects", ReadOnly = true, OpenWorld = false)]
     [Description("List model objects with their core properties (guid, id, type, name, class, " +
                  "profile, material, length, weight, coordinates). Use 'limit' to cap the result — " +
                  "models can hold tens of thousands of objects.")]
@@ -22,7 +23,7 @@ public static class ModelQueryTools
             ? model.FindObjects(new ObjectQuery { UseSelection = true }, limit)
             : model.GetAllObjects(limit);
 
-    [McpServerTool(Name = "tekla_find_objects")]
+    [McpServerTool(Name = "tekla_find_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Find objects matching optional filters. Any argument left empty is ignored. " +
                  "'type' and 'class' match exactly (case-insensitive); 'profile', 'material' and " +
                  "'nameContains' match as case-insensitive substrings. Supports UDA and generic " +
@@ -60,21 +61,21 @@ public static class ModelQueryTools
             },
             limit);
 
-    [McpServerTool(Name = "tekla_get_object_by_guid")]
+    [McpServerTool(Name = "tekla_get_object_by_guid", ReadOnly = true, OpenWorld = false)]
     [Description("Look up a single object by its Tekla GUID. Returns null if not found.")]
     public static ModelObjectInfo? GetObjectByGuid(
         ITeklaModelService model,
         [Description("The Tekla GUID, e.g. '0a1b2c3d-1234-5678-9abc-def012345678'.")] string guid)
         => model.GetObjectByGuid(guid);
 
-    [McpServerTool(Name = "tekla_get_selected_objects")]
+    [McpServerTool(Name = "tekla_get_selected_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Return the objects the user currently has selected in the Tekla Structures UI. " +
                  "Useful for 'analyze what I have selected' workflows. (With the Mock backend this " +
                  "returns a few sample objects.)")]
     public static IReadOnlyList<ModelObjectInfo> GetSelectedObjects(ITeklaModelService model)
         => model.GetSelectedObjects();
 
-    [McpServerTool(Name = "tekla_get_solid_bbox")]
+    [McpServerTool(Name = "tekla_get_solid_bbox", ReadOnly = true, OpenWorld = false)]
     [Description("Return geometry snapshots with solid world AABB (min/max) for explicit part " +
                  "GUIDs or the current UI selection. GetSolid is expensive, so the result is capped.")]
     public static IReadOnlyList<ModelObjectInfo> GetSolidBoundingBoxes(
@@ -95,7 +96,7 @@ public static class ModelQueryTools
             limit < 1 ? 1 : (limit > 500 ? 500 : limit));
     }
 
-    [McpServerTool(Name = "tekla_list_control_lines")]
+    [McpServerTool(Name = "tekla_list_control_lines", ReadOnly = true, OpenWorld = false)]
     [Description("List ControlLine objects with global start/end coordinates. Supports current " +
                  "selection scope and a result cap.")]
     public static IReadOnlyList<ModelObjectInfo> ListControlLines(

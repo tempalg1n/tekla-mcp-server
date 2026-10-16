@@ -17,9 +17,10 @@ namespace TeklaMcp.Server.Tools;
 /// Return values are serialized to JSON automatically.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Core)]
 public static class ModelInfoTools
 {
-    [McpServerTool(Name = "tekla_get_connection_info")]
+    [McpServerTool(Name = "tekla_get_connection_info", ReadOnly = true, OpenWorld = false)]
     [Description("Check whether a Tekla Structures model is open and reachable. Returns " +
                  "model name, path, the active backend (Mock or Tekla) and a status message, plus which " +
                  "server answered: server version/runtime/PID/start time, the Tekla version it was built " +
@@ -50,6 +51,9 @@ public static class ModelInfoTools
 
     private static void AddServerIdentity(ConnectionInfo info)
     {
+        // The operator's switches explain a missing tool or a refused write: not garnish, set first.
+        info.ServerReadOnly = ServerMode.ReadOnly;
+        info.ServerToolsets = (ServerMode.Toolsets ?? ToolExposure.AllToolsets).ToList();
         try
         {
             var asm = typeof(ModelInfoTools).Assembly;
@@ -65,7 +69,7 @@ public static class ModelInfoTools
         }
     }
 
-    [McpServerTool(Name = "tekla_get_model_summary")]
+    [McpServerTool(Name = "tekla_get_model_summary", ReadOnly = true, OpenWorld = false)]
     [Description("Return aggregated statistics for the whole model: total object count, " +
                  "total weight in kg, and counts grouped by type, class, profile and material. " +
                  "Use this for a high-level overview before drilling into individual objects. " +

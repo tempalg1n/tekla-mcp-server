@@ -80,11 +80,11 @@ Windows `net48` build.
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve/solid/grid math, schematic renderer + PNG encoder, write outcomes, connection-error classification) |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve/solid/grid math, schematic renderer + PNG encoder, write outcomes, connection-error classification, `ToolExposure` = the read-only/toolset switches) |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend: synthetic frame + arch PolyBeam, stateful drawings; one partial file per area |
 | `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, approval gate, reference selection, engine, SafeJson) + API reference generation and search. References Core; no Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 (x64) | real Tekla Open API backend (runs on Windows only; compiles anywhere) — `TeklaModelService` split into one partial file per area, plus assembly loading and the remoting channel |
-| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host (`Program.cs`, `ToolErrorFilter`, `ShutdownGuard`) + `tekla_*` tools in `Tools/` |
+| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host (`Program.cs`, `ToolErrorFilter`, `ShutdownGuard`, `ToolRegistration` + `ServerMode` for read-only mode/toolsets) + `tekla_*` tools in `Tools/` |
 | `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla). References Core/Mock/Scripting — NOT the Server, so the tool layer is covered only by the smoke |
 | `tests/TeklaMcp.Smoke/` | net8.0 exe | MCP stdio smoke: launches the built server DLL as a real MCP client, checks initialize + `tools/list` + a few calls. Not in `TeklaMcp.sln` |
 | `tools/TeklaApiDoc/` | net8.0 exe | CLI over `ApiReferenceGenerator` (writes `reference/tekla-api/`). Not in `TeklaMcp.sln` |
@@ -158,6 +158,10 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 4. Expose it as a tool in `src/TeklaMcp.Server/Tools/` with `[McpServerTool(Name = "tekla_...")]`
    and a clear `[Description]`. First parameter is `ITeklaModelService model` (DI-injected,
    not shown to the LLM). Remaining parameters become tool inputs — give each a `[Description]`.
+   **Declare the annotations on the attribute** — `ReadOnly = true, OpenWorld = false` for a read,
+   `ReadOnly = false, Destructive = …, Idempotent = …, OpenWorld = false` for anything else (rules
+   in "Tool annotations, read-only mode and toolsets" below). The smoke fails on a tool without
+   them. A new tool CLASS also needs `[Toolset(ToolExposure.…)]`, or the server does not start.
 5. Update the tool table AND the tool count in [README.md](README.md) ("exposes **N tools**",
    drawing-specific count included).
 6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
@@ -184,6 +188,41 @@ Acquire the handler/model outside a best-effort `try`.
 Process lifetime: `ShutdownGuard` (Server, Windows) ends the process when the parent that launched
 it exits and cuts a shutdown that hangs for 10 s (a Tekla call cannot be cancelled). Closing
 stdin already stops the host; keep both so orphaned servers cannot pile up and hold Tekla.
+
+### Tool annotations, read-only mode and toolsets
+
+Clients (Claude Desktop, Codex) build their approval UX on MCP tool annotations, and read-only mode
+serves exactly the tools annotated read-only — so a wrong `ReadOnly = true` is a safety bug, not a
+cosmetic one.
+
+- **Every `[McpServerTool]` sets its hints explicitly** (the SDK leaves unset hints out, and the
+  spec defaults are the pessimistic ones). The smoke requires `readOnlyHint` and `openWorldHint`
+  on every tool, plus `destructiveHint` and `idempotentHint` when `readOnlyHint` is false.
+- **`ReadOnly = true` only if the tool changes nothing** — not the model, not a drawing, not a
+  file, not the Tekla UI (selection, camera, highlight, open editor). A server-owned cache
+  (the API reference) counts as computation, not a change.
+- **Annotate what the tool CAN do with `apply=true`**, not its preview default. `Destructive = true`
+  when it can modify or delete what exists (modify/delete/set/issue/update/save/close/open_model,
+  `replaceExisting`, a file export that replaces a file, `tekla_run_csharp`); `false` for pure
+  creates and for UI-only changes (selection, `tekla_capture_view`, `tekla_open_drawing`) and
+  append-only logs (`tekla_report_gap`). `Idempotent = true` only when a repeat with the same
+  arguments changes nothing more: absolute sets yes; creates, relative moves/rotations, toggles
+  (`swap_handles`, `PartModification.SwapHandles`), `append=true` and filter + `limit` deletes no.
+  When unsure, false. `OpenWorld = false` everywhere: the domain is the open model and local files.
+- **Read-only mode (`TEKLA_MCP_READ_ONLY`, `Core/ToolExposure` + `Server/ServerMode`) is enforced
+  twice.** `ToolRegistration` (Program.cs uses it instead of `WithToolsFromAssembly()`) registers
+  only `ReadOnly = true` methods, filtering on the attribute so an unannotated tool is never
+  created. And every write path calls `ServerMode.ThrowIfReadOnly` before its first side effect:
+  `ToolHelpers.ResolveTarget` (so every `Write(...)` wrapper, previews included), `tekla_run_csharp`
+  (every run — mutation detection is a syntax check, not a guarantee) and the tools that write
+  outside the wrappers (selection, view capture, the two file exports, `tekla_report_gap`). A new
+  tool with a side effect that does not go through a wrapper calls it too. An unrecognized value of
+  the variable turns read-only ON; keep that fail-closed.
+- **Toolsets (`TEKLA_MCP_TOOLSETS`) are per tool class** (`[Toolset]`, names in
+  `ToolExposure.AllToolsets`; `core` is always served). They only trim `tools/list` and are not a
+  safety feature. An unknown name stops the server with exit code 2 — never hide tools silently.
+- A reduced surface is announced in front of the server instructions (`ToolExposure.DescribeMode`)
+  and in `tekla_get_connection_info` (`serverReadOnly`, `serverToolsets`).
 
 ### Conventions added for the analytics tools
 
@@ -292,8 +331,8 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   optional `expectedModelPath` parameter (`ToolHelpers.ExpectedModelPathDescription`): the
   wrapper resolves `ITeklaModelService.GetWriteTarget()` (model path + Tekla PID), refuses a
   mismatch BEFORE the backend is called, stamps `Target`, derives a missing `Outcome` from the
-  counters and turns `unknown` into `isError` with the full result in the text. A new write
-  tool that bypasses the wrapper is a bug.
+  counters and turns `unknown` into `isError` with the full result in the text. It also refuses
+  in read-only mode (`ServerMode`). A new write tool that bypasses the wrapper is a bug.
 - **Model lifecycle (`tekla_save_model` / `tekla_open_model`).** `ModelHandler.Open` discards
   unsaved changes — `OpenModel` re-checks `IsModelSaved()` immediately before the call and refuses
   unless `discardUnsavedChanges`; never weaken that, and never add an implicit save or close to
@@ -677,6 +716,10 @@ It is what CI and the release workflow run after the unit tests, and it asserts 
 - plus: server name `tekla-mcp`, non-empty server instructions, no duplicate names, a few
   required tools with descriptions/schemas, `tekla_get_connection_info` reporting the server
   identity, and `tekla_run_csharp` refusing a mutating run without `expectedSha256`.
+- **annotations**: every tool declares its hints (§4), and a few spot checks pin the classification.
+- two more launches: `TEKLA_MCP_READ_ONLY=1` must serve exactly the `readOnlyHint=true` tools of
+  the default listing and refuse write calls; `TEKLA_MCP_TOOLSETS=drawings` must serve `core` +
+  drawings only. Neither count is an argument — they follow from the annotations.
 
 **Compile check of every Tekla version (any OS):** CI builds `TeklaMcp.sln` once per
 `TeklaVersion` in the matrix (2021.0.0, 2022.0.10715, 2023.0.1, 2024.0.4, 2025.0.0, 2026.0.3 —

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP tool annotations on every tool.** Each of the 116 tools now says whether it only reads
+  (`readOnlyHint`, 48 tools), and the 68 others whether they can modify or delete what exists
+  (`destructiveHint`) and whether a repeat changes anything more (`idempotentHint`); all are
+  `openWorldHint=false`. Clients such as Claude Desktop and Codex use these to approve reads
+  without asking and to ask before writes. The hints describe what a tool can do with
+  `apply=true`, not its preview default; selection, `tekla_capture_view` and `tekla_open_drawing`
+  count as (non-destructive) writers because they change the Tekla UI, and the file exports and
+  `tekla_report_gap` because they write files. The MCP smoke now fails on a tool without hints.
+- **Read-only mode: `TEKLA_MCP_READ_ONLY=1`.** The server then serves only the 48 read-only tools
+  (no writes, no `tekla_run_csharp`, no selection or view capture, no file exports), says so in
+  its instructions and in `tekla_get_connection_info` (`serverReadOnly`), and the write paths
+  refuse at runtime as well — the write wrappers, the script tool and the tools that write outside
+  the wrappers — so a tool annotated read-only by mistake still cannot write. A value other than
+  `0`/`false`/`no`/`off` (or unset) turns it on.
+- **Toolsets: `TEKLA_MCP_TOOLSETS`** (`core`, `model`, `analytics`, `files`, `drawings`,
+  `scripting`, `visual`; `core` is always served) narrows `tools/list` for clients that load every
+  tool description into the context: the full list is about 179k characters, the 51 drawing
+  tools alone about 66k. Not a safety feature. An unknown name stops the server with a message
+  instead of hiding tools. `tekla_get_connection_info` reports the served set (`serverToolsets`).
+
 ## [0.8.1] - 2026-10-01
 
 A hotfix for the first Tekla 2026 field report — v0.8.0 could not connect to Tekla 2026 at all —

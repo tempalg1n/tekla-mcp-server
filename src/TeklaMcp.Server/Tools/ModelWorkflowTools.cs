@@ -16,9 +16,10 @@ namespace TeklaMcp.Server.Tools;
 /// to the current Tekla UI selection instead of the whole model.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Analytics)]
 public static class ModelWorkflowTools
 {
-    [McpServerTool(Name = "tekla_count_objects")]
+    [McpServerTool(Name = "tekla_count_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Count objects matching optional filters. Set useSelection=true to count only the current UI selection.")]
     public static int CountObjects(
         ITeklaModelService model,
@@ -36,7 +37,7 @@ public static class ModelWorkflowTools
         [Description("Scope to current Tekla UI selection instead of the whole model. Default false.")] bool useSelection = false)
         => model.CountObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection, udaIsEmpty: udaIsEmpty));
 
-    [McpServerTool(Name = "tekla_sum_weight")]
+    [McpServerTool(Name = "tekla_sum_weight", ReadOnly = true, OpenWorld = false)]
     [Description("Sum weight (kg) for objects matching optional filters, streamed without materializing objects " +
                  "(safe on 400k+ models). Scans physical PARTS by default; partsOnly=false widens to every object " +
                  "(bolts, welds, assemblies). Set useSelection=true to sum only the current UI selection. " +
@@ -75,7 +76,7 @@ public static class ModelWorkflowTools
         };
     }
 
-    [McpServerTool(Name = "tekla_group_weight_by")]
+    [McpServerTool(Name = "tekla_group_weight_by", ReadOnly = true, OpenWorld = false)]
     [Description("Group objects by one field and return count + total weight (kg) per group, streamed without " +
                  "materializing objects (safe on 400k+ models). groupBy: 'type', 'class', 'profile', 'material', " +
                  "'name', 'assembly' (assembly mark / ASSEMBLY_POS), 'uda:NAME' to group by a user-defined " +
@@ -107,7 +108,7 @@ public static class ModelWorkflowTools
             BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection: useSelection),
             groupBy, limit, cursor, maxObjects, partsOnly);
 
-    [McpServerTool(Name = "tekla_list_distinct_values")]
+    [McpServerTool(Name = "tekla_list_distinct_values", ReadOnly = true, OpenWorld = false)]
     [Description("List distinct values of a field with count + total weight per value. Same engine and paging as " +
                  "tekla_group_weight_by. field: 'type', 'class', 'profile', 'material', 'name', 'assembly', " +
                  "'uda:NAME' (e.g. 'uda:USER_FIELD_1') or 'attr:NAME'.")]
@@ -131,7 +132,7 @@ public static class ModelWorkflowTools
         [Description("Continuation cursor from the previous page's nextCursor. Keep every other argument identical.")] string? cursor = null)
         => GroupWeightBy(model, field, type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, useSelection, limit, partsOnly, maxObjects, cursor);
 
-    [McpServerTool(Name = "tekla_select_objects")]
+    [McpServerTool(Name = "tekla_select_objects", ReadOnly = false, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Select objects in Tekla UI by filters (including UDA/attribute filters or explicit GUID list) and return selected count + preview. " +
                  "With useSelection=true the filter is applied within the current selection (narrowing it).")]
     public static SelectionResult SelectObjects(
@@ -149,9 +150,12 @@ public static class ModelWorkflowTools
         [Description("Optional GUID list (comma/semicolon/newline separated). If set, only these GUIDs are considered.")] string? guidIn = null,
         [Description("Narrow within the current selection instead of the whole model. Default false.")] bool useSelection = false,
         [Description("Safety limit for selected objects. Default 2000.")] int limit = 2000)
-        => model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, ParseList(guidIn), useSelection), limit);
+    {
+        ServerMode.ThrowIfReadOnly("tekla_select_objects (it replaces the Tekla UI selection)");
+        return model.SelectObjects(BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, attributeName, attributeEquals, attributeContains, ParseList(guidIn), useSelection), limit);
+    }
 
-    [McpServerTool(Name = "tekla_export_objects")]
+    [McpServerTool(Name = "tekla_export_objects", ReadOnly = true, OpenWorld = false)]
     [Description("Export objects matching filters as a text table for the user. " +
                  "Columns: guid, id, type, name, class, profile, material, lengthMm, weightKg, assemblyPos. " +
                  "format: 'csv' (default) or 'markdown'. Handy for producing a bill-of-materials. Capped by 'limit'.")]
