@@ -99,6 +99,24 @@ public class DimensionMathTests
     }
 
     [Fact]
+    public void Straight_dimension_reports_its_distance_in_both_units()
+    {
+        var model = new MockTeklaModelService();
+        var view = model.GetDrawingViews().First(v => v.ViewId == 11001);
+        var spec = new DrawingObjectSpec
+        {
+            Kind = "straight_dimension", ViewId = 11001, ViewId2 = 0, Distance = 8, Placing = "fixed",
+            Points = new List<Point3D> { P(0, 0), P(1000, 0) },
+        };
+
+        var created = Assert.Single(model.CreateDrawingObjects(new[] { spec }, apply: true).ObjectPreview);
+
+        Assert.Equal(8, created.DimensionDistancePaperMm);
+        Assert.Equal(8 * (view.Scale ?? 1), created.DimensionDistance);
+        Assert.Equal("Fixed", created.DimensionPlacing);
+    }
+
+    [Fact]
     public void Mock_radius_dimension_on_a_straight_line_is_an_error()
     {
         var model = new MockTeklaModelService();

@@ -545,6 +545,8 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
   is offset from the OUTERMOST point of the set along the up direction. The tools keep paper mm as
   their contract and multiply by `View.Attributes.Scale` (`DimensionMath.PaperToViewDistance`;
   the sheet counts as 1).
+- **Reading behaves like writing** (Tekla 2021, truss node views at 1:5/1:10): `StraightDimensionSet.Distance` reads back in view units at the view's CURRENT scale. After a scale change Tekla keeps the line at the same paper offset by itself, so the value read doubles from 1:5 to 1:10 although nothing moved — an agent that "fixed" it doubled the real offset. The listing reports both `dimensionDistance` (as read) and `dimensionDistancePaperMm`.
+- With the default FREE placing Tekla moved dimension lines away from nearby marks, so the requested offset was not kept; `Placing.Placing = Placings.Fixed` keeps it (`placing=fixed`).
 - `AngleDimension.Distance` and `CurvedDimensionSetBase.Distance` are documented as paper mm and
   are passed unchanged; `RadiusDimension.Distance` is undocumented and passed unchanged
   (`TODO(windows)`). None of the three is verified live yet.

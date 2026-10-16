@@ -1710,6 +1710,16 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     ["MCP_ORIGIN"] = "mcp:create_drawing_object",
                 },
             };
+            if (info.Type == "StraightDimensionSet")
+            {
+                var paper = spec.Distance ?? 10;
+                info.DimensionDistancePaperMm = paper;
+                info.DimensionDistance = paper * (isSheet ? 1 : view!.Scale ?? 1);
+                info.UpDirection = spec.UpDirection ?? new Point3D(0, 1, 0);
+                info.DimensionPlacing = string.IsNullOrWhiteSpace(spec.Placing)
+                    ? "Free"
+                    : char.ToUpperInvariant(spec.Placing![0]) + spec.Placing.Substring(1).ToLowerInvariant();
+            }
             if (info.Type == "Mark")
             {
                 // A part mark showing the assembly position, like Tekla's default mark content.

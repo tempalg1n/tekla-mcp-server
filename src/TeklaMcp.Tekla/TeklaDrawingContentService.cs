@@ -378,16 +378,23 @@ public sealed partial class TeklaModelService
                 var straightDistance = DimensionMath.PaperToViewDistance(
                     spec.Distance ?? 10, ViewScale(target));
                 TSD.StraightDimensionSet straight;
-                if (string.IsNullOrWhiteSpace(spec.AttributeFile))
+                var placing = (spec.Placing ?? "").Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(spec.AttributeFile) && placing.Length == 0)
                 {
                     straight = straightHandler.CreateDimensionSet(
                         target, ToPointList(points), up, straightDistance);
                 }
                 else
                 {
-                    var straightAttributes =
-                        new TSD.StraightDimensionSet.StraightDimensionSetAttributes(
-                            null, spec.AttributeFile);
+                    var straightAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                        ? new TSD.StraightDimensionSet.StraightDimensionSetAttributes((TSD.ModelObject)null!)
+                        : new TSD.StraightDimensionSet.StraightDimensionSetAttributes(null, spec.AttributeFile);
+                    // Free placing moved lines away from nearby marks, so the offset was not kept
+                    // (Tekla 2021, issue #26); Fixed keeps it.
+                    if (placing == "fixed")
+                        straightAttributes.Placing.Placing = TSD.DimensionSetBaseAttributes.Placings.Fixed;
+                    else if (placing == "free")
+                        straightAttributes.Placing.Placing = TSD.DimensionSetBaseAttributes.Placings.Free;
                     straight = straightHandler.CreateDimensionSet(
                         target, ToPointList(points), up, straightDistance, straightAttributes);
                 }

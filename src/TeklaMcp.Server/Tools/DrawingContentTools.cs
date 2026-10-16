@@ -529,7 +529,11 @@ public static class DrawingContentTools
     [Description("Create a straight dimension set in a real view of the ACTIVE drawing. Distance " +
                  "is paper mm (the server multiplies it by the view scale, which is what Tekla " +
                  "expects); Tekla offsets the line from the OUTERMOST point of the set along " +
-                 "upDirection. Points may be view-local or global model coordinates. Preview unless apply=true.")]
+                 "upDirection. Points may be view-local or global model coordinates. Use placing=fixed " +
+                 "when the line must stay at that offset (free placing moves it away from marks). When " +
+                 "reading dimension sets back (tekla_list_drawing_objects), dimensionDistance is in view " +
+                 "units at the CURRENT scale and doubles after 1:5 → 1:10 although nothing moved: use " +
+                 "dimensionDistancePaperMm. Preview unless apply=true.")]
     public static DrawingWriteResult CreateStraightDimension(
         ITeklaModelService model,
         [Description("Two or more dimension points 'x,y,z; ...'.")] string points,
@@ -540,8 +544,14 @@ public static class DrawingContentTools
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved dimension attributes file.")] string attributeFile = "",
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("fixed = keep the line exactly at distance; free = Tekla may move it away from marks " +
+                     "(the offset is then not kept); empty = the attribute file's setting.")] string placing = "")
     {
+        var normalizedPlacing = (placing ?? "").Trim().ToLowerInvariant();
+        if (normalizedPlacing.Length > 0 && normalizedPlacing != "fixed" && normalizedPlacing != "free")
+            return ToolValidationFailure(
+                "create_drawing_objects", apply, "placing must be fixed, free or empty.");
         var up = ToolHelpers.ParsePoint(upDirection);
         if (up == null || IsZeroVector(up))
             return ToolValidationFailure(
@@ -551,7 +561,7 @@ public static class DrawingContentTools
             model, "straight_dimension", points,
             viewId, viewId2, -1, coordinateSpace,
             attributeFile, upDirection: up, distance: distance, apply: apply,
-            expectedModelPath: expectedModelPath);
+            expectedModelPath: expectedModelPath, placing: normalizedPlacing);
     }
 
     [McpServerTool(Name = "tekla_create_angle_dimension")]
@@ -820,7 +830,8 @@ public static class DrawingContentTools
         Point3D? upDirection = null,
         double? distance = null,
         bool apply = false,
-        string? expectedModelPath = null)
+        string? expectedModelPath = null,
+        string placing = "")
     {
         var normalizedKind = (kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
         var normalizedSpace = (coordinateSpace ?? "view").Trim().ToLowerInvariant();
@@ -895,6 +906,7 @@ public static class DrawingContentTools
                 AngleDegrees = angleDegrees,
                 UpDirection = upDirection,
                 Distance = distance,
+                Placing = placing.Length == 0 ? null : placing,
             },
         }, apply));
     }

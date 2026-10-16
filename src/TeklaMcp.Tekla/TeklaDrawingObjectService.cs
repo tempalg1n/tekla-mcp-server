@@ -299,7 +299,11 @@ public sealed partial class TeklaModelService
         }
 
         if (query.IncludeGeometry)
+        {
             MapDrawingObjectGeometry(record.Object, info);
+            if (info.DimensionDistance.HasValue)
+                info.DimensionDistancePaperMm = info.DimensionDistance.Value / ViewScale(record.View);
+        }
         if (query.IncludeUdas)
             ReadDrawingObjectUdas(record.Object, info.Udas);
         return info;
@@ -390,6 +394,13 @@ public sealed partial class TeklaModelService
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading> MarkReadings =
         new System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading>();
 
+    private static void AddDistinctPoint(List<Point3D> points, Point3D point)
+    {
+        if (!points.Any(p => Math.Abs(p.X - point.X) < 0.01 && Math.Abs(p.Y - point.Y) < 0.01 &&
+                             Math.Abs(p.Z - point.Z) < 0.01))
+            points.Add(point);
+    }
+
     private static void MapDrawingObjectGeometry(TSD.DrawingObject obj, DrawingObjectInfo info)
     {
         try
@@ -439,6 +450,20 @@ public sealed partial class TeklaModelService
             else if (obj is TSD.MarkBase mark)
             {
                 info.Points.Add(ToDto(mark.InsertionPoint));
+            }
+            else if (obj is TSD.StraightDimensionSet dimensionSet)
+            {
+                // Points come from the child dimensions; Distance is in view units (issue #26).
+                info.DimensionDistance = dimensionSet.Distance;
+                try { info.DimensionPlacing = dimensionSet.Attributes.Placing.Placing.ToString(); } catch { }
+                var children = dimensionSet.GetObjects();
+                while (SafeMoveNext(children))
+                {
+                    if (!(children.Current is TSD.StraightDimension dimension)) continue;
+                    AddDistinctPoint(info.Points, ToDto(dimension.StartPoint));
+                    AddDistinctPoint(info.Points, ToDto(dimension.EndPoint));
+                    if (info.UpDirection == null) info.UpDirection = ToDto(dimension.UpDirection);
+                }
             }
             else if (obj is TSD.AngleDimension angle)
             {

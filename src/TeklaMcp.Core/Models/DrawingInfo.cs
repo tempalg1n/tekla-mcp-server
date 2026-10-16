@@ -177,6 +177,22 @@ public sealed class DrawingObjectInfo
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Straight dimension sets (issues #26, #38): the distance of the dimension line as Tekla
+    /// reports it — view units (model mm) at the view's CURRENT scale, so it doubles from 1:5 to
+    /// 1:10 although the line keeps its place on paper. Do not "correct" it after a rescale.
+    /// </summary>
+    public double? DimensionDistance { get; set; }
+
+    /// <summary>The same distance in paper mm (DimensionDistance / view scale) — the tools' unit.</summary>
+    public double? DimensionDistancePaperMm { get; set; }
+
+    /// <summary>Straight dimension sets: the direction from the points to the dimension line (view coordinates).</summary>
+    public Point3D? UpDirection { get; set; }
+
+    /// <summary>Straight dimension sets: Fixed (kept at the distance) or Free (Tekla may move it).</summary>
+    public string? DimensionPlacing { get; set; }
+
+    /// <summary>
     /// Marks only (issue #32): the content elements in order — kind "property" (Name = the
     /// property, e.g. ASSEMBLY_POS, Value = what it shows now), "text" (fixed text) or the element
     /// type. Null for other objects. <see cref="Text"/> holds the whole unformatted mark text.

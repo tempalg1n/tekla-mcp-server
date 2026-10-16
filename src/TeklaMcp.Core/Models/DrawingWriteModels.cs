@@ -165,6 +165,9 @@ public sealed class DrawingObjectSpec
                  "the view scale where Tekla expects them). Straight dimensions: measured from " +
                  "the outermost point along UpDirection.")]
     public double? Distance { get; set; }
+    [Description("Straight dimensions: 'fixed' keeps the line exactly at Distance; 'free' lets Tekla move " +
+                 "it away from marks (it then does not keep the offset). Empty = the attribute file's setting.")]
+    public string? Placing { get; set; }
 }
 
 /// <summary>Batch edit/action over active-drawing objects selected by a query.</summary>
