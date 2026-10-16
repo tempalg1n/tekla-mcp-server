@@ -109,6 +109,11 @@ public sealed class DrawingViewModification
     public bool KeepLabel { get; set; } = true;
     /// <summary>Keep the view Name — the file replaces it.</summary>
     public bool KeepName { get; set; } = true;
+    /// <summary>
+    /// With a new Scale: move each leader-line mark's text so its paper distance to the leader
+    /// start stays the same (issue #39). Dimension lines keep their paper offset by themselves.
+    /// </summary>
+    public bool KeepMarkOffsets { get; set; } = true;
 }
 
 /// <summary>

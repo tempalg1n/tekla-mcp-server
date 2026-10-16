@@ -286,7 +286,9 @@ public static class DrawingContentTools
                  "is part of it). After loading, the message gives the view's model-object " +
                  "count before and after, so you can see whether a filter took effect. Tekla caches view " +
                  "filters by attribute-file NAME within a session: after editing <name>.vi.npfilter, " +
-                 "save it under a NEW name, or the view keeps the old filter. Angles are degrees. " +
+                 "save it under a NEW name, or the view keeps the old filter. A new scale keeps the " +
+                 "paper offset of leader-line marks (keepMarkOffsets, default true); dimension lines keep " +
+                 "theirs by themselves, so never rescale their distances. Angles are degrees. " +
                  "Preview unless apply=true; re-list after structural edits.")]
     public static DrawingWriteResult ModifyDrawingView(
         ITeklaModelService model,
@@ -309,7 +311,8 @@ public static class DrawingContentTools
         [Description("Keep the current restriction box when loading attributeFile (default true).")] bool keepRestrictionBox = true,
         [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true,
         [Description("Keep the current view label when loading attributeFile (default true).")] bool keepLabel = true,
-        [Description("Keep the current view name when loading attributeFile (default true).")] bool keepName = true)
+        [Description("Keep the current view name when loading attributeFile (default true).")] bool keepName = true,
+        [Description("With a new scale: move leader-line marks so their paper offset stays (default true).")] bool keepMarkOffsets = true)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
@@ -352,6 +355,7 @@ public static class DrawingContentTools
                 KeepOrigin = keepOrigin,
                 KeepLabel = keepLabel,
                 KeepName = keepName,
+                KeepMarkOffsets = keepMarkOffsets,
             },
         }, apply));
     }

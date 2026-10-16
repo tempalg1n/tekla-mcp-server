@@ -40,6 +40,16 @@ public class ViewPlacementTests
     }
 
     [Fact]
+    public void Rescaled_marks_keep_their_paper_offset()
+    {
+        // 1:5 -> 1:10: the text must move twice as far from the leader start in view units.
+        var moved = ViewPlacement.RescaleMarkOffset(P(100, 100), P(130, 140), 5, 10);
+        Assert.Equal((160.0, 180.0), (moved.X, moved.Y));
+        var unchanged = ViewPlacement.RescaleMarkOffset(P(100, 100), P(130, 140), 0, 10);
+        Assert.Equal((130.0, 140.0), (unchanged.X, unchanged.Y));
+    }
+
+    [Fact]
     public void Frame_center_moves_the_frame_middle()
     {
         var origin = ViewPlacement.OriginForFrame(

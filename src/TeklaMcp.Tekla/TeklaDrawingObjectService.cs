@@ -669,10 +669,15 @@ public sealed partial class TeklaModelService
                         LoadViewAttributeFile(view, modification);
                         loaded.Add(new KeyValuePair<TSD.View, int?>(view, before));
                     }
+                    double? oldScale = null;
+                    if (modification.Scale.HasValue && modification.KeepMarkOffsets)
+                        try { oldScale = view.Attributes.Scale; } catch { }
                     ApplyViewModification(view, modification);
                     if (!view.Modify()) throw new InvalidOperationException("Tekla rejected view Modify().");
                     StampDrawingOrigin(view, "mcp:modify_drawing_view");
                     result.ModifiedCount++;
+                    if (oldScale.HasValue && Math.Abs(oldScale.Value - modification.Scale!.Value) > 1e-9)
+                        KeepMarkOffsets(view, oldScale.Value, modification.Scale.Value, result);
                 }
                 catch (Exception exItem)
                 {
@@ -830,6 +835,45 @@ public sealed partial class TeklaModelService
         if (modification.KeepRestrictionBox) view.RestrictionBox = restriction;
         if (modification.KeepOrigin) view.Origin = origin;
         if (modification.KeepName) view.Name = name;
+    }
+
+    /// <summary>
+    /// After a rescale, moves every leader-line mark's insertion point so its paper offset from
+    /// the leader start is kept (issue #39). Best-effort per mark; the count goes into the message.
+    /// </summary>
+    private static void KeepMarkOffsets(TSD.View view, double oldScale, double newScale, DrawingWriteResult result)
+    {
+        int moved = 0, failed = 0;
+        try
+        {
+            var marks = view.GetObjects(new[] { typeof(TSD.Mark) });
+            while (SafeMoveNext(marks))
+            {
+                if (!(marks.Current is TSD.Mark mark) || !(mark.Placing is TSD.LeaderLinePlacing leader)) continue;
+                try
+                {
+                    var target = ViewPlacement.RescaleMarkOffset(
+                        ToDto(leader.StartPoint), ToDto(mark.InsertionPoint), oldScale, newScale);
+                    mark.InsertionPoint = ToDrawingPoint(target);
+                    if (mark.Modify()) moved++;
+                    else failed++;
+                }
+                catch
+                {
+                    failed++;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Warnings.Add((view.Name ?? "view") + ": marks were not repositioned after the rescale — " +
+                                ErrorText.Flatten(ex));
+            return;
+        }
+        result.Message = Aggregation.Append(result.Message,
+            $"View '{view.Name}': {moved} leader-line mark(s) moved to keep their paper offset at 1:{newScale:0.###}" +
+            (failed > 0 ? $"; {failed} could not be moved." : ".") +
+            " Dimension lines keep their paper offset by themselves — do not rescale their distances.");
     }
 
     /// <summary>True when the view holds a hidden mark (best-effort; false when it cannot tell).</summary>

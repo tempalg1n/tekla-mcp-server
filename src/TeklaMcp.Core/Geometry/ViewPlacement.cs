@@ -62,6 +62,22 @@ public static class ViewPlacement
         frameMax = new Point3D(origin.X + restrictionMax.X / s, origin.Y + restrictionMax.Y / s, 0);
     }
 
+    /// <summary>
+    /// Where a leader-line mark's insertion point goes when its view changes scale (issue #39):
+    /// insertion points are view (model mm) coordinates and are not rescaled, so at 1:10 the paper
+    /// distance from the leader start to the text halves and marks crowd the parts. Scaling the
+    /// offset by newScale / oldScale keeps it on paper:
+    /// <c>ins' = start + (ins − start) × newScale / oldScale</c> (the live fix, Tekla 2021).
+    /// </summary>
+    public static Point3D RescaleMarkOffset(Point3D leaderStart, Point3D insertion, double oldScale, double newScale)
+    {
+        var factor = oldScale > 0 && newScale > 0 ? newScale / oldScale : 1.0;
+        return new Point3D(
+            leaderStart.X + (insertion.X - leaderStart.X) * factor,
+            leaderStart.Y + (insertion.Y - leaderStart.Y) * factor,
+            insertion.Z);
+    }
+
     /// <summary>True when the frame anchor is within 0.5 mm of the target.</summary>
     public static bool IsPlaced(string placeBy, Point3D target, Point3D frameMin, Point3D frameMax)
     {
