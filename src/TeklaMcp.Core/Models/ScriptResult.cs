@@ -48,6 +48,12 @@ public sealed class ScriptResult
     public string CodeSha256 { get; set; } = "";
 
     /// <summary>
+    /// Set by a successful tekla_check_csharp: pass it to tekla_run_csharp instead of the code to
+    /// run exactly the checked text (issue #40). Kept in server memory for a few hours.
+    /// </summary>
+    public string? CheckId { get; set; }
+
+    /// <summary>
     /// Mutating API member names detected syntactically, even when execution is allowed or
     /// the request is compile-only. This is conservative and may include false positives.
     /// </summary>

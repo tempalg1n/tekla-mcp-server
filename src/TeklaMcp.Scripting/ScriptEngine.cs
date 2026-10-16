@@ -43,17 +43,33 @@ public static class ScriptEngine
     public const int DefaultTimeoutSeconds = 60;
     public const int MaxTimeoutSeconds = 600;
 
-    /// <summary>Stable SHA-256 of the exact UTF-8 source text, rendered as lowercase hex.</summary>
+    /// <summary>
+    /// SHA-256 (lowercase hex) of the UTF-8 source after <see cref="NormalizeForHash"/>: line endings
+    /// and trailing whitespace do not count (issue #40 — an identical script was refused because the
+    /// run lacked the checked text's final newline). Everything else does.
+    /// </summary>
     public static string ComputeCodeSha256(string code)
     {
         using (var sha = SHA256.Create())
         {
-            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(code ?? ""));
+            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(NormalizeForHash(code)));
             var hex = new StringBuilder(bytes.Length * 2);
             foreach (var b in bytes)
                 hex.Append(b.ToString("x2"));
             return hex.ToString();
         }
+    }
+
+    /// <summary>
+    /// Line endings become LF, whitespace at the end of each line and at the end of the text is
+    /// dropped. (Inside a multi-line verbatim string that whitespace is content; the approval
+    /// deliberately ignores it.)
+    /// </summary>
+    public static string NormalizeForHash(string? code)
+    {
+        var lines = (code ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        for (var i = 0; i < lines.Length; i++) lines[i] = lines[i].TrimEnd(' ', '\t');
+        return string.Join("\n", lines).TrimEnd('\n', ' ', '\t');
     }
 
     /// <summary>

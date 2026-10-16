@@ -585,7 +585,11 @@ dedicated tool exists. Rules for maintaining it:
   because it never executes, and returns the source SHA-256 + detected mutating members for
   approval. `tekla_run_csharp` binds a run to that approval: `ScriptApprovalGate` (tool layer,
   before the backend) requires `expectedSha256` when `allowMutations=true` and rejects any
-  mismatch, read-only runs included — keep it in front of every execution path. The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
+  mismatch, read-only runs included — keep it in front of every execution path. The hash is over
+  `ScriptEngine.NormalizeForHash` (LF line endings, no trailing whitespace — issue #40); a
+  successful check also returns a `checkId` (`ScriptCheckStore`, in memory, a few hours) that
+  `tekla_run_csharp` runs instead of re-sent code, still through the same gate. The policy's one
+  reflection exception is `x.GetType().Name`/`.FullName` (`IsTypeNameRead`). The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
   `ExecutionAttempted` become true as soon as the live worker starts, including failure/timeout.
   Never throw — report failures and partial-mutation warnings in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).

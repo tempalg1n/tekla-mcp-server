@@ -25,7 +25,9 @@ public static class ModelScriptTools
         "RECOMMENDED WORKFLOW: (1) verify type/member signatures with tekla_search_api / tekla_get_api_doc — do not " +
         "guess them; (2) validate the exact source with tekla_check_csharp; (3) run it. For a mutation, show the user the " +
         "exact script plus the check result's codeSha256, and after approval pass that hash as expectedSha256 — a " +
-        "mutating run without it, or with a hash that no longer matches the source, is rejected unexecuted.\n" +
+        "mutating run without it, or with a hash that no longer matches the source, is rejected unexecuted. " +
+        "Instead of sending the source again, pass the check's checkId: the server runs exactly the checked text. " +
+        "The hash ignores line endings and trailing whitespace; everything else counts.\n" +
         "\n" +
         "SCRIPT ENVIRONMENT:\n" +
         "- C# top-level statements (no class/Main needed). Pre-imported namespaces: System, System.Collections.Generic, " +
@@ -59,7 +61,8 @@ public static class ModelScriptTools
         "with `foreach (var o in conn.GetSecondaryObjects()) { var mo = o as ModelObject; ... }`. " +
         "`Part.GetComponents()` IS an enumerator (use MoveNext).\n" +
         "- Reflection and `dynamic` are banned; the API is fully typed, so cast to the concrete type " +
-        "(`if (e.Current is Beam b)`, `var c = mo as Connection;`) and confirm members with tekla_search_api.\n" +
+        "(`if (e.Current is Beam b)`, `var c = mo as Connection;`) and confirm members with tekla_search_api. " +
+        "Only `x.GetType().Name` / `.FullName` is allowed, to label output.\n" +
         "\n" +
         "EXAMPLE (count beams longer than 12 m):\n" +
         "var model = new Model();\n" +
@@ -90,7 +93,7 @@ public static class ModelScriptTools
         "(tekla_group_weight_by / tekla_sum_weight with maxObjects + cursor).")]
     public static ScriptResult RunCsharp(
         ITeklaModelService model,
-        [Description("The C# script (top-level statements; last expression = return value).")] string code,
+        [Description("The C# script (top-level statements; last expression = return value). Omit it when passing checkId.")] string? code = null,
         [Description("Allow mutating Tekla API calls. Set true ONLY after the user explicitly approved this " +
                      "specific change in this conversation (show them the script first). Prefer the dedicated " +
                      "write tools (preview-by-default).")]
@@ -102,8 +105,24 @@ public static class ModelScriptTools
                      "and the run is rejected without compiling or executing.")]
         string? expectedSha256 = null,
         [Description(ToolHelpers.ExpectedModelPathDescription + " Checked before the script is compiled or run.")]
-        string? expectedModelPath = null)
+        string? expectedModelPath = null,
+        [Description("checkId from tekla_check_csharp: run exactly the checked text instead of sending code. " +
+                     "expectedSha256 still binds a mutating run to the approved version.")]
+        string? checkId = null)
     {
+        if (!string.IsNullOrWhiteSpace(checkId))
+        {
+            var checkedCode = CheckedScripts.Get(checkId);
+            if (checkedCode == null)
+                return CheckIdProblem(code ?? "",
+                    "checkId '" + checkId!.Trim() + "' is unknown or expired (checks live in server memory for " +
+                    "a few hours and are lost on a restart). Check the script again with tekla_check_csharp.");
+            if (!string.IsNullOrEmpty(code) &&
+                ScriptEngine.ComputeCodeSha256(code!) != ScriptEngine.ComputeCodeSha256(checkedCode))
+                return CheckIdProblem(code!,
+                    "code and checkId name different scripts. Pass only checkId to run the checked text.");
+            code = checkedCode;
+        }
         code ??= "";
         var rejected = ScriptApprovalGate.Check(code, allowMutations, expectedSha256);
         if (rejected != null) return rejected;
@@ -149,7 +168,29 @@ public static class ModelScriptTools
     public static ScriptResult CheckCsharp(
         ITeklaModelService model,
         [Description("The exact C# script to policy-check and compile without executing.")] string code)
-        => model.ExecuteScript(code ?? "", allowMutations: true, timeoutSeconds: 60, compileOnly: true);
+    {
+        var result = model.ExecuteScript(code ?? "", allowMutations: true, timeoutSeconds: 60, compileOnly: true);
+        // Only a script that passed the policy and compiled is worth running later by reference.
+        if (result.Compiled && result.PolicyViolations.Count == 0)
+            result.CheckId = CheckedScripts.Add(code ?? "");
+        return result;
+    }
+
+    /// <summary>Scripts that passed tekla_check_csharp, by checkId (issue #40).</summary>
+    private static readonly ScriptCheckStore CheckedScripts = new ScriptCheckStore();
+
+    private static ScriptResult CheckIdProblem(string code, string message)
+    {
+        var result = new ScriptResult
+        {
+            Success = false,
+            Stage = "policy",
+            CodeSha256 = ScriptEngine.ComputeCodeSha256(code),
+            Guidance = "Nothing was compiled or executed.",
+        };
+        result.PolicyViolations.Add(message);
+        return result;
+    }
 
     [McpServerTool(Name = "tekla_search_api")]
     [Description(

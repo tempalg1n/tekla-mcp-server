@@ -222,6 +222,8 @@ public static class ScriptPolicy
                      .Where(t => t.IsKind(SyntaxKind.IdentifierToken)))
         {
             var name = token.ValueText;
+            if (name == "GetType" && IsTypeNameRead(token))
+                continue; // x.GetType().Name / .FullName: a label, not reflection (issue #40)
             if (BannedIdentifiers.Contains(name))
                 Add(declaredBanned.Contains(name)
                     ? $"'{name}' is a reserved capability name and cannot be used even for your own " +
@@ -362,6 +364,24 @@ public static class ScriptPolicy
     {
         "IsNumberingUpToDate", "IsNumberingUpToDateAll", "IsNumberingAllowed",
     };
+
+    /// <summary>
+    /// <c>expr.GetType().Name</c> or <c>.FullName</c> — reading a type's name to label output.
+    /// Anything else on the returned <c>Type</c> (Assembly, GetMethod, …), a static
+    /// <c>Type.GetType("…")</c> (it takes an argument) and a bare <c>GetType()</c> stay banned.
+    /// </summary>
+    private static bool IsTypeNameRead(SyntaxToken token)
+    {
+        if (!(token.Parent is IdentifierNameSyntax identifier)) return false;
+        if (!(identifier.Parent is MemberAccessExpressionSyntax access) || !ReferenceEquals(access.Name, identifier))
+            return false;
+        if (!(access.Parent is InvocationExpressionSyntax call) || !ReferenceEquals(call.Expression, access) ||
+            call.ArgumentList.Arguments.Count != 0)
+            return false;
+        return call.Parent is MemberAccessExpressionSyntax nameRead &&
+               ReferenceEquals(nameRead.Expression, call) &&
+               (nameRead.Name.Identifier.ValueText == "Name" || nameRead.Name.Identifier.ValueText == "FullName");
+    }
 
     private static bool IsReadOnlyOperationCall(SyntaxToken token)
     {

@@ -107,7 +107,8 @@ const string serverInstructions =
     "validate the exact script with tekla_check_csharp, show the user the script and what it will " +
     "change, get their explicit go-ahead, only then run it with allowMutations=true and " +
     "expectedSha256 = the codeSha256 the check returned (any edit after approval changes the hash " +
-    "and the run is refused — check and approve again) — and keep changes traceable (MCP_ORIGIN " +
+    "and the run is refused — check and approve again; line endings and trailing whitespace do " +
+    "not count). Pass the check's checkId instead of re-sending the code — and keep changes traceable (MCP_ORIGIN " +
     "UDA) and reversible (Tekla Ctrl+Z).\n\n" +
     "WRITE RESULTS say what happened: outcome = planned (preview) / not_written / committed / " +
     "partial (see errors) / unknown, plus target = the model path and Tekla PID the write went to. " +
