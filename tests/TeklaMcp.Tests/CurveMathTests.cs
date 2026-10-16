@@ -334,4 +334,58 @@ public class CurveMathTests
     {
         Assert.Equal(round, CurveMath.IsRoundProfileType(profileType));
     }
+
+    /// <summary>
+    /// Vertices of a curved Beam's segmented centerline, shaped like the live 3155 monorail
+    /// (I36M, R2500, LENGTH 6149.3 → sweep ≈ 140.9°, 21 vertices, horizontal at z = 22520).
+    /// </summary>
+    private static List<Point3D> CurvedBeamVertices(double radius, double sweepDegrees, int count, Point3D center)
+    {
+        var vertices = new List<Point3D>();
+        for (var i = 0; i < count; i++)
+        {
+            var a = (200 - sweepDegrees * i / (count - 1)) * Math.PI / 180;
+            vertices.Add(P(center.X + radius * Math.Cos(a), center.Y + radius * Math.Sin(a), center.Z));
+        }
+        return vertices;
+    }
+
+    [Fact]
+    public void Curved_beam_arc_from_its_segmented_centerline()
+    {
+        var center = P(34500, 9000, 22520);
+        var warnings = new List<string>();
+
+        var arc = CurveMath.ArcFromCenterlineVertices(
+            CurvedBeamVertices(2500, 6149.3244 / 2500 * 180 / Math.PI, 21, center), -2500, warnings);
+
+        Assert.NotNull(arc);
+        AssertPoint(center, arc!.Center);
+        Assert.Equal(2500, arc.Radius!.Value, 6);
+        Assert.Equal(6149.3244, arc.Length, 3);
+        Assert.Equal(4712.2, arc.ChordLength, 0);
+        AssertPoint(P(0, 0, -1), arc.Normal, 9); // runs clockwise seen from +Z
+        Assert.Empty(warnings);
+    }
+
+    [Fact]
+    public void Curved_beam_with_an_in_plane_offset_warns_about_radius()
+    {
+        var warnings = new List<string>();
+        var arc = CurveMath.ArcFromCenterlineVertices(
+            CurvedBeamVertices(2600, 90, 11, P(0, 0, 0)), 2500, warnings);
+
+        Assert.Equal(2600, arc!.Radius!.Value, 6);
+        Assert.Contains(warnings, w => w.Contains("RADIUS reports 2500"));
+    }
+
+    [Fact]
+    public void Vertices_off_one_circle_are_not_an_arc()
+    {
+        var vertices = CurvedBeamVertices(2500, 90, 11, P(0, 0, 0));
+        vertices[3] = P(vertices[3].X + 30, vertices[3].Y, vertices[3].Z);
+
+        Assert.Null(CurveMath.ArcFromCenterlineVertices(vertices, 2500, new List<string>()));
+        Assert.Null(CurveMath.ArcFromCenterlineVertices(vertices.Take(2).ToList(), 2500, new List<string>()));
+    }
 }

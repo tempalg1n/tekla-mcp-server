@@ -98,7 +98,11 @@ public sealed partial class TeklaModelService
                 result.Message = "A ContourPlate has no centerline: only its contour and chamfers are returned.";
                 break;
             case TSM.Beam beam:
-                ReadStraightCenterLine(beam, result);
+                var radius = 0.0;
+                if (beam.GetReportProperty("RADIUS", ref radius) && Math.Abs(radius) > CurveMath.Tolerance)
+                    ReadCurvedBeam(beam, radius, result);
+                else
+                    ReadStraightCenterLine(beam, result);
                 break;
             default:
                 result.Message = result.Type +
@@ -219,6 +223,37 @@ public sealed partial class TeklaModelService
         }
         result.CurveSource = "Part.GetCenterLine";
         result.Segments.Add(CurveMath.Line(RawPoint(points[0]), RawPoint(points[points.Count - 1])));
+    }
+
+    /// <summary>
+    /// A curved Beam (RADIUS ≠ 0, issue #30): one arc through its segmented centerline. Live
+    /// Tekla 2021: RADIUS is signed (+ = counter-clockwise about +Z for horizontal monorails) and
+    /// LENGTH is the arc length; neither is needed here, RADIUS only cross-checks.
+    /// </summary>
+    private static void ReadCurvedBeam(TSM.Beam beam, double reportedRadius, PartCurveGeometry result)
+    {
+        var points = beam.GetCenterLine(false)?.OfType<TSG.Point>().Select(RawPoint).ToList();
+        if (points == null || points.Count < 2)
+        {
+            result.Warnings.Add("Part.GetCenterLine(false) returned fewer than two points.");
+            return;
+        }
+
+        var arc = CurveMath.ArcFromCenterlineVertices(points, reportedRadius, result.Warnings);
+        if (arc == null)
+        {
+            result.Warnings.Add(
+                "RADIUS is " + reportedRadius.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) +
+                " but the centerline vertices do not lie on one circle; the centerline is returned as straight pieces.");
+            result.CurveSource = "Part.GetCenterLine (segmented)";
+            for (var i = 1; i < points.Count; i++)
+                result.Segments.Add(CurveMath.Line(points[i - 1], points[i]));
+            return;
+        }
+
+        result.CurveSource = "Part.GetCenterLine (curved Beam, RADIUS report property)";
+        arc.Index = 0;
+        result.Segments.Add(arc);
     }
 
     private static void ProjectIntoView(PartCurveGeometry result, PartCurveGeometryRequest request)

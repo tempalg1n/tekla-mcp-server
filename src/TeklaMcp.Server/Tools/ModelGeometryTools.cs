@@ -36,7 +36,8 @@ public static class ModelGeometryTools
     [McpServerTool(Name = "tekla_get_part_curve_geometry")]
     [Description(
         "Exact centerline geometry of ONE part, for dimensioning curved members (PolyBeam, e.g. " +
-        "curved tubes, bent bars, curved monorails) in drawings. Read-only. Returns: 'segments' — " +
+        "curved tubes, bent bars, curved monorails; and curved Beams — a Beam with a RADIUS — " +
+        "as one arc through its centerline) in drawings. Read-only. Returns: 'segments' — " +
         "lines and arcs exactly as Tekla computes them (arc: start/mid/end/center/normal, radius, " +
         "sweepAngle, arc length, chord, sagitta); 'arcs' — one entry per physical bend (Tekla splits " +
         "an ARC_POINT bend into two arcs; these are merged), use THESE for radius, chord, rise and " +

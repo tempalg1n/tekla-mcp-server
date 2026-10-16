@@ -122,6 +122,6 @@ public class MockCapabilityTests
         Assert.Collection(status.Objects,
             found => Assert.True(found.Found && found.UpToDate == true),
             missing => Assert.False(missing.Found));
-        Assert.Equal(0, model.GetNumberingStatus(null).Objects.Count);
+        Assert.Empty(model.GetNumberingStatus(null).Objects);
     }
 }
