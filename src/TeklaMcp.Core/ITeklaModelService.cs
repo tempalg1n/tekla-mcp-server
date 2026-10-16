@@ -326,6 +326,19 @@ public interface ITeklaModelService
     /// </summary>
     ViewCaptureResult CaptureView(ViewCaptureRequest request);
 
+    /// <summary>
+    /// Picture of the ACTIVE drawing for <c>tekla_capture_drawing</c>: the whole sheet, one view's
+    /// frame (<see cref="DrawingCaptureRequest.ViewId"/>) or a sheet region. Read-only — nothing in
+    /// Tekla changes. The live backend copies the pixels of the drawing editor's own window
+    /// (PrintWindow, never a screen copy) and locates the sheet on them
+    /// (<c>TeklaMcp.Core.Rendering.SheetLocator</c>); when the sheet cannot be located it returns
+    /// the whole editor window with <see cref="DrawingCaptureResult.Scope"/> = "visible" and says
+    /// so. No open drawing, a minimized or covered editor, or an unknown view fail with a
+    /// <see cref="DrawingCaptureResult.Message"/>. The mock backend returns a labelled stand-in
+    /// (<see cref="DrawingCaptureResult.Source"/>). Throws only when Tekla cannot be reached.
+    /// </summary>
+    DrawingCaptureResult CaptureDrawing(DrawingCaptureRequest request);
+
     // -- Mutations (create / modify / delete) ---------------------------------------------
     //
     // ALL mutations honor preview-by-default: when apply == false NOTHING is written, but the

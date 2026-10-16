@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
-using System.Threading;
 using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
 using TeklaMcp.Core.Rendering;
@@ -391,46 +390,20 @@ public sealed partial class TeklaModelService
     }
 
     /// <summary>
-    /// Capture until Tekla has finished redrawing: two identical frames in a row, which must also
-    /// differ from the frame taken before the change — or, if the picture never changes, have
-    /// stayed the same for ~1 s. Gives up after <paramref name="budgetMs"/> and keeps the last frame.
+    /// <see cref="TeklaWindowCapture.CaptureSettled"/> after a camera/colour change (200 ms head
+    /// start), with its outcome as warnings.
     /// </summary>
     private static Bitmap? CaptureSettled(
         IntPtr surface, long? baseline, int budgetMs, ViewCaptureResult result, out string error)
     {
-        error = "";
-        budgetMs = Math.Max(300, Math.Min(budgetMs, 10000));
-        var clock = Stopwatch.StartNew();
-        Thread.Sleep(200);
-        Bitmap? last = null;
-        long? lastHash = null;
-        var differsFromBaseline = false;
-        while (true)
-        {
-            var frame = TeklaWindowCapture.Capture(surface, out error);
-            if (frame == null)
-            {
-                last?.Dispose();
-                return null;
-            }
-            var hash = TeklaWindowCapture.Fingerprint(frame, out _);
-            if (baseline.HasValue && hash != baseline.Value) differsFromBaseline = true;
-            var stable = lastHash.HasValue && hash == lastHash.Value;
-            last?.Dispose();
-            last = frame;
-            lastHash = hash;
-
-            if (stable && (differsFromBaseline || !baseline.HasValue || clock.ElapsedMilliseconds > 1000))
-            {
-                result.Settled = true;
-                break;
-            }
-            if (clock.ElapsedMilliseconds >= budgetMs) break;
-            Thread.Sleep(150);
-        }
+        var last = TeklaWindowCapture.CaptureSettled(
+            surface, baseline, budgetMs, 200, out var settled, out var differsFromBaseline, out error);
+        if (last == null) return null;
+        result.Settled = settled;
 
         if (!result.Settled)
-            result.Warnings.Add("The view was still changing after " + budgetMs + " ms; the picture may show a redraw in progress.");
+            result.Warnings.Add("The view was still changing after " + TeklaWindowCapture.ClampSettleBudget(budgetMs) +
+                                " ms; the picture may show a redraw in progress.");
         else if (baseline.HasValue && !differsFromBaseline)
             result.Warnings.Add("The picture did not change after zoom/highlight — the targets may already have been framed, " +
                                 "or Tekla did not apply the change.");

@@ -49,7 +49,7 @@ ID from the current session.
 
 ### Pictures for agents
 
-Two tools return images (MCP `ImageContentBlock`) next to their JSON:
+Three tools return images (MCP `ImageContentBlock`) next to their JSON:
 
 - `tekla_render_schematic` (**beta**): the backend's `GetSchematicScene` delivers only raw
   geometry; `TeklaMcp.Core.Rendering` projects and draws it (own rasterizer, bitmap font, PNG
@@ -57,6 +57,10 @@ Two tools return images (MCP `ImageContentBlock`) next to their JSON:
 - `tekla_capture_view`: the live backend copies the pixels Tekla rendered in its own view window
   (`TeklaWindowCapture`, Win32 `PrintWindow`), optionally after a restorable zoom/highlight through
   the Model.UI API. The mock answers with a schematic stand-in labelled as such.
+- `tekla_capture_drawing`: the same pixel copy from the drawing editor's window, read-only. The
+  Open API cannot read the editor's zoom, so `Core/Rendering/SheetLocator` finds the sheet's edges on
+  the picture and `DrawingCapturePlan` crops it to the sheet, a view frame or a region and maps
+  pixels back to sheet paper mm — the mock draws its stand-in through the same plan.
 
 ### Drawing subsystem
 

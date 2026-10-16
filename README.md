@@ -93,8 +93,8 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **119 tools** in total, including
-**53 drawing-specific tools**.
+All tools use the `tekla_` prefix. The current build exposes **120 tools** in total, including
+**54 drawing-specific tools**.
 
 | Tool | Description |
 |---|---|
@@ -141,6 +141,8 @@ All tools use the `tekla_` prefix. The current build exposes **119 tools** in to
 Agents otherwise reason about a model only through property lists and coordinates. These two tools
 answer with an **MCP image block** — the agent actually sees the picture — plus a JSON block that
 maps what is on it back to GUIDs and model millimetres. One picture costs about 1–1.6k tokens.
+For drawings, `tekla_capture_drawing` (in the drawing tables below) does the same for the open
+drawing.
 
 | Tool | Description |
 |---|---|
@@ -292,6 +294,15 @@ environment; do not rely on the tag as the only rollback mechanism. Pay particul
 | `tekla_list_drawing_objects` | Filter active-drawing objects by ID/index/type/view/model GUID/text/selection, with optional geometry and UDAs. Marks come with their content and the marked model object; `emptyMarksOnly` finds empty marks. |
 | `tekla_get_selected_drawing_objects` | Return the current drawing-editor selection. |
 | `tekla_select_drawing_objects` | Select/highlight matching active-drawing objects (an immediate UI side effect, not a model mutation). |
+| `tekla_capture_drawing` | **Picture of the open drawing** as Tekla draws it — whole sheet, one view's frame (`viewId`) or a sheet region — returned as an image plus JSON (view frames and pixel boxes, pixel → sheet mm). Read-only: nothing is zoomed or selected. Use it to check dimensions, marks and labels after a drawing edit. See the note below. |
+
+> **What the drawing capture can see.** The drawing editor as it is on screen: pixels come from Tekla's
+> own drawing window (`PrintWindow`), never from a screen copy. The sheet is located from its edges on
+> that picture (the Open API cannot read the editor's zoom), so a view or region can be cut out only
+> while the sheet's edges are on screen — a freshly opened drawing qualifies. Zoomed in past them,
+> the tool returns the whole window with `scope="visible"` and no coordinates. The picture is never
+> sharper than the screen (a whole A2 sheet is ~3 px per mm): capture one view to read small text.
+> Live-verified on Tekla 2021; other versions are untested.
 
 #### Drawing lifecycle and output
 
@@ -688,6 +699,8 @@ environment.
 - **The drawing layer is experimental** (new in v0.7.0, limited field testing) — see
   [Drawing tools](#drawing-tools).
 - **`tekla_render_schematic` is beta**: simplified geometry that can look cluttered on dense models.
+- **`tekla_capture_drawing` is live-verified on Tekla 2021 only**, and it can cut out a view or region
+  only while the sheet's edges are on screen.
 - **Whole-model scans are bounded by the client's ~60 s request timeout**, not by the server — page
   them with `maxObjects` + `cursor`. Even an unfiltered `tekla_count_objects` took ~20 s on one live
   Tekla 2023 model (first measurement; see [docs/backlog.md](docs/backlog.md)).
