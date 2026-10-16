@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -16,6 +17,8 @@ public sealed partial class TeklaModelService
     {
         public TSD.DrawingObject Object { get; set; } = null!;
         public bool AlreadyInserted { get; set; }
+        /// <summary>What the server changed in the request before sending it, if anything.</summary>
+        public string? Warning { get; set; }
     }
 
     public DrawingWriteResult CreateDrawingObjects(
@@ -56,6 +59,7 @@ public sealed partial class TeklaModelService
                         throw new InvalidOperationException("Tekla rejected drawing object Insert().");
 
                     StampDrawingOrigin(created.Object, "mcp:create_drawing_object");
+                    if (created.Warning != null) result.Warnings.Add(created.Warning);
                     createdRecords.Add(new DrawingObjectRecord
                     {
                         Object = created.Object,
@@ -370,11 +374,14 @@ public sealed partial class TeklaModelService
                     ? new TSG.Vector(0, 1, 0)
                     : ToDrawingVector(spec.UpDirection);
                 var straightHandler = new TSD.StraightDimensionSetHandler();
+                // The tool contract is paper mm; CreateDimensionSet takes view units (issue #26).
+                var straightDistance = DimensionMath.PaperToViewDistance(
+                    spec.Distance ?? 10, ViewScale(target));
                 TSD.StraightDimensionSet straight;
                 if (string.IsNullOrWhiteSpace(spec.AttributeFile))
                 {
                     straight = straightHandler.CreateDimensionSet(
-                        target, ToPointList(points), up, spec.Distance ?? 10);
+                        target, ToPointList(points), up, straightDistance);
                 }
                 else
                 {
@@ -382,7 +389,7 @@ public sealed partial class TeklaModelService
                         new TSD.StraightDimensionSet.StraightDimensionSetAttributes(
                             null, spec.AttributeFile);
                     straight = straightHandler.CreateDimensionSet(
-                        target, ToPointList(points), up, spec.Distance ?? 10, straightAttributes);
+                        target, ToPointList(points), up, straightDistance, straightAttributes);
                 }
                 if (straight == null) throw new InvalidOperationException("CreateDimensionSet returned null.");
                 return New(straight, true);
@@ -395,11 +402,16 @@ public sealed partial class TeklaModelService
                         : new TSD.AngleDimensionAttributes(spec.AttributeFile)));
             case "radius_dimension":
                 RequirePoints(points, 3, kind);
-                return New(new TSD.RadiusDimension(
+                // Tekla draws the arc clockwise from point 1 to point 3 (issue #27).
+                // TODO(windows): Distance units of RadiusDimension are undocumented; passed as is.
+                var radiusWarning = OrderRadiusPoints(points);
+                var radius = New(new TSD.RadiusDimension(
                     target, points[0], points[1], points[2], spec.Distance ?? 10,
                     string.IsNullOrWhiteSpace(spec.AttributeFile)
                         ? new TSD.RadiusDimensionAttributes()
                         : new TSD.RadiusDimensionAttributes(spec.AttributeFile)));
+                radius.Warning = radiusWarning;
+                return radius;
             case "curved_radial":
             case "curved_orthogonal":
                 RequirePoints(points, 4, kind);
@@ -469,6 +481,33 @@ public sealed partial class TeklaModelService
 
     private static CreatedDrawingObject New(TSD.DrawingObject obj, bool alreadyInserted = false) =>
         new CreatedDrawingObject { Object = obj, AlreadyInserted = alreadyInserted };
+
+    /// <summary>The scale of a placed view (1:Scale); the sheet and unknown views count as 1.</summary>
+    private static double ViewScale(TSD.ViewBase target)
+    {
+        if (!(target is TSD.View view)) return 1.0;
+        try { return view.Attributes.Scale; }
+        catch { return 1.0; }
+    }
+
+    /// <summary>
+    /// Reorders the three view-space arc points in place (<see cref="DimensionMath.OrderArcClockwise"/>)
+    /// and says so; refuses points that do not span an arc.
+    /// </summary>
+    private static string? OrderRadiusPoints(List<TSG.Point> points)
+    {
+        var ordered = DimensionMath.OrderArcClockwise(
+            ToPoint3D(points[0]), ToPoint3D(points[1]), ToPoint3D(points[2]), out var reversed);
+        if (ordered == null)
+            throw new ArgumentException(
+                "radius_dimension needs three distinct points on an arc, not on a straight line.");
+        if (!reversed) return null;
+        var first = points[0];
+        points[0] = points[2];
+        points[2] = first;
+        return "radius_dimension: points 1 and 3 were swapped so that Tekla's clockwise arc " +
+               "from point 1 to point 3 passes through point 2.";
+    }
 
     private static List<TSG.Point> TransformPoints(TSD.ViewBase target, DrawingObjectSpec spec)
     {

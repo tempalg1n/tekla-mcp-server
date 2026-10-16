@@ -487,7 +487,7 @@ editor.
 | Object metadata | drawing `ModelObject.ModelIdentifier`, `IHideable`, type-specific geometry, optional database-object UDAs | ✅ 2021 signatures; ⚠️ geometry/visibility/UDA availability varies by type |
 | Coordinate transform | `MatrixFactory.ToCoordinateSystem(view.DisplayCoordinateSystem).Transform(point)` | ✅ common signature; ⚠️ global-to-view orientation must be checked on rotated/mirrored views |
 | Graphics/annotations | `Text`, `Line`, `Rectangle`, `Circle`, `Arc`, `Polyline`, `Polygon`, `Cloud`, `Symbol`, `LevelMark` | ✅ 2021 constructors/signatures; ⚠️ insertion/attributes/bulge behavior unverified |
-| Dimensions | straight and curved dimension-set handlers, `AngleDimension`, `RadiusDimension` | ✅ 2021 signatures; ⚠️ point order, paper distance and attributes need live validation |
+| Dimensions | straight and curved dimension-set handlers, `AngleDimension`, `RadiusDimension` | ✅ 2021 signatures; ✅ straight-set distance units and radius point order (Tekla 2021, issues #26/#27, see "Dimension quirks"); ⚠️ radius/curved distance units and attributes unverified |
 | Object marks | `View.GetModelObjects(Identifier)`, `new Mark(ModelObject)`, optional insertion/attributes | ✅ 2021 signatures; ⚠️ represented-object and duplicate-mark behavior unverified |
 | Mark merge/split | `Drawing.Operations.Operation.MergeMarks` / `SplitMarks` | ✅ 2021 signatures; ⚠️ mark compatibility/result identity unverified |
 | Object edit | `IMovableRelative.MoveObjectRelative`, `IHideable.Hideable`, `Attributes.LoadAttributes`, `Modify/Delete` | ✅ 2021 signatures; ⚠️ capability varies by concrete object type |
@@ -512,6 +512,25 @@ View placement/frame and dimension-line distances use paper millimetres; section
 are source-view-local and section depths are model millimetres. Read-side object geometry is
 returned in the coordinate system Tekla exposes for that object; callers should use the
 coordinate systems returned by `tekla_list_drawing_views` instead of assuming global values.
+
+### Dimension quirks (issues #26, #27)
+
+- **`StraightDimensionSetHandler.CreateDimensionSet(…, Distance)` takes VIEW units**, not paper mm
+  — verified live on Tekla 2021 (v0.8.1, plan view at 1:50): `distance = 8` put the dimension line
+  8 model-mm (0.16 paper mm) off the parts and the set read back `Distance = 8`; `400` gave the
+  intended 8 paper mm. The Open API docs call `StraightDimensionSet.Distance` paper mm. The line
+  is offset from the OUTERMOST point of the set along the up direction. The tools keep paper mm as
+  their contract and multiply by `View.Attributes.Scale` (`DimensionMath.PaperToViewDistance`;
+  the sheet counts as 1).
+- `AngleDimension.Distance` and `CurvedDimensionSetBase.Distance` are documented as paper mm and
+  are passed unchanged; `RadiusDimension.Distance` is undocumented and passed unchanged
+  (`TODO(windows)`). None of the three is verified live yet.
+- **`RadiusDimension` draws its arc CLOCKWISE (view XY) from point 1 to point 3**, whatever point 2
+  — verified live on Tekla 2021 on five arcs (R1715, R2500 ×3, R2800): a counter-clockwise arc
+  passed start → mid → end comes out as the complementary, near-full circle; the radius value is
+  right either way. `DimensionMath.OrderArcClockwise` swaps points 1 and 3 for counter-clockwise
+  input (a warning says so) and refuses collinear points. Rounded input points shift the value
+  (`R1714.5` for R1715); take the points from `tekla_get_part_curve_geometry`'s view block.
 
 ### Drawing editor preconditions
 

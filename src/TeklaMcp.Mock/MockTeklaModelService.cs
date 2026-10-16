@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Mock;
@@ -1564,6 +1565,27 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 result.Errors.Add("sheet coordinates require viewIndex=-1 (the drawing sheet).");
                 continue;
             }
+            var points = (spec.Points ?? new List<Point3D>()).ToList();
+            if (Eq(spec.Kind, "radius_dimension") && points.Count >= 3)
+            {
+                // Same ordering as the live backend (issue #27); the mock's points stand for view space.
+                var ordered = DimensionMath.OrderArcClockwise(
+                    points[0], points[1], points[2], out var reversed);
+                if (ordered == null)
+                {
+                    result.Errors.Add(
+                        "radius_dimension needs three distinct points on an arc, not on a straight line.");
+                    continue;
+                }
+                if (reversed)
+                {
+                    points[0] = ordered[0];
+                    points[2] = ordered[2];
+                    result.Warnings.Add(
+                        "radius_dimension: points 1 and 3 were swapped so that Tekla's clockwise arc " +
+                        "from point 1 to point 3 passes through point 2.");
+                }
+            }
             var info = new DrawingObjectInfo
             {
                 Index = baseObjectCount + validSequence,
@@ -1576,7 +1598,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Type = NormalizeDrawingObjectType(spec.Kind),
                 ModelGuid = spec.ModelGuid ?? "",
                 Text = spec.Text ?? "",
-                Points = (spec.Points ?? new List<Point3D>()).ToList(),
+                Points = points,
                 Radius = spec.Radius,
                 Bulge = spec.Bulge,
                 Udas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

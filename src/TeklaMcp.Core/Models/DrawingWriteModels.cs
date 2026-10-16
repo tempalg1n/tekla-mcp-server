@@ -115,7 +115,8 @@ public sealed class DrawingObjectSpec
     /// </summary>
     [Description("view, model, or sheet. sheet requires ViewIndex=-1.")]
     public string CoordinateSpace { get; set; } = "view";
-    [Description("Defining points in CoordinateSpace.")]
+    [Description("Defining points in CoordinateSpace. radius_dimension: arc start, a point " +
+                 "between, arc end (either direction; the server orders them for Tekla).")]
     public List<Point3D> Points { get; set; } = new List<Point3D>();
     [Description("Text contents for a text object.")]
     public string Text { get; set; } = "";
@@ -141,7 +142,9 @@ public sealed class DrawingObjectSpec
     public double? AngleDegrees { get; set; }
     [Description("Dimension up direction in view coordinates.")]
     public Point3D? UpDirection { get; set; }
-    [Description("Dimension line distance in paper millimetres.")]
+    [Description("Dimension line distance in paper millimetres (converted to view units with " +
+                 "the view scale where Tekla expects them). Straight dimensions: measured from " +
+                 "the outermost point along UpDirection.")]
     public double? Distance { get; set; }
 }
 

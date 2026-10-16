@@ -482,14 +482,16 @@ public static class DrawingContentTools
 
     [McpServerTool(Name = "tekla_create_straight_dimension")]
     [Description("Create a straight dimension set in a real view of the ACTIVE drawing. Distance " +
-                 "is paper mm; points may be view-local or global model coordinates. Preview unless apply=true.")]
+                 "is paper mm (the server multiplies it by the view scale, which is what Tekla " +
+                 "expects); Tekla offsets the line from the OUTERMOST point of the set along " +
+                 "upDirection. Points may be view-local or global model coordinates. Preview unless apply=true.")]
     public static DrawingWriteResult CreateStraightDimension(
         ITeklaModelService model,
         [Description("Two or more dimension points 'x,y,z; ...'.")] string points,
         [Description("Target View ID.")] int viewId,
         [Description("Target View ID2.")] int viewId2 = 0,
         [Description("Up direction 'x,y,z' in view coordinates.")] string upDirection = "0,1,0",
-        [Description("Dimension line distance in paper mm.")] double distance = 10,
+        [Description("Dimension line distance in paper mm, from the outermost point along upDirection.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved dimension attributes file.")] string attributeFile = "",
         [Description("Set true to create; false returns preview.")] bool apply = false,
@@ -525,10 +527,16 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath);
 
     [McpServerTool(Name = "tekla_create_radius_dimension")]
-    [Description("Create a radius dimension from three arc points. Distance is paper mm. Preview unless apply=true.")]
+    [Description("Create a radius dimension from three arc points: start, a point on the arc " +
+                 "between, end — in either direction. Tekla draws the arc clockwise from point 1 " +
+                 "to point 3, so the server swaps points 1 and 3 when they run counter-clockwise " +
+                 "in the view (a warning says so); a wrong middle point dimensions the " +
+                 "complementary arc. For exact values take the points from " +
+                 "tekla_get_part_curve_geometry's view block rather than rounding them. " +
+                 "Distance is paper mm. Preview unless apply=true.")]
     public static DrawingWriteResult CreateRadiusDimension(
         ITeklaModelService model,
-        [Description("Three arc points 'x,y,z; ...'.")] string points,
+        [Description("Arc start; a point on the arc between; arc end, as 'x,y,z; x,y,z; x,y,z'.")] string points,
         [Description("Target View ID.")] int viewId,
         [Description("Target View ID2.")] int viewId2 = 0,
         [Description("Dimension distance in paper mm.")] double distance = 10,
