@@ -249,6 +249,8 @@ public sealed partial class TeklaModelService
             case "curved_radial": return "CurvedDimensionSetRadial";
             case "curved_orthogonal": return "CurvedDimensionSetOrthogonal";
             case "level_mark": return "LevelMark";
+            case "detail_mark": return "DetailMark";
+            case "section_mark": return "SectionMark";
             default:
                 var text = (kind ?? "").Trim();
                 return text.Length == 0
@@ -457,6 +459,43 @@ public sealed partial class TeklaModelService
                     mark.Attributes = new TSD.Mark.MarkAttributes(modelObject, spec.AttributeFile);
                 if (points.Count > 0) mark.InsertionPoint = points[0];
                 return New(mark);
+            case "detail_mark":
+            {
+                // A callout without a view (issue #36): circle + label referencing another sheet.
+                if (!(target is TSD.View detailView))
+                    throw new ArgumentException("detail_mark requires a real drawing view, not the sheet.");
+                RequirePoints(points, 2, kind);
+                TSG.Point boundary, label;
+                if (points.Count >= 3)
+                {
+                    boundary = points[1];
+                    label = points[2];
+                }
+                else if (spec.Radius.HasValue && spec.Radius.Value > 0)
+                {
+                    boundary = new TSG.Point(points[0].X + spec.Radius.Value, points[0].Y, points[0].Z);
+                    label = points[1];
+                }
+                else
+                    throw new ArgumentException(
+                        "detail_mark needs center, boundary and label points, or center and label plus radius.");
+                var detailAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                    ? new TSD.DetailMark.DetailMarkAttributes()
+                    : new TSD.DetailMark.DetailMarkAttributes(spec.AttributeFile);
+                if (!string.IsNullOrWhiteSpace(spec.Text)) detailAttributes.MarkName = spec.Text;
+                return New(new TSD.DetailMark(detailView, points[0], boundary, label, detailAttributes));
+            }
+            case "section_mark":
+            {
+                if (!(target is TSD.View sectionView))
+                    throw new ArgumentException("section_mark requires a real drawing view, not the sheet.");
+                RequirePoints(points, 2, kind);
+                var sectionAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                    ? new TSD.SectionMarkBase.SectionMarkAttributes()
+                    : new TSD.SectionMarkBase.SectionMarkAttributes(spec.AttributeFile);
+                if (!string.IsNullOrWhiteSpace(spec.Text)) sectionAttributes.MarkName = spec.Text;
+                return New(new TSD.SectionMark(sectionView, points[0], points[1], sectionAttributes));
+            }
             case "level_mark":
                 RequirePoints(points, 2, kind);
                 var levelMark = new TSD.LevelMark(
@@ -482,7 +521,7 @@ public sealed partial class TeklaModelService
                 throw new ArgumentException(
                     "Unknown kind. Use text, line, rectangle, circle, arc, polyline, polygon, cloud, " +
                     "straight_dimension, angle_dimension, radius_dimension, curved_radial, " +
-                    "curved_orthogonal, mark, level_mark or symbol.");
+                    "curved_orthogonal, mark, level_mark, detail_mark, section_mark or symbol.");
         }
     }
 

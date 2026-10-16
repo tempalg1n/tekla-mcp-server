@@ -125,7 +125,7 @@ public sealed class DrawingObjectSpec
     /// <summary>text, line, rectangle, circle, arc, polyline, polygon, cloud, dimension or mark.</summary>
     [Description("Object kind: text, line, rectangle, circle, arc, polyline, polygon, cloud, " +
                  "straight_dimension, angle_dimension, radius_dimension, curved_radial, " +
-                 "curved_orthogonal, mark, level_mark, or symbol.")]
+                 "curved_orthogonal, mark, level_mark, detail_mark, section_mark, or symbol.")]
     public string Kind { get; set; } = "";
     [Description("Ephemeral target view index; use -1 only for the drawing sheet.")]
     public int ViewIndex { get; set; }
@@ -142,7 +142,7 @@ public sealed class DrawingObjectSpec
     [Description("Defining points in CoordinateSpace. radius_dimension: arc start, a point " +
                  "between, arc end (either direction; the server orders them for Tekla).")]
     public List<Point3D> Points { get; set; } = new List<Point3D>();
-    [Description("Text contents for a text object.")]
+    [Description("Text contents for a text object; the mark name for detail_mark / section_mark.")]
     public string Text { get; set; } = "";
     [Description("Represented model GUID for a mark.")]
     public string ModelGuid { get; set; } = "";

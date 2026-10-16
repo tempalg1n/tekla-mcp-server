@@ -55,7 +55,7 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 
 ## Инструменты
 
-Все инструменты с префиксом `tekla_`; всего **117**, из них **51** — для чертежей. Полная таблица с описанием каждого — в [английском README](README.md#tools); ниже — основные.
+Все инструменты с префиксом `tekla_`; всего **119**, из них **53** — для чертежей. Полная таблица с описанием каждого — в [английском README](README.md#tools); ниже — основные.
 
 | Инструмент | Назначение |
 |---|---|
@@ -82,7 +82,7 @@ Tekla Structures хранит богатые BIM-данные — детали, 
 | `tekla_create_beam` / `tekla_create_beams` / `tekla_create_column` / `tekla_create_plate` / `tekla_modify_part` / `tekla_modify_parts` / `tekla_delete_objects` | Создание, изменение (до 200 деталей за вызов) и удаление деталей; генераторы по осям и каркасы — в английской таблице |
 | `tekla_create_connection` / `tekla_copy_connection` / `tekla_modify_connections` / `tekla_create_component` | Соединения и компоненты: вставка, копирование, массовая переориентация (`UpVector`), плагины с упорядоченным вводом |
 | `tekla_save_model` / `tekla_open_model` | Сохранить модель или переключить Tekla на другую (при несохранённых изменениях открытие отклоняется, пока не передан `discardUnsavedChanges=true`) |
-| `tekla_list_drawings`, `tekla_create_drawing`, `tekla_create_straight_dimension`, … | 51 инструмент для чертежей: список и QA, создание, обновление, выпуск, PDF, виды, размеры, марки, графика *(экспериментально)* |
+| `tekla_list_drawings`, `tekla_create_drawing`, `tekla_create_straight_dimension`, … | 53 инструмента для чертежей: список и QA, создание, обновление, выпуск, PDF, виды, размеры, марки, графика *(экспериментально)* |
 | `tekla_search_api` / `tekla_get_api_doc` / `tekla_get_api_reference_status` | Поиск по локальному справочнику Tekla Open API (типы и сигнатуры) |
 | `tekla_check_csharp` / `tekla_run_csharp` | Escape hatch: проверить и выполнить короткий C#-скрипт с полным Tekla Open API (read-only по умолчанию, проверка политикой, таймаут) |
 

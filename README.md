@@ -93,8 +93,8 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **117 tools** in total, including
-**51 drawing-specific tools**.
+All tools use the `tekla_` prefix. The current build exposes **119 tools** in total, including
+**53 drawing-specific tools**.
 
 | Tool | Description |
 |---|---|
@@ -340,6 +340,8 @@ file names are passed to Tekla and resolved by the running environment.
 | `tekla_create_radius_dimension` | Create a radius dimension from start, a point between and end (either direction; ordered for Tekla). |
 | `tekla_create_curved_dimension` | Create a radial or orthogonal curved dimension set. |
 | `tekla_create_drawing_mark` | Create a mark for a model object represented in a target view. |
+| `tekla_create_detail_mark` | Create a standalone detail mark (callout circle + label) without a detail view, e.g. to reference a node on another sheet. |
+| `tekla_create_section_mark` | Create a standalone section mark without a section view. |
 | `tekla_create_level_mark` | Create a level mark. |
 | `tekla_create_drawing_symbol` | Create a symbol from a Tekla `.sym` library. |
 | `tekla_modify_drawing_objects` | Batch-change text, relative position, visibility, or loaded attributes. |

@@ -2003,6 +2003,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             case "curved_radial": return "CurvedDimensionSetRadial";
             case "curved_orthogonal": return "CurvedDimensionSetOrthogonal";
             case "level_mark": return "LevelMark";
+            case "detail_mark": return "DetailMark";
+            case "section_mark": return "SectionMark";
         }
         if (value.Length == 0) return "";
         return char.ToUpperInvariant(value[0]) + value.Substring(1).ToLowerInvariant();

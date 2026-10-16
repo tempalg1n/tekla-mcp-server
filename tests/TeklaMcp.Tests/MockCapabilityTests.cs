@@ -126,6 +126,29 @@ public class MockCapabilityTests
     }
 
     [Fact]
+    public void Standalone_detail_and_section_marks_are_drawing_objects()
+    {
+        var model = new MockTeklaModelService();
+        var result = model.CreateDrawingObjects(new[]
+        {
+            new DrawingObjectSpec
+            {
+                Kind = "detail_mark", ViewId = 11001, ViewId2 = 0, Text = "4", Radius = 300,
+                Points = new List<Point3D> { new Point3D(0, 0, 0), new Point3D(400, 400, 0) },
+            },
+            new DrawingObjectSpec
+            {
+                Kind = "section_mark", ViewId = 11001, ViewId2 = 0, Text = "6",
+                Points = new List<Point3D> { new Point3D(0, -500, 0), new Point3D(0, 500, 0) },
+            },
+        }, apply: true);
+
+        Assert.Equal(2, result.CreatedCount);
+        Assert.Equal(new[] { "DetailMark", "SectionMark" }, result.ObjectPreview.Select(o => o.Type));
+        Assert.Equal(new[] { "4", "6" }, result.ObjectPreview.Select(o => o.Text));
+    }
+
+    [Fact]
     public void Marks_list_their_content_and_empty_marks_can_be_found()
     {
         var model = new MockTeklaModelService();

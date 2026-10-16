@@ -654,6 +654,59 @@ public static class DrawingContentTools
             attributeFile, modelGuid: modelGuid, apply: apply,
             expectedModelPath: expectedModelPath);
 
+    [McpServerTool(Name = "tekla_create_detail_mark", ReadOnly = false, Destructive = false,
+        Idempotent = false, OpenWorld = false)]
+    [Description("Create a standalone DETAIL MARK (callout circle + label) in a view of the ACTIVE drawing, " +
+                 "WITHOUT creating a detail view — e.g. to reference a node drawn on another sheet (issue #36). " +
+                 "Give center + boundary + label points, or center + label + radius (model mm). Points are " +
+                 "view-local, or global model coordinates with coordinateSpace=model. The created mark's " +
+                 "ID is returned in objectPreview (detail marks cannot be listed back reliably). Preview " +
+                 "unless apply=true.")]
+    public static DrawingWriteResult CreateDetailMark(
+        ITeklaModelService model,
+        [Description("Target View ID.")] int viewId,
+        [Description("Detail centre 'x,y,z'.")] string centerPoint,
+        [Description("Label point 'x,y,z'.")] string labelPoint,
+        [Description("Target View ID2.")] int viewId2 = 0,
+        [Description("Boundary point 'x,y,z' on the circle; omit when giving radius.")] string? boundaryPoint = null,
+        [Description("Circle radius (model mm) when no boundaryPoint is given.")] double? radius = null,
+        [Description("Mark name, e.g. the node number.")] string markName = "",
+        [Description("Saved detail-mark attributes file.")] string markAttributeFile = "",
+        [Description("view or model.")] string coordinateSpace = "view",
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+    {
+        var points = string.IsNullOrWhiteSpace(boundaryPoint)
+            ? centerPoint + "; " + labelPoint
+            : centerPoint + "; " + boundaryPoint + "; " + labelPoint;
+        if (string.IsNullOrWhiteSpace(boundaryPoint) && (!radius.HasValue || radius.Value <= 0))
+            return ToolValidationFailure(
+                "create_drawing_objects", apply, "Give boundaryPoint, or radius > 0.");
+        return CreateOne(model, "detail_mark", points, viewId, viewId2, -1, coordinateSpace,
+            markAttributeFile, text: markName, radius: radius, apply: apply,
+            expectedModelPath: expectedModelPath);
+    }
+
+    [McpServerTool(Name = "tekla_create_section_mark", ReadOnly = false, Destructive = false,
+        Idempotent = false, OpenWorld = false)]
+    [Description("Create a standalone SECTION MARK (cut symbols) in a view of the ACTIVE drawing, WITHOUT " +
+                 "creating a section view — e.g. to reference a section drawn on another sheet (issue #36). " +
+                 "Two points: left and right symbol; the look direction follows the same rule as " +
+                 "tekla_create_section_view (the cut direction rotated +90°). Points are view-local, or " +
+                 "global model coordinates with coordinateSpace=model. Preview unless apply=true.")]
+    public static DrawingWriteResult CreateSectionMark(
+        ITeklaModelService model,
+        [Description("Target View ID.")] int viewId,
+        [Description("Left point; right point as 'x,y,z; x,y,z'.")] string points,
+        [Description("Target View ID2.")] int viewId2 = 0,
+        [Description("Mark name, e.g. '6'.")] string markName = "",
+        [Description("Saved section-mark attributes file.")] string markAttributeFile = "",
+        [Description("view or model.")] string coordinateSpace = "view",
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        CreateOne(model, "section_mark", points, viewId, viewId2, -1, coordinateSpace,
+            markAttributeFile, text: markName, apply: apply, expectedModelPath: expectedModelPath);
+
     [McpServerTool(Name = "tekla_create_level_mark")]
     [Description("Create a level mark from insertion and base points. Preview unless apply=true.")]
     public static DrawingWriteResult CreateLevelMark(
@@ -930,6 +983,8 @@ public static class DrawingContentTools
             case "straight_dimension":
             case "dimension":
             case "level_mark": return 2;
+            case "detail_mark":
+            case "section_mark": return 2;
             case "polygon":
             case "cloud":
             case "angle_dimension":

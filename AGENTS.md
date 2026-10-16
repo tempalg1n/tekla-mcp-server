@@ -162,7 +162,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
    drawing-specific count included).
 6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
    tools, passed as its second argument in BOTH `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` (currently `117`). Adding or removing a tool without changing
+   `.github/workflows/release.yml` (currently `119`). Adding or removing a tool without changing
    both fails CI. Keep workflows, README count and `tools/list` equal.
 7. Add the user-facing change to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md), and tests in
    `tests/TeklaMcp.Tests` for any Core/Mock/Scripting logic.
@@ -676,7 +676,7 @@ Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8
 ```bash
 dotnet build src/TeklaMcp.Server -c Release
 dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
-  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 117
+  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 119
 ```
 It is what CI and the release workflow run after the unit tests, and it asserts EXACT values:
 
