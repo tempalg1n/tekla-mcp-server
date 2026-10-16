@@ -191,8 +191,17 @@ public sealed class DrawingObjectSpec
                  "the outermost point along UpDirection.")]
     public double? Distance { get; set; }
     [Description("Straight dimensions: 'fixed' keeps the line exactly at Distance; 'free' lets Tekla move " +
-                 "it away from marks (it then does not keep the offset). Empty = the attribute file's setting.")]
+                 "it away from marks (it then does not keep the offset). Marks: leader_line (needs LeaderStart), " +
+                 "base_line / along_line (LeaderStart → LineEnd is the line) or point. Empty = default.")]
     public string? Placing { get; set; }
+    [Description("Marks: where the leader line starts (a point on the VISIBLE part), in CoordinateSpace.")]
+    public Point3D? LeaderStart { get; set; }
+    [Description("Marks with base_line / along_line placing: the line's end point, in CoordinateSpace.")]
+    public Point3D? LineEnd { get; set; }
+    [Description("Marks: replace the content with this text.")]
+    public string? ContentText { get; set; }
+    [Description("Marks: copy the content of this existing mark ('id:id2' from tekla_list_drawing_objects).")]
+    public string? CopyContentFromObjectId { get; set; }
 }
 
 /// <summary>Batch edit/action over active-drawing objects selected by a query.</summary>
@@ -203,6 +212,12 @@ public sealed class DrawingObjectModification
     /// <summary>drawing, view, show_drawing, show_view, or null to keep.</summary>
     public string? Visibility { get; set; }
     public string? AttributeFile { get; set; }
+    /// <summary>Marks only (issue #37): new insertion point (object/view coordinates).</summary>
+    public Point3D? InsertionPoint { get; set; }
+    /// <summary>Marks only: put the mark on a leader line starting here (object/view coordinates).</summary>
+    public Point3D? LeaderStart { get; set; }
+    /// <summary>Marks only: replace the content with this text.</summary>
+    public string? ContentText { get; set; }
     public bool Delete { get; set; }
 }
 

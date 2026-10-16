@@ -52,7 +52,10 @@ public sealed partial class TeklaModelService
                 try
                 {
                     var target = ResolveTargetView(active, views, spec);
-                    var created = CreateOneDrawingObject(target, spec);
+                    var copiedContent = string.IsNullOrWhiteSpace(spec.CopyContentFromObjectId)
+                        ? null
+                        : FindMarkContent(handler, active, spec.CopyContentFromObjectId!);
+                    var created = CreateOneDrawingObject(target, spec, copiedContent);
                     if (created.Object == null)
                         throw new InvalidOperationException("Drawing object creation returned null.");
                     if (!created.AlreadyInserted && !created.Object.Insert())
@@ -104,7 +107,9 @@ public sealed partial class TeklaModelService
             modification.Text == null &&
             modification.MoveBy == null &&
             string.IsNullOrWhiteSpace(modification.Visibility) &&
-            string.IsNullOrWhiteSpace(modification.AttributeFile))
+            string.IsNullOrWhiteSpace(modification.AttributeFile) &&
+            modification.InsertionPoint == null && modification.LeaderStart == null &&
+            modification.ContentText == null)
         {
             result.Message = "No drawing-object changes were supplied.";
             return result;
@@ -279,9 +284,66 @@ public sealed partial class TeklaModelService
         return view;
     }
 
+    /// <summary>The content of an existing mark ('id:id2'), cloned, for a new mark (issue #37).</summary>
+    private static TSD.ContainerElement FindMarkContent(TSD.DrawingHandler handler, TSD.Drawing active, string objectId)
+    {
+        var parts = objectId.Trim().Split(':');
+        if (!int.TryParse(parts[0], out var id) || (parts.Length > 1 && !int.TryParse(parts[1], out _)))
+            throw new ArgumentException("copyContentFromMarkId must be 'id:id2'.");
+        var id2 = parts.Length > 1 ? int.Parse(parts[1]) : 0;
+        var query = new DrawingObjectQuery();
+        query.ObjectIds.Add(new TeklaIdentifierInfo { Id = id, Id2 = id2 });
+        var record = GetDrawingObjectRecords(handler, active, query, 1).FirstOrDefault();
+        if (!(record?.Object is TSD.Mark source))
+            throw new ArgumentException("No mark " + objectId + " in the active drawing to copy the content from.");
+        return (TSD.ContainerElement)source.Attributes.Content.Clone();
+    }
+
+    /// <summary>Leader/base-line/along-line/point placing of a mark (issue #37), points in the spec's space.</summary>
+    private static void ApplyMarkPlacing(TSD.Mark mark, TSD.ViewBase target, DrawingObjectSpec spec)
+    {
+        var placing = (spec.Placing ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        if (placing.Length == 0 && spec.LeaderStart == null) return;
+        var linePoints = new List<Point3D>();
+        if (spec.LeaderStart != null) linePoints.Add(spec.LeaderStart);
+        if (spec.LineEnd != null) linePoints.Add(spec.LineEnd);
+        var transformed = TransformPoints(target,
+            new DrawingObjectSpec { Points = linePoints, CoordinateSpace = spec.CoordinateSpace });
+        switch (placing)
+        {
+            case "":
+            case "leader_line":
+                if (transformed.Count < 1) throw new ArgumentException("leader_line placing needs leaderStart.");
+                mark.Placing = new TSD.LeaderLinePlacing(transformed[0]);
+                break;
+            case "base_line":
+            case "along_line":
+                if (transformed.Count < 2)
+                    throw new ArgumentException(placing + " placing needs leaderStart and lineEnd (the line).");
+                mark.Placing = placing == "base_line"
+                    ? (TSD.PlacingBase)new TSD.BaseLinePlacing(transformed[0], transformed[1])
+                    : new TSD.AlongLinePlacing(transformed[0], transformed[1]);
+                break;
+            case "point":
+                mark.Placing = new TSD.PointPlacing();
+                break;
+            default:
+                throw new ArgumentException("Mark placing must be leader_line, base_line, along_line or point.");
+        }
+    }
+
+    private static void SetMarkText(TSD.Mark mark, string text)
+    {
+        var attributes = mark.Attributes;
+        attributes.Content.Clear();
+        attributes.Content.Add(new TSD.TextElement(text));
+        mark.Attributes = attributes;
+    }
+
     private static CreatedDrawingObject CreateOneDrawingObject(
         TSD.ViewBase target,
-        DrawingObjectSpec spec)
+        DrawingObjectSpec spec,
+        TSD.ContainerElement? copiedContent = null)
     {
         var points = TransformPoints(target, spec);
         var kind = (spec.Kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
@@ -457,7 +519,15 @@ public sealed partial class TeklaModelService
                 var mark = new TSD.Mark(modelObject);
                 if (!string.IsNullOrWhiteSpace(spec.AttributeFile))
                     mark.Attributes = new TSD.Mark.MarkAttributes(modelObject, spec.AttributeFile);
+                ApplyMarkPlacing(mark, markView, spec);
                 if (points.Count > 0) mark.InsertionPoint = points[0];
+                if (copiedContent != null)
+                {
+                    var markAttributes = mark.Attributes;
+                    markAttributes.Content = copiedContent;
+                    mark.Attributes = markAttributes;
+                }
+                if (!string.IsNullOrWhiteSpace(spec.ContentText)) SetMarkText(mark, spec.ContentText!);
                 return New(mark);
             case "detail_mark":
             {
@@ -654,6 +724,18 @@ public sealed partial class TeklaModelService
                     throw new ArgumentException(
                         "visibility must be drawing, view, show_drawing or show_view.");
             }
+        }
+
+        if (modification.InsertionPoint != null || modification.LeaderStart != null ||
+            modification.ContentText != null)
+        {
+            if (!(obj is TSD.Mark mark))
+                throw new InvalidOperationException(
+                    "insertionPoint, leaderStart and contentText can only be changed on Mark objects.");
+            if (modification.LeaderStart != null)
+                mark.Placing = new TSD.LeaderLinePlacing(ToDrawingPoint(modification.LeaderStart));
+            if (modification.InsertionPoint != null) mark.InsertionPoint = ToDrawingPoint(modification.InsertionPoint);
+            if (modification.ContentText != null) SetMarkText(mark, modification.ContentText);
         }
 
         if (!string.IsNullOrWhiteSpace(modification.AttributeFile))

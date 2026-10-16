@@ -149,6 +149,39 @@ public class MockCapabilityTests
     }
 
     [Fact]
+    public void Marks_take_custom_or_copied_content()
+    {
+        var model = new MockTeklaModelService();
+        var beam = model.FindObjects(new ObjectQuery { Type = "Beam" }, 1).First();
+        var bolt = model.CreateDrawingObjects(new[]
+        {
+            new DrawingObjectSpec
+            {
+                Kind = "mark", ViewId = 11001, ViewId2 = 0, ModelGuid = beam.Guid,
+                ContentText = "Bolt M20 (8 pcs)", LeaderStart = new Point3D(10, 10, 0),
+            },
+        }, apply: true).ObjectPreview.Single();
+        Assert.Equal("Bolt M20 (8 pcs)", bolt.Text);
+
+        var copy = model.CreateDrawingObjects(new[]
+        {
+            new DrawingObjectSpec
+            {
+                Kind = "mark", ViewId = 11001, ViewId2 = 0, ModelGuid = beam.Guid,
+                CopyContentFromObjectId = bolt.ObjectId + ":" + bolt.ObjectId2,
+            },
+        }, apply: true).ObjectPreview.Single();
+        Assert.Equal("Bolt M20 (8 pcs)", copy.Text);
+
+        var edited = model.ModifyDrawingObjects(
+            new DrawingObjectQuery { ObjectIds = { new TeklaIdentifierInfo { Id = copy.ObjectId, Id2 = copy.ObjectId2 } } },
+            new DrawingObjectModification { ContentText = "Bolt M20 (4 pcs)" }, apply: true);
+        Assert.Equal(1, edited.ModifiedCount);
+        Assert.Contains(model.FindDrawingObjects(new DrawingObjectQuery { TypeIn = { "Mark" } }),
+            m => m.Text == "Bolt M20 (4 pcs)");
+    }
+
+    [Fact]
     public void Marks_list_their_content_and_empty_marks_can_be_found()
     {
         var model = new MockTeklaModelService();

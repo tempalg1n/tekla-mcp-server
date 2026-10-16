@@ -658,7 +658,12 @@ public static class DrawingContentTools
     }
 
     [McpServerTool(Name = "tekla_create_drawing_mark")]
-    [Description("Create a mark for a model object already represented in a target view. Preview unless apply=true.")]
+    [Description("Create a mark for a model object already represented in a target view. Optional: " +
+                 "leaderStart (a point on the VISIBLE part — a member mark with default placing sits at " +
+                 "the part's midpoint, often outside a detail view, and still counts in the view frame), " +
+                 "placing (leader_line / base_line / along_line with lineEnd / point), contentText to " +
+                 "replace the content, or copyContentFromMarkId to clone another mark's content (e.g. a " +
+                 "bolt mark). Points are view coordinates. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingMark(
         ITeklaModelService model,
         [Description("Represented model-object GUID.")] string modelGuid,
@@ -667,10 +672,27 @@ public static class DrawingContentTools
         [Description("Optional mark insertion point 'x,y,z' in view coordinates.")] string? insertionPoint = null,
         [Description("Saved mark attributes file.")] string attributeFile = "",
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
-        CreateOne(model, "mark", insertionPoint ?? "", viewId, viewId2, -1, "view",
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Leader-line start 'x,y,z' (view coordinates), on the visible part.")] string? leaderStart = null,
+        [Description("leader_line (default with leaderStart), base_line, along_line or point.")] string placing = "",
+        [Description("base_line / along_line: the line's end 'x,y,z'.")] string? lineEnd = null,
+        [Description("Replace the mark content with this text.")] string? contentText = null,
+        [Description("Copy the content of this existing mark ('id:id2' from tekla_list_drawing_objects).")] string? copyContentFromMarkId = null)
+    {
+        var start = ToolHelpers.ParsePoint(leaderStart);
+        var end = ToolHelpers.ParsePoint(lineEnd);
+        if ((!string.IsNullOrWhiteSpace(leaderStart) && start == null) || (!string.IsNullOrWhiteSpace(lineEnd) && end == null))
+            return ToolValidationFailure("create_drawing_objects", apply, "leaderStart and lineEnd must use 'x,y,z'.");
+        var mode = (placing ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        if (mode.Length > 0 && mode != "leader_line" && mode != "base_line" && mode != "along_line" && mode != "point")
+            return ToolValidationFailure("create_drawing_objects", apply,
+                "placing must be leader_line, base_line, along_line or point.");
+        return CreateOne(model, "mark", insertionPoint ?? "", viewId, viewId2, -1, "view",
             attributeFile, modelGuid: modelGuid, apply: apply,
-            expectedModelPath: expectedModelPath);
+            expectedModelPath: expectedModelPath, placing: mode,
+            leaderStart: start, lineEnd: end, contentText: contentText,
+            copyContentFrom: copyContentFromMarkId);
+    }
 
     [McpServerTool(Name = "tekla_create_detail_mark", ReadOnly = false, Destructive = false,
         Idempotent = false, OpenWorld = false)]
@@ -776,8 +798,9 @@ public static class DrawingContentTools
 
     [McpServerTool(Name = "tekla_modify_drawing_objects")]
     [Description("Batch edit active-drawing objects: change Text contents, move, set visibility, " +
-                 "or load an attributes file. Address by non-zero session Object ID:ID2 or current selection. " +
-                 "Preview unless apply=true.")]
+                 "or load an attributes file; on marks also set insertionPoint, leaderStart (puts the mark " +
+                 "on a leader line) and contentText. Address by non-zero session Object ID:ID2 or current " +
+                 "selection. Preview unless apply=true.")]
     public static DrawingWriteResult ModifyDrawingObjects(
         ITeklaModelService model,
         [Description("Object IDs 'id:id2; id:id2'.")] string? objectIds = null,
@@ -789,10 +812,19 @@ public static class DrawingContentTools
         [Description("Saved attributes file to load; omit to keep.")] string? attributeFile = null,
         [Description("Safety cap (default 200).")] int limit = 200,
         [Description("Set true to commit; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Marks: new insertion point 'x,y,z' (view coordinates).")] string? insertionPoint = null,
+        [Description("Marks: leader-line start 'x,y,z' (view coordinates).")] string? leaderStart = null,
+        [Description("Marks: replace the content with this text.")] string? contentText = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "modify_drawing_objects", objectIds, types, useSelection, apply);
+        var parsedInsertion = ToolHelpers.ParsePoint(insertionPoint);
+        var parsedLeader = ToolHelpers.ParsePoint(leaderStart);
+        if ((!string.IsNullOrWhiteSpace(insertionPoint) && parsedInsertion == null) ||
+            (!string.IsNullOrWhiteSpace(leaderStart) && parsedLeader == null))
+            return ToolValidationFailure(
+                "modify_drawing_objects", apply, "insertionPoint and leaderStart must use 'x,y,z'.");
         if (rejected != null) return rejected;
         var parsedMove = ToolHelpers.ParsePoint(moveBy);
         if (!string.IsNullOrWhiteSpace(moveBy) && parsedMove == null)
@@ -817,6 +849,9 @@ public static class DrawingContentTools
                 MoveBy = parsedMove,
                 Visibility = normalizedVisibility.Length == 0 ? null : normalizedVisibility,
                 AttributeFile = attributeFile,
+                InsertionPoint = parsedInsertion,
+                LeaderStart = parsedLeader,
+                ContentText = contentText,
             },
             apply,
             limit));
@@ -906,7 +941,11 @@ public static class DrawingContentTools
         double? distance = null,
         bool apply = false,
         string? expectedModelPath = null,
-        string placing = "")
+        string placing = "",
+        Point3D? leaderStart = null,
+        Point3D? lineEnd = null,
+        string? contentText = null,
+        string? copyContentFrom = null)
     {
         var normalizedKind = (kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
         var normalizedSpace = (coordinateSpace ?? "view").Trim().ToLowerInvariant();
@@ -982,6 +1021,10 @@ public static class DrawingContentTools
                 UpDirection = upDirection,
                 Distance = distance,
                 Placing = placing.Length == 0 ? null : placing,
+                LeaderStart = leaderStart,
+                LineEnd = lineEnd,
+                ContentText = string.IsNullOrWhiteSpace(contentText) ? null : contentText,
+                CopyContentFromObjectId = string.IsNullOrWhiteSpace(copyContentFrom) ? null : copyContentFrom,
             },
         }, apply));
     }

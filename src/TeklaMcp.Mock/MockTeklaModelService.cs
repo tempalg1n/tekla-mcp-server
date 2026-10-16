@@ -1732,6 +1732,27 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 {
                     new MarkContentElement { Kind = "property", Name = "ASSEMBLY_POS", Value = mark },
                 };
+                if (!string.IsNullOrWhiteSpace(spec.CopyContentFromObjectId))
+                {
+                    var source = objects.FirstOrDefault(o => o.Type == "Mark" &&
+                        (o.ObjectId + ":" + o.ObjectId2 == spec.CopyContentFromObjectId!.Trim() ||
+                         o.ObjectId.ToString() == spec.CopyContentFromObjectId!.Trim()));
+                    if (source == null)
+                    {
+                        result.Errors.Add("No mark " + spec.CopyContentFromObjectId + " to copy the content from.");
+                        continue;
+                    }
+                    info.MarkContent = (source.MarkContent ?? new List<MarkContentElement>()).ToList();
+                    mark = source.Text;
+                }
+                if (!string.IsNullOrWhiteSpace(spec.ContentText))
+                {
+                    info.MarkContent = new List<MarkContentElement>
+                    {
+                        new MarkContentElement { Kind = "text", Value = spec.ContentText! },
+                    };
+                    mark = spec.ContentText!;
+                }
                 info.Text = mark;
                 info.IsEmptyMark = mark.Trim().Length == 0;
                 info.RelatedObjectType = marked == null ? null : "Part";
@@ -1759,7 +1780,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             modification.Text == null &&
             modification.MoveBy == null &&
             string.IsNullOrWhiteSpace(modification.Visibility) &&
-            string.IsNullOrWhiteSpace(modification.AttributeFile))
+            string.IsNullOrWhiteSpace(modification.AttributeFile) &&
+            modification.InsertionPoint == null && modification.LeaderStart == null &&
+            modification.ContentText == null)
         {
             result.Message = "No drawing-object changes were supplied.";
             return result;
@@ -1779,6 +1802,30 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 continue;
             }
             if (modification.Text != null && obj.Type == "Text") obj.Text = modification.Text;
+            if (modification.InsertionPoint != null || modification.LeaderStart != null ||
+                modification.ContentText != null)
+            {
+                if (obj.Type != "Mark")
+                {
+                    result.Errors.Add(obj.Type + " #" + obj.Index +
+                                      ": insertionPoint, leaderStart and contentText can only be changed on Mark objects.");
+                    continue;
+                }
+                if (modification.InsertionPoint != null)
+                {
+                    if (obj.Points.Count == 0) obj.Points.Add(modification.InsertionPoint);
+                    else obj.Points[0] = modification.InsertionPoint;
+                }
+                if (modification.ContentText != null)
+                {
+                    obj.Text = modification.ContentText;
+                    obj.MarkContent = new List<MarkContentElement>
+                    {
+                        new MarkContentElement { Kind = "text", Value = modification.ContentText },
+                    };
+                    obj.IsEmptyMark = modification.ContentText.Trim().Length == 0;
+                }
+            }
             if (modification.MoveBy != null)
             {
                 foreach (var p in obj.Points)
