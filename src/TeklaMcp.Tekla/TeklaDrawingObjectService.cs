@@ -646,6 +646,10 @@ public sealed partial class TeklaModelService
                         $"View '{pair.Key.Name}': {pair.Value?.ToString() ?? "?"} model objects before the attribute file, " +
                         $"{CountViewModelObjects(pair.Key)?.ToString() ?? "?"} after.");
                 }
+                // Tekla 2021: GetAxisAlignedBoundingBox() stays stale within the call that loaded.
+                result.Warnings.Add(
+                    "The frames returned here may still be the ones from before the attribute file (Tekla " +
+                    "updates them later); re-list the views with tekla_list_drawing_views before laying them out.");
             }
         }
         catch (Exception ex)
@@ -715,6 +719,10 @@ public sealed partial class TeklaModelService
                     continue;
                 }
                 moved = true;
+                if (HasHiddenMarks(view))
+                    result.Warnings.Add((view.Name ?? "view") +
+                                        ": the view has hidden marks, and Tekla counts them in the frame — a hidden " +
+                                        "mark far from its part moves the frame and the label (issue #33).");
                 view.Select();
                 var placed = view.GetAxisAlignedBoundingBox();
                 if (!ViewPlacement.IsPlaced(placeBy, spec.InsertionPoint, ToDto(placed.LowerLeft), ToDto(placed.UpperRight)))
@@ -731,26 +739,59 @@ public sealed partial class TeklaModelService
     }
 
     /// <summary>
-    /// Loads a view attributes file (issue #28) and puts back what the file would overwrite:
-    /// <c>LoadAttributes</c> + <c>Modify</c> replaces scale and view size from the file. The
-    /// caller's final <c>Modify()</c> stores the restored restriction box and origin.
+    /// Loads a view attributes file (issues #28, #34) and puts back what the file would
+    /// overwrite: <c>LoadAttributes</c> + <c>Modify</c> replaces scale, view size, the label
+    /// (<c>TagsAttributes</c>) and the Name (Tekla 2021, ~20 detail/section views). The recipe
+    /// that worked live: keep them, load, restore, Modify, then the restriction box and Modify
+    /// again — the caller's final <c>Modify()</c> stores the restored box and origin.
     /// </summary>
     private static void LoadViewAttributeFile(TSD.View view, DrawingViewModification modification)
     {
         var restriction = view.RestrictionBox;
         var origin = view.Origin;
-        var scale = view.Attributes.Scale;
+        var name = view.Name;
+        var kept = view.Attributes;
+        var scale = kept.Scale;
+        var tags = kept.TagsAttributes;
+        var labelVertical = kept.LabelPositionVertical;
+        var labelHorizontal = kept.LabelPositionHorizontal;
+
         var attributes = view.Attributes;
         if (!attributes.LoadAttributes(modification.AttributeFile))
             throw new InvalidOperationException(
                 "Could not load view attributes file '" + modification.AttributeFile + "'.");
         if (modification.KeepScale) attributes.Scale = scale;
+        if (modification.KeepLabel)
+        {
+            attributes.TagsAttributes = tags;
+            attributes.LabelPositionVertical = labelVertical;
+            attributes.LabelPositionHorizontal = labelHorizontal;
+        }
         view.Attributes = attributes;
+        if (modification.KeepName) view.Name = name;
         if (!view.Modify())
             throw new InvalidOperationException("Tekla rejected Modify() after loading '" + modification.AttributeFile + "'.");
         view.Select();
         if (modification.KeepRestrictionBox) view.RestrictionBox = restriction;
         if (modification.KeepOrigin) view.Origin = origin;
+        if (modification.KeepName) view.Name = name;
+    }
+
+    /// <summary>True when the view holds a hidden mark (best-effort; false when it cannot tell).</summary>
+    private static bool HasHiddenMarks(TSD.View view)
+    {
+        try
+        {
+            var objects = view.GetObjects(new[] { typeof(TSD.Mark) });
+            while (SafeMoveNext(objects))
+                if (objects.Current is TSD.Mark mark && mark.Hideable != null && mark.Hideable.IsHidden)
+                    return true;
+        }
+        catch
+        {
+            // Only a hint for a warning.
+        }
+        return false;
     }
 
     private static int? CountViewModelObjects(TSD.View view)

@@ -97,13 +97,18 @@ public sealed class DrawingViewModification
     public double? RotateOnDrawingPlaneDegrees { get; set; }
     public bool Delete { get; set; }
     /// <summary>
-    /// A saved view attributes file to load (issue #28) — it brings its own part and
-    /// neighbour-part filters, but also scale and view size, so the Keep* flags put those back.
+    /// A saved view attributes file to load (issue #28), used verbatim (a leading space is part
+    /// of the name). It brings its own part and neighbour-part filters, but also scale, view
+    /// size, the label and the name, so the Keep* flags put those back.
     /// </summary>
     public string? AttributeFile { get; set; }
     public bool KeepScale { get; set; } = true;
     public bool KeepRestrictionBox { get; set; } = true;
     public bool KeepOrigin { get; set; } = true;
+    /// <summary>Keep the view label (TagsAttributes and label positions) — the file replaces it.</summary>
+    public bool KeepLabel { get; set; } = true;
+    /// <summary>Keep the view Name — the file replaces it.</summary>
+    public bool KeepName { get; set; } = true;
 }
 
 /// <summary>

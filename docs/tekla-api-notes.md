@@ -564,9 +564,19 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
   origin by the difference (`Core/Geometry/ViewPlacement`), then commits again. ⚠️ The bounding
   box right after the insert is not verified live (`TODO(windows)` in `PlaceViewsByFrame`).
 - `View.Attributes.LoadAttributes(name)` + `Modify()` overwrites scale and view size from the
-  file; the restriction box and origin have to be put back after a `Select()` (the field script,
-  verified on Tekla 2021). `tekla_modify_drawing_view attributeFile` does that and reports the
-  view's model-object count before and after.
+  file — and also the view **label** (`Attributes.TagsAttributes`) and the view **Name** (~20
+  detail/section views, Tekla 2021). Working recipe: keep tags, name, scale and restriction box;
+  load; restore them; `Modify()`; `Select()`, restriction box (and origin); `Modify()` again.
+  `tekla_modify_drawing_view attributeFile` does that and reports the view's model-object count
+  before and after. File names are used verbatim: `" Truss node"` (leading space) loads only with
+  the space. Reloading recreates marks for newly visible parts only.
+- After `LoadAttributes` + `Modify`, `GetAxisAlignedBoundingBox()` returns the OLD box within the
+  same call — re-list views before laying them out.
+- **The view frame includes HIDDEN marks** (Tekla 2021): hidden member marks stay at their parts'
+  midpoints, often far outside a detail view's restriction box, and still extend
+  `Origin + FrameOrigin`/`Width × Height` and push the view label. Moving each hidden mark to its
+  leader start (or the restriction-box centre) made frames hug the visible content. Placement by
+  frame warns when a view has hidden marks.
 - **Tekla caches view filters by attribute-file NAME within a session** (verified on Tekla 2021 by
   counting parts in the view): after editing `<name>.vi.npfilter`, loading `<name>` again keeps the
   old neighbour filter, while edits to the `.vi` itself apply. Save under a new name instead.

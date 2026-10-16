@@ -60,7 +60,8 @@ public static class DrawingContentTools
                  "plan can end up far off the sheet; placeBy=frame_lower_left / frame_center puts the " +
                  "view FRAME there instead (moved after the insert, by the real frame with its " +
                  "margins). The result's frameMin/frameMax give the frame on the sheet (in a preview: " +
-                 "an estimate without margins). Preview unless apply=true.")]
+                 "an estimate without margins). Tekla counts HIDDEN marks in the frame, so a hidden mark " +
+                 "far from its part shifts frame and label (a warning says so). Preview unless apply=true.")]
     public static DrawingWriteResult CreateGaDrawingView(
         ITeklaModelService model,
         [Description("Sheet point 'x,y,z' in paper mm; its meaning is set by placeBy.")] string insertionPoint,
@@ -269,8 +270,9 @@ public static class DrawingContentTools
     [Description("Modify one ACTIVE-drawing view by non-zero session ID/ID2 or ephemeral index: " +
                  "name, sheet origin/frame size, scale and rotations, or load a saved view attributes " +
                  "file (attributeFile, e.g. one carrying a part filter and neighbour-part filter) while " +
-                 "keeping the view's scale, restriction box and origin (keep* default true; explicit " +
-                 "origin/scale override them). After loading, the message gives the view's model-object " +
+                 "keeping the view's scale, restriction box, origin, label and name (keep* default true; " +
+                 "explicit origin/scale/name override them). The name is used verbatim (a leading space " +
+                 "is part of it). After loading, the message gives the view's model-object " +
                  "count before and after, so you can see whether a filter took effect. Tekla caches view " +
                  "filters by attribute-file NAME within a session: after editing <name>.vi.npfilter, " +
                  "save it under a NEW name, or the view keeps the old filter. Angles are degrees. " +
@@ -294,7 +296,9 @@ public static class DrawingContentTools
         [Description("Saved view attributes file to load (name without extension); omit to keep.")] string? attributeFile = null,
         [Description("Keep the current scale when loading attributeFile (default true).")] bool keepScale = true,
         [Description("Keep the current restriction box when loading attributeFile (default true).")] bool keepRestrictionBox = true,
-        [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true)
+        [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true,
+        [Description("Keep the current view label when loading attributeFile (default true).")] bool keepLabel = true,
+        [Description("Keep the current view name when loading attributeFile (default true).")] bool keepName = true)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
@@ -330,10 +334,13 @@ public static class DrawingContentTools
                 RotateYDegrees = rotateYDegrees,
                 RotateZDegrees = rotateZDegrees,
                 RotateOnDrawingPlaneDegrees = rotateOnDrawingPlaneDegrees,
-                AttributeFile = string.IsNullOrWhiteSpace(attributeFile) ? null : attributeFile!.Trim(),
+                // Verbatim: Tekla 2021 loads " Truss node" (leading space) only with the space.
+                AttributeFile = string.IsNullOrWhiteSpace(attributeFile) ? null : attributeFile,
                 KeepScale = keepScale,
                 KeepRestrictionBox = keepRestrictionBox,
                 KeepOrigin = keepOrigin,
+                KeepLabel = keepLabel,
+                KeepName = keepName,
             },
         }, apply));
     }
