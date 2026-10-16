@@ -288,7 +288,10 @@ public static class DrawingContentTools
                  "filters by attribute-file NAME within a session: after editing <name>.vi.npfilter, " +
                  "save it under a NEW name, or the view keeps the old filter. A new scale keeps the " +
                  "paper offset of leader-line marks (keepMarkOffsets, default true); dimension lines keep " +
-                 "theirs by themselves, so never rescale their distances. Angles are degrees. " +
+                 "theirs by themselves, so never rescale their distances. labelText sets the view label " +
+                 "(API-created views often have an empty one; tekla_list_drawing_views shows labelText); " +
+                 "renameMark=true with a new name renames the section/detail mark of the same old name. " +
+                 "The label sits above the frame, and hidden marks extend the frame. Angles are degrees. " +
                  "Preview unless apply=true; re-list after structural edits.")]
     public static DrawingWriteResult ModifyDrawingView(
         ITeklaModelService model,
@@ -312,12 +315,20 @@ public static class DrawingContentTools
         [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true,
         [Description("Keep the current view label when loading attributeFile (default true).")] bool keepLabel = true,
         [Description("Keep the current view name when loading attributeFile (default true).")] bool keepName = true,
-        [Description("With a new scale: move leader-line marks so their paper offset stays (default true).")] bool keepMarkOffsets = true)
+        [Description("With a new scale: move leader-line marks so their paper offset stays (default true).")] bool keepMarkOffsets = true,
+        [Description("New view label text (replaces tag A1); omit to keep.")] string? labelText = null,
+        [Description("Label font name; default = the current label's font, else Arial.")] string? labelFont = null,
+        [Description("Label text height in paper mm; default = the current label's, else 3.5.")] double? labelHeight = null,
+        [Description("Label vertical position: top or bottom; omit to keep.")] string? labelVertical = null,
+        [Description("Label horizontal position: centered_by_frame, centered_by_restriction_box, left_by_frame, right_by_frame, left_by_restriction_box, right_by_restriction_box; omit to keep.")] string? labelHorizontal = null,
+        [Description("With labelText: empty the other label tags A2-A5 (default true).")] bool clearOtherTags = true,
+        [Description("With a new name: also rename the section/detail mark named like the view's old name.")] bool renameMark = false)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
             !rotateZDegrees.HasValue && !rotateOnDrawingPlaneDegrees.HasValue &&
-            string.IsNullOrWhiteSpace(attributeFile))
+            string.IsNullOrWhiteSpace(attributeFile) && labelText == null &&
+            string.IsNullOrWhiteSpace(labelVertical) && string.IsNullOrWhiteSpace(labelHorizontal))
             return ToolValidationFailure(
                 "modify_drawing_views", apply,
                 "No view changes were supplied.");
@@ -356,6 +367,13 @@ public static class DrawingContentTools
                 KeepLabel = keepLabel,
                 KeepName = keepName,
                 KeepMarkOffsets = keepMarkOffsets,
+                LabelText = labelText,
+                LabelFont = labelFont,
+                LabelHeight = labelHeight,
+                LabelVertical = string.IsNullOrWhiteSpace(labelVertical) ? null : labelVertical,
+                LabelHorizontal = string.IsNullOrWhiteSpace(labelHorizontal) ? null : labelHorizontal,
+                ClearOtherTags = clearOtherTags,
+                RenameMark = renameMark,
             },
         }, apply));
     }

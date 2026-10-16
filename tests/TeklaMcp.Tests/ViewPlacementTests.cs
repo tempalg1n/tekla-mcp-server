@@ -98,6 +98,26 @@ public class ViewPlacementTests
     }
 
     [Fact]
+    public void Mock_view_label_is_set_and_listed()
+    {
+        var model = WithActiveGaDrawing();
+        var view = Assert.Single(model.CreateDrawingViews(new[] { GaSpec("origin") }, apply: true).ViewPreview);
+
+        var result = model.ModifyDrawingViews(new[]
+        {
+            new DrawingViewModification
+            {
+                ViewId = view.ViewId, ViewId2 = view.ViewId2, LabelText = "Node 4", Name = "4", RenameMark = true,
+            },
+        }, apply: true);
+
+        Assert.Equal(1, result.ModifiedCount);
+        var listed = model.GetDrawingViews().Single(v => v.ViewId == view.ViewId);
+        Assert.Equal(("Node 4", "4"), (listed.LabelText, listed.Name));
+        Assert.Contains(result.Warnings, w => w.Contains("no section or detail marks"));
+    }
+
+    [Fact]
     public void Mock_view_attribute_file_keeps_scale_by_default()
     {
         var model = WithActiveGaDrawing();

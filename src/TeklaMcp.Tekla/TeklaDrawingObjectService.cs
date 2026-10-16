@@ -85,7 +85,132 @@ public sealed partial class TeklaModelService
         }
         catch { }
         try { info.ModelObjectCount = view.GetModelObjects().GetSize(); } catch { }
+        try { info.LabelText = ReadViewLabel(view.Attributes.TagsAttributes); } catch { }
         return info;
+    }
+
+    private static string ReadViewLabel(TSD.View.ViewMarkTagsAttributes tags)
+    {
+        var parts = new[] { tags.TagA1, tags.TagA2, tags.TagA3, tags.TagA4, tags.TagA5 }
+            .Select(tag => tag?.TagContent?.GetUnformattedString() ?? "")
+            .Where(text => text.Trim().Length > 0);
+        return string.Join(" | ", parts);
+    }
+
+    /// <summary>Sets the view label (issue #35): tag A1 = the text, optionally the other tags emptied.</summary>
+    private static void ApplyViewLabel(TSD.View view, DrawingViewModification modification)
+    {
+        var attributes = view.Attributes;
+        if (modification.LabelText != null)
+        {
+            var tags = attributes.TagsAttributes;
+            var font = FirstLabelFont(tags.TagA1?.TagContent);
+            var content = new TSD.ContainerElement();
+            content.Add(new TSD.TextElement(modification.LabelText, new TSD.FontAttributes(
+                font?.Color ?? TSD.DrawingColors.Black,
+                modification.LabelHeight ?? font?.Height ?? 3.5,
+                string.IsNullOrWhiteSpace(modification.LabelFont) ? font?.Name ?? "Arial" : modification.LabelFont,
+                font?.Italic ?? false,
+                font?.Bold ?? false)));
+            tags.TagA1 = new TSD.View.ViewMarkTagAttributes(
+                new TSG.Vector(0, 0, 0), TSD.TagLocation.MiddleLevelOfSymbol, TSD.TextAlignment.Center, content);
+            if (modification.ClearOtherTags)
+            {
+                tags.TagA2 = new TSD.View.ViewMarkTagAttributes();
+                tags.TagA3 = new TSD.View.ViewMarkTagAttributes();
+                tags.TagA4 = new TSD.View.ViewMarkTagAttributes();
+                tags.TagA5 = new TSD.View.ViewMarkTagAttributes();
+            }
+            attributes.TagsAttributes = tags;
+        }
+        switch ((modification.LabelVertical ?? "").Trim().ToLowerInvariant())
+        {
+            case "": break;
+            case "top": attributes.LabelPositionVertical = TSD.View.VerticalLabelPosition.Top; break;
+            case "bottom": attributes.LabelPositionVertical = TSD.View.VerticalLabelPosition.Bottom; break;
+            default: throw new ArgumentException("labelVertical must be top or bottom.");
+        }
+        switch ((modification.LabelHorizontal ?? "").Trim().ToLowerInvariant())
+        {
+            case "": break;
+            case "centered_by_frame": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.CenteredByViewFrame; break;
+            case "centered_by_restriction_box": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.CenteredByViewRestrictionBox; break;
+            case "left_by_frame": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.LeftAlignedByViewFrame; break;
+            case "right_by_frame": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.RightAlignedByViewFrame; break;
+            case "left_by_restriction_box": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.LeftAlignByViewRestrictionBox; break;
+            case "right_by_restriction_box": attributes.LabelPositionHorizontal = TSD.View.HorizontalLabelPosition.RightAlignByViewRestrictionBox; break;
+            default: throw new ArgumentException("labelHorizontal is not one of the documented positions.");
+        }
+        view.Attributes = attributes;
+    }
+
+    private static TSD.FontAttributes? FirstLabelFont(TSD.ContainerElement? content)
+    {
+        if (content == null) return null;
+        foreach (var element in content)
+            if (element is TSD.TextElement text && text.Font != null) return text.Font;
+        return null;
+    }
+
+    /// <summary>
+    /// Renames the section/detail mark named <paramref name="oldName"/> (issue #35). Matches by
+    /// mark name because the Open API exposes no mark ↔ view link; refuses an ambiguous match.
+    /// Detail marks may not enumerate on Tekla 2021 (SerializationException), so a detail view's
+    /// mark can be missed — the warning says so.
+    /// </summary>
+    private static void RenameLinkedMark(
+        IReadOnlyList<TSD.View> views, string oldName, string newName, DrawingWriteResult result)
+    {
+        var candidates = new List<TSD.DrawingObject>();
+        foreach (var view in views)
+        {
+            try
+            {
+                var marks = view.GetObjects(new[] { typeof(TSD.SectionMark), typeof(TSD.CurvedSectionMark), typeof(TSD.DetailMark) });
+                while (SafeMoveNext(marks))
+                {
+                    switch (marks.Current)
+                    {
+                        case TSD.SectionMarkBase section when section.Attributes?.MarkName == oldName:
+                            candidates.Add(section);
+                            break;
+                        case TSD.DetailMark detail when detail.Attributes?.MarkName == oldName:
+                            candidates.Add(detail);
+                            break;
+                    }
+                }
+            }
+            catch
+            {
+                // A view whose marks fault keeps the search going.
+            }
+        }
+
+        if (candidates.Count != 1)
+        {
+            result.Warnings.Add(candidates.Count == 0
+                ? $"No section or detail mark named '{oldName}' was found to rename (detail marks may not be readable on Tekla 2021); rename it by hand."
+                : $"{candidates.Count} marks are named '{oldName}'; none was renamed — rename the right one by hand.");
+            return;
+        }
+        var mark = candidates[0];
+        if (mark is TSD.SectionMarkBase sectionMark)
+        {
+            var attributes = sectionMark.Attributes;
+            attributes.MarkName = newName;
+            sectionMark.Attributes = attributes;
+        }
+        else if (mark is TSD.DetailMark detailMark)
+        {
+            var attributes = detailMark.Attributes;
+            attributes.MarkName = newName;
+            detailMark.Attributes = attributes;
+        }
+        if (mark.Modify())
+            result.Message = Aggregation.Append(result.Message,
+                $"Renamed the {mark.GetType().Name} '{oldName}' to '{newName}' with its view.");
+        else
+            result.Warnings.Add($"Tekla rejected renaming the {mark.GetType().Name} '{oldName}'.");
     }
 
     private static TS.Identifier GetOwnViewIdentifier(TSD.DatabaseObject view)
@@ -672,12 +797,19 @@ public sealed partial class TeklaModelService
                     double? oldScale = null;
                     if (modification.Scale.HasValue && modification.KeepMarkOffsets)
                         try { oldScale = view.Attributes.Scale; } catch { }
+                    var oldName = view.Name ?? "";
                     ApplyViewModification(view, modification);
+                    if (modification.LabelText != null || modification.LabelVertical != null ||
+                        modification.LabelHorizontal != null)
+                        ApplyViewLabel(view, modification);
                     if (!view.Modify()) throw new InvalidOperationException("Tekla rejected view Modify().");
                     StampDrawingOrigin(view, "mcp:modify_drawing_view");
                     result.ModifiedCount++;
                     if (oldScale.HasValue && Math.Abs(oldScale.Value - modification.Scale!.Value) > 1e-9)
                         KeepMarkOffsets(view, oldScale.Value, modification.Scale.Value, result);
+                    if (modification.RenameMark && modification.Name != null && modification.Name != oldName &&
+                        oldName.Length > 0)
+                        RenameLinkedMark(views, oldName, modification.Name, result);
                 }
                 catch (Exception exItem)
                 {

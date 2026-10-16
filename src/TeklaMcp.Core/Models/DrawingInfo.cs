@@ -109,6 +109,8 @@ public sealed class DrawingViewInfo
     /// </summary>
     public Point3D? FrameMin { get; set; }
     public Point3D? FrameMax { get; set; }
+    /// <summary>The view label's text (tags A1–A5, unformatted, " | " between tags); "" = empty label.</summary>
+    public string? LabelText { get; set; }
     public double? Scale { get; set; }
     public Point3D? RestrictionMin { get; set; }
     public Point3D? RestrictionMax { get; set; }

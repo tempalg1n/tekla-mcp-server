@@ -1614,6 +1614,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                                     "' is not evaluated; filters and model-object counts are unchanged.");
                 if (!mod.KeepScale) view.Scale = 1;
             }
+            if (mod.LabelText != null) view.LabelText = mod.LabelText;
+            if (mod.RenameMark && mod.Name != null && mod.Name != view.Name)
+                result.Warnings.Add("Mock backend: no section or detail marks to rename.");
             if (mod.Name != null) view.Name = mod.Name;
             if (mod.Origin != null) view.Origin = mod.Origin;
             if (mod.Width.HasValue) view.Width = mod.Width.Value;

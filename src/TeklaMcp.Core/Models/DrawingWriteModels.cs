@@ -114,6 +114,26 @@ public sealed class DrawingViewModification
     /// start stays the same (issue #39). Dimension lines keep their paper offset by themselves.
     /// </summary>
     public bool KeepMarkOffsets { get; set; } = true;
+    /// <summary>
+    /// New view label text (issue #35): replaces tag A1 with this text. Views created or reloaded
+    /// through the API often get an empty label.
+    /// </summary>
+    public string? LabelText { get; set; }
+    /// <summary>Label font name; default = the font of the current label text, else Arial.</summary>
+    public string? LabelFont { get; set; }
+    /// <summary>Label text height, paper mm (default 3.5 or the current label's).</summary>
+    public double? LabelHeight { get; set; }
+    /// <summary>top or bottom.</summary>
+    public string? LabelVertical { get; set; }
+    /// <summary>centered_by_frame, centered_by_restriction_box, left_by_frame, right_by_frame, left_by_restriction_box, right_by_restriction_box.</summary>
+    public string? LabelHorizontal { get; set; }
+    /// <summary>With LabelText: empty tags A2–A5 so only the new text shows (default true).</summary>
+    public bool ClearOtherTags { get; set; } = true;
+    /// <summary>
+    /// With a new Name: also rename the section/detail mark (in any view of the drawing) whose
+    /// mark name equals the view's old name, so mark and view agree.
+    /// </summary>
+    public bool RenameMark { get; set; }
 }
 
 /// <summary>
