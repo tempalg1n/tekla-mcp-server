@@ -81,6 +81,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
     public ConnectionInfo GetConnectionInfo() => new()
     {
         Connected = true,
+        ModelOpen = true,
         ModelName = _modelName,
         ModelPath = _modelPath,
         TeklaVersion = "2026 (mock)",

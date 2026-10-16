@@ -5,8 +5,17 @@ namespace TeklaMcp.Core.Models;
 /// <summary>Result of probing the connection to a running Tekla Structures model.</summary>
 public sealed class ConnectionInfo
 {
-    /// <summary>True if a model is open and the API answered.</summary>
+    /// <summary>
+    /// True when the Open API answered. Whether a model is open is <see cref="ModelOpen"/>: Tekla
+    /// can run with no model, and then every model read would see an empty model.
+    /// </summary>
     public bool Connected { get; set; }
+
+    /// <summary>
+    /// True when a model is open in the connected Tekla (a model path and name). False with
+    /// Connected=true means Tekla runs without a model; model tools refuse until one is open.
+    /// </summary>
+    public bool ModelOpen { get; set; }
 
     /// <summary>Model name, e.g. "MyTower". Empty when not connected.</summary>
     public string ModelName { get; set; } = "";

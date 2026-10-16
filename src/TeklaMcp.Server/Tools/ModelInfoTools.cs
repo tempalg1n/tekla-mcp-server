@@ -27,7 +27,9 @@ public static class ModelInfoTools
                  "that started BEFORE the Tekla process it should talk to, or a build for another Tekla " +
                  "year, explains most connection failures. A non-empty assemblyLoadProblems is the cause " +
                  "whatever the message says: the Tekla installation's files could not be loaded, and " +
-                 "restarting Tekla does not help. Call this first to verify connectivity.")]
+                 "restarting Tekla does not help. connected=true with modelOpen=false means Tekla runs " +
+                 "with no model open: model tools refuse until one is, rather than reporting an empty " +
+                 "model. Call this first to verify connectivity.")]
     public static ConnectionInfo GetConnectionInfo(ITeklaModelService model)
     {
         var info = model.GetConnectionInfo();

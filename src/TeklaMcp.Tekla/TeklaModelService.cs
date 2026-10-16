@@ -156,12 +156,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             ConnectModel(out var info); // reconnects after a Tekla restart, like every other tool
+            var open = ModelPaths.IsOpenModel(info.ModelName, info.ModelPath);
             return new ConnectionInfo
             {
                 Connected = true,
+                ModelOpen = open,
                 Backend = BackendName,
                 ModelName = info.ModelName ?? "",
                 ModelPath = info.ModelPath ?? "",
+                Message = open ? null : ModelPaths.NoOpenModelMessage(info.ModelName, info.ModelPath),
                 LastReconnect = TeklaRemotingChannel.LastReconnect,
             };
         }
@@ -239,6 +242,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         var summary = new ModelSummary { Backend = BackendName };
         var totalWeight = 0.0;
 
@@ -297,6 +301,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public int CountObjects(ObjectQuery query)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         query = query ?? new ObjectQuery();
 
         // Completely unfiltered whole-model count: the enumerator knows its size — no walk.
@@ -328,6 +333,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public IReadOnlyList<ModelObjectInfo> GetAllObjects(int? limit = null)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         return InGlobalWorkPlane(model, () =>
         {
             var result = new List<ModelObjectInfo>();
@@ -2684,6 +2690,21 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     private static TSM.Model GetConnectedModel() => ConnectModel(out _);
 
+    /// <summary>What the last <see cref="ConnectModel"/> saw; scans refuse when no model was open.</summary>
+    private static TSM.ModelInfo? LastConnectedInfo;
+
+    /// <summary>
+    /// Model reads that would answer "nothing" for a closed model refuse instead (issue #25 §8:
+    /// a closed model gave connected=true and a zero-object summary). Called by
+    /// <see cref="EnumerateSource"/> and the whole-model scans, after the call connected.
+    /// </summary>
+    private static void RequireOpenModel()
+    {
+        var info = LastConnectedInfo;
+        if (info != null && !ModelPaths.IsOpenModel(info.ModelName, info.ModelPath))
+            throw new InvalidOperationException(ModelPaths.NoOpenModelMessage(info.ModelName, info.ModelPath));
+    }
+
     /// <summary>
     /// A Model client that has just answered a real call. <c>GetConnectionStatus()</c> is only a
     /// local null check, so a Tekla restart used to surface as a RemotingException in the middle of
@@ -2719,6 +2740,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
         // Another model has another UDA catalog.
         UdaKinds.ResetIfScopeChanged(info.ModelPath + "|" + info.ModelName);
+        LastConnectedInfo = info;
 
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,
@@ -2806,6 +2828,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     private static IEnumerable<TSM.ModelObject> EnumerateSource(
         TSM.Model model, ObjectQuery query, bool partsFallback = false)
     {
+        RequireOpenModel();
         if (query != null && query.UseSelection)
             return Drain(new TSMUI.ModelObjectSelector().GetSelectedObjects());
         if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
