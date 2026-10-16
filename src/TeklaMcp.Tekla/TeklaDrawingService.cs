@@ -237,6 +237,7 @@ public sealed partial class TeklaModelService
             var effective = query ?? new DrawingObjectQuery();
             var records = GetDrawingObjectRecords(handler, active, effective, limit);
             var rows = records.Select(r => MapDrawingObject(r, effective)).ToList();
+            ResolveModelGuids(rows);
             if (!effective.IncludeModelGeometry) return rows;
             AddModelGeometry(records, rows);
             return rows.Where(row => ViewGeometry.Matches(row.ModelGeometry, effective)).ToList();

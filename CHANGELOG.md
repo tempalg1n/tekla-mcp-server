@@ -9,10 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.0] - 2026-10-16
 
-Field fixes from Tekla 2021 audit and drawing work: numeric UDAs that read as blank, edits that
-Tekla accepted but did not store, dimensions in the wrong units or on the wrong arc, and a closed
-model that looked empty. Plus a read-only numbering status, curved Beams in the curve tool, mark
-contents, and GA views placed by their frame. One tool added (117 in total, 51 for drawings).
+Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs
+that read as blank, edits that Tekla accepted but did not store, dimensions in the wrong units or on
+the wrong arc, section views without their properties, drawing edits that were committed but never
+saved, and a closed model that looked empty. Plus a read-only numbering status, curved Beams in the
+curve tool, mark contents and custom marks, view labels, standalone callouts, view-coordinate
+geometry of parts and bolts, and approval of scripts by reference. Three tools added (119 in total,
+53 for drawings).
 
 ### Added
 
@@ -42,8 +45,40 @@ contents, and GA views placed by their frame. One tool added (117 in total, 51 f
   (`keepScale`/`keepRestrictionBox`/`keepOrigin`, default true); the message gives the view's
   model-object count before and after. The description warns that Tekla caches view filters by
   file name within a session.
+  The file also replaces the view label and name, so those are kept too (`keepLabel`/`keepName`), and
+  the file name is used verbatim (`" Truss node"` loads only with its leading space).
+- **Standalone detail and section marks** ([#36](https://github.com/tempalg1n/tekla-mcp-server/issues/36)) —
+  `tekla_create_detail_mark` and `tekla_create_section_mark` insert a callout circle or cut symbols
+  WITHOUT creating a view (to reference a node or section drawn on another sheet), with a name, an
+  attribute file and view or model coordinates; also as kinds `detail_mark`/`section_mark` in
+  `tekla_create_drawing_objects`.
+- **View labels** ([#35](https://github.com/tempalg1n/tekla-mcp-server/issues/35)) —
+  `tekla_modify_drawing_view labelText` (with font, height, position and `clearOtherTags`) sets the
+  label of an existing view (API-created views often have an empty one; `tekla_list_drawing_views`
+  now shows `labelText`), and `renameMark=true` renames the section/detail mark that has the view's
+  old name.
+- **Marks with a leader start and custom content** ([#37](https://github.com/tempalg1n/tekla-mcp-server/issues/37)) —
+  `tekla_create_drawing_mark` takes `leaderStart`, `placing` (leader/base/along line, point),
+  `contentText` and `copyContentFromMarkId`; `tekla_modify_drawing_objects` sets `insertionPoint`,
+  `leaderStart` and `contentText` on existing marks.
+- **Parts, bolts and dimensions in view coordinates** ([#38](https://github.com/tempalg1n/tekla-mcp-server/issues/38)) —
+  `tekla_list_drawing_objects includeModelGeometry=true` adds, for parts, a box from the solid's own
+  vertices with the z depth range, and for bolts their positions, in the view's display coordinates;
+  `zRange` (bolts keep only positions inside it), `region`, `nameContains` and `profileContains`
+  filter on it. Straight dimension sets now list their points, `upDirection`, placing and the
+  distance in both view units and paper mm.
+- **Mark offsets kept on rescale** ([#39](https://github.com/tempalg1n/tekla-mcp-server/issues/39)) —
+  a new scale in `tekla_modify_drawing_view` moves leader-line marks so their paper distance to the
+  leader start stays (`keepMarkOffsets`, default true).
+- **Scripts approved by reference** ([#40](https://github.com/tempalg1n/tekla-mcp-server/issues/40)) —
+  `tekla_check_csharp` returns a `checkId` that `tekla_run_csharp` runs instead of re-sent code
+  (`expectedSha256` still binds a mutating run); `codeSha256` ignores line endings and trailing
+  whitespace; `x.GetType().Name`/`.FullName` is allowed for labels.
+- `placing=fixed|free` on `tekla_create_straight_dimension` ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26)):
+  free placing moved lines away from nearby marks.
 - `connectionInfo.modelOpen` ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8),
-  and `previewTotal`/`previewTruncated` on part write results.
+  `previewTotal`/`previewTruncated` on part write results, and `drawingSaved` on drawing write
+  results ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
 
 ### Fixed
 
@@ -75,16 +110,39 @@ contents, and GA views placed by their frame. One tool added (117 in total, 51 f
   With the model closed and Tekla running, connection info said `connected=true` and the summary
   counted zero objects. `modelOpen=false` now says so, and model scans, counts and the summary
   refuse instead of answering for an empty model.
+- **Committed drawing edits were lost on reopen** ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
+  A day of edits to an open drawing, each ending in `CommitChanges` and reported as committed, was
+  lost when the multi-user model was reopened — the drawing was never saved. Writes to the open
+  drawing now return `drawingSaved=false` with a warning to save, `tekla_get_active_drawing`'s
+  status counts the MCP writes waiting for a save (`unsavedMcpWrites`), and the server instructions
+  say to save after each milestone and to keep GUIDs rather than IDs across a reopen.
+- **Section views ignored their attribute file** ([#34](https://github.com/tempalg1n/tekla-mcp-server/issues/34)).
+  `CreateSectionView` does not apply the `ViewAttributes` it is given on Tekla 2021 (the section took
+  the parent's filters and marks, or showed 0 bolts). The file is now loaded after creation (also for
+  curved sections and detail views), keeping name, scale, label and restriction box. `depthUp`
+  (behind the cut) and `depthDown` (toward the viewer) are described as measured and must both be
+  > 0; the preview gives the look direction, and the created section/detail mark is returned.
+- **Dimension distances read back in view units** ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26),
+  [#39](https://github.com/tempalg1n/tekla-mcp-server/issues/39)): `StraightDimensionSet.Distance`
+  doubles after a 1:5 → 1:10 rescale although the line keeps its paper offset. Listings report
+  `dimensionDistancePaperMm` next to it, and the tool descriptions say not to "correct" it.
+- **View frames include hidden marks** ([#33](https://github.com/tempalg1n/tekla-mcp-server/issues/33)):
+  placement by frame warns when a view has hidden marks, and frames stay stale within the call that
+  loaded an attribute file (the result says to re-list).
 - The net48 server build compiles without warnings again (CS8602 in `DrawingToolHelpers`).
 
 ### Known limitations
 
-- Not run live as tools yet: the frame placement of GA views, attribute files through
-  `tekla_modify_drawing_view`, the mark-content listing, the verification of `tekla_modify_parts`
-  against a real refusal, the typed UDA writes, and the distance units of radius, curved and angle
-  dimensions (passed unchanged; angle and curved are documented as paper mm, radius is
-  undocumented). Run live read-only on Tekla 2021: typed UDA reads, the numbering status, curved
-  Beams, `modelOpen`.
+- Not run live as tools yet (the recipes they follow were run live by script): every drawing write
+  of this release — frame placement, attribute files on views and sections, labels and mark
+  renames, standalone marks, custom marks, mark offsets on rescale, dimension placing — the
+  listing of mark contents, dimension sets and view-coordinate geometry (no drawing was open), the
+  verification of `tekla_modify_parts` against a real refusal, the typed UDA writes, and the
+  distance units of radius, curved and angle dimensions (passed unchanged; angle and curved are
+  documented as paper mm, radius is undocumented). Run live read-only on Tekla 2021: typed UDA
+  reads, the numbering status, curved Beams, `modelOpen`, a script run by `checkId`.
+- Renaming a detail view's mark can miss it: detail marks do not always enumerate on Tekla 2021, and
+  the mark is found by its name (the Open API has no mark ↔ view link).
 - Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
 - `tekla_capture_drawing` ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)) is not in
   this release.

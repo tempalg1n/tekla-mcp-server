@@ -260,6 +260,11 @@ public sealed class DrawingObjectQuery
     public int? ViewId { get; set; }
     public int? ViewId2 { get; set; }
     public string? ModelGuid { get; set; }
+    /// <summary>
+    /// The represented model object's ID. Drawing objects carry only the model ID (no GUID) on
+    /// Tekla 2021, so a ModelGuid filter is resolved to this ID before the drawing is searched.
+    /// </summary>
+    public int? ModelId { get; set; }
     public string? TextContains { get; set; }
     public bool UseSelection { get; set; }
     public bool Recursive { get; set; } = true;

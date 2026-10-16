@@ -281,14 +281,14 @@ environment; do not rely on the tag as the only rollback mechanism. Pay particul
 | Tool | Description |
 |---|---|
 | `tekla_get_drawing_status` | Check Drawing API connectivity and active-editor state. |
-| `tekla_get_active_drawing` | Return the currently open drawing, or `null` when the editor is closed. |
+| `tekla_get_active_drawing` | Return the currently open drawing, or `null` when the editor is closed. Drawing status counts the MCP writes not yet saved. |
 | `tekla_list_drawings` | Search drawing-list rows by key/type/mark/name/title/model GUID/status/flags/selection. |
 | `tekla_get_selected_drawings` | Return rows selected in Tekla's Drawing List dialog. |
 | `tekla_get_drawing_summary` | Aggregate counts by type/status and issued/locked/ready/stale state, with explicit scan truncation. |
 | `tekla_find_drawing_issues` | QA heuristics for stale, issued-but-modified, ready-but-stale, and missing mark/name rows. |
 | `tekla_get_drawing_model_objects` | Return a bounded/paginated page of full model identifiers represented by a drawing. |
 | `tekla_get_drawing_sheet` | Read active-sheet width, height, origin and configured layout size/mode in paper millimetres. |
-| `tekla_list_drawing_views` | List active-drawing views with best-effort ID/ID2, paper frame, scale, restriction box, and coordinate systems. |
+| `tekla_list_drawing_views` | List active-drawing views with best-effort ID/ID2, paper frame (`frameMin`/`frameMax`), scale, restriction box, coordinate systems and label text. |
 | `tekla_list_drawing_objects` | Filter active-drawing objects by ID/index/type/view/model GUID/text/selection, with optional geometry and UDAs. Marks come with their content and the marked model object; `emptyMarksOnly` finds empty marks. |
 | `tekla_get_selected_drawing_objects` | Return the current drawing-editor selection. |
 | `tekla_select_drawing_objects` | Select/highlight matching active-drawing objects (an immediate UI side effect, not a model mutation). |
@@ -322,7 +322,7 @@ file names are passed to Tekla and resolved by the running environment.
 |---|---|
 | `tekla_create_drawing_view` | Create a front/top/back/bottom/3D view on a non-GA drawing. |
 | `tekla_create_ga_drawing_view` | Create a GA model view from explicit global view/display coordinate systems and a restriction box; `placeBy=frame_lower_left/frame_center` places the view frame instead of the model origin. |
-| `tekla_create_section_view` | Create a straight or curved section view and section mark from a source view. |
+| `tekla_create_section_view` | Create a straight or curved section view and section mark from a source view; loads the attribute file after creation, both depths must be > 0. |
 | `tekla_create_detail_view` | Create a detail view and detail mark from a source view. |
 | `tekla_modify_drawing_view` | Edit a view's name, sheet origin/frame, scale, and rotations, or load a saved view attributes file (filters) keeping scale, restriction box and origin. |
 | `tekla_delete_drawing_view` | Delete a view and its children. |
@@ -339,12 +339,12 @@ file names are passed to Tekla and resolved by the running environment.
 | `tekla_create_angle_dimension` | Create an angle dimension. |
 | `tekla_create_radius_dimension` | Create a radius dimension from start, a point between and end (either direction; ordered for Tekla). |
 | `tekla_create_curved_dimension` | Create a radial or orthogonal curved dimension set. |
-| `tekla_create_drawing_mark` | Create a mark for a model object represented in a target view. |
+| `tekla_create_drawing_mark` | Create a mark for a model object represented in a target view, optionally with a leader start, placing, own text or content copied from another mark. |
 | `tekla_create_detail_mark` | Create a standalone detail mark (callout circle + label) without a detail view, e.g. to reference a node on another sheet. |
 | `tekla_create_section_mark` | Create a standalone section mark without a section view. |
 | `tekla_create_level_mark` | Create a level mark. |
 | `tekla_create_drawing_symbol` | Create a symbol from a Tekla `.sym` library. |
-| `tekla_modify_drawing_objects` | Batch-change text, relative position, visibility, or loaded attributes. |
+| `tekla_modify_drawing_objects` | Batch-change text, relative position, visibility, or loaded attributes; on marks also insertion point, leader start and content. |
 | `tekla_delete_drawing_objects` | Delete objects by best-effort ID/type/current editor selection. |
 | `tekla_merge_drawing_marks` | Merge compatible marks by best-effort IDs/current selection. |
 | `tekla_split_drawing_marks` | Split merged mark sets by best-effort IDs/current selection. |
@@ -381,8 +381,8 @@ The Tekla Open API is far larger than this tool set. When no dedicated tool cove
 | `tekla_search_api` | Keyword search over the locally generated Tekla Open API reference (types + member signatures). |
 | `tekla_get_api_doc` | Full reference page for one type: every constructor/property/method signature with summaries. |
 | `tekla_get_api_reference_status` | Report whether the local offline reference is ready, where it comes from (generated from the installed Tekla / configured / repository copy) or how to set it up; the first call for a Tekla build starts generating it. |
-| `tekla_check_csharp` | Policy-check and compile the exact source without executing it; returns SHA-256 + detected mutations for approval. |
-| `tekla_run_csharp` | Run a C# script (top-level statements, Tekla namespaces pre-imported, `Print(...)` for output, last expression = JSON return value). Mutating runs need `allowMutations=true` plus `expectedSha256` from the check. |
+| `tekla_check_csharp` | Policy-check and compile the exact source without executing it; returns SHA-256 + detected mutations for approval, and a `checkId` to run it by. |
+| `tekla_run_csharp` | Run a C# script (top-level statements, Tekla namespaces pre-imported, `Print(...)` for output, last expression = JSON return value). Mutating runs need `allowMutations=true` plus `expectedSha256` from the check; `checkId` runs the checked text without sending it again. |
 
 Safety model:
 
@@ -678,9 +678,12 @@ environment.
   outcome, `tekla_get_part_solid`, `tekla_save_model` / `tekla_open_model`,
   `tekla_create_component` with a real plugin, and UDA definitions with `details=true`. What is
   live-verified is stated per entry in [CHANGELOG.md](CHANGELOG.md).
-- **Not yet run live in v0.9.0:** placing GA views by frame, view attribute files through
-  `tekla_modify_drawing_view`, the mark-content listing, the paper-mm distance of new dimensions and
-  the write verification of `tekla_modify_parts` against a real refusal (see
+- **Drawing edits are not saved by `committed`:** save the open drawing (`tekla_save_drawing`) after
+  each milestone — Tekla drops unsaved drawing edits when the model is reopened. Model and view IDs
+  can change across a reopen of a multi-user model; keep GUIDs.
+- **Not yet run live in v0.9.0:** the drawing writes of this release (frame placement, attribute
+  files, labels, standalone and custom marks, mark offsets, dimension placing), the new drawing
+  listings, and the write verification of `tekla_modify_parts` against a real refusal (see
   [CHANGELOG.md](CHANGELOG.md)).
 - **The drawing layer is experimental** (new in v0.7.0, limited field testing) — see
   [Drawing tools](#drawing-tools).

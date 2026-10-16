@@ -92,9 +92,15 @@ public sealed partial class TeklaModelService
 
     private static string ReadViewLabel(TSD.View.ViewMarkTagsAttributes tags)
     {
-        var parts = new[] { tags.TagA1, tags.TagA2, tags.TagA3, tags.TagA4, tags.TagA5 }
-            .Select(tag => tag?.TagContent?.GetUnformattedString() ?? "")
-            .Where(text => text.Trim().Length > 0);
+        var parts = new List<string>();
+        foreach (var tag in new[] { tags.TagA1, tags.TagA2, tags.TagA3, tags.TagA4, tags.TagA5 })
+        {
+            if (tag?.TagContent == null) continue;
+            var elements = new List<MarkContentElement>();
+            FlattenContent(tag.TagContent, elements);
+            var text = MarkText.Compose(elements);
+            if (text.Length > 0) parts.Add(text);
+        }
         return string.Join(" | ", parts);
     }
 
@@ -264,6 +270,7 @@ public sealed partial class TeklaModelService
         var records = new List<DrawingObjectRecord>();
         var cap = NormalizeLimit(limit, DrawingObjectBatchLimit);
         if (cap == 0) return records;
+        ResolveModelIdFilter(query);
         var views = EnumerateViews(drawing, query.Recursive);
 
         List<TSD.DrawingObject>? selected = null;
@@ -346,13 +353,15 @@ public sealed partial class TeklaModelService
         var mark = record.Object as TSD.Mark;
         if (query.EmptyMarksOnly && (mark == null || ReadMark(mark).IsEmpty != true)) return false;
 
-        if (!string.IsNullOrWhiteSpace(query.ModelGuid))
+        if (!string.IsNullOrWhiteSpace(query.ModelGuid) || query.ModelId.HasValue)
         {
             var identifier = record.Object is TSD.ModelObject modelObject
                 ? modelObject.ModelIdentifier
                 : mark != null ? ReadMark(mark).Related?.ModelIdentifier : null;
+            // Drawing objects carry only the model ID on Tekla 2021 (GUID empty): match either.
             if (identifier == null ||
-                !string.Equals(SafeGuid(identifier), query.ModelGuid, StringComparison.OrdinalIgnoreCase))
+                !(string.Equals(SafeGuid(identifier), query.ModelGuid, StringComparison.OrdinalIgnoreCase) ||
+                  (query.ModelId.HasValue && identifier.ID == query.ModelId.Value)))
                 return false;
         }
 
@@ -461,33 +470,11 @@ public sealed partial class TeklaModelService
             var content = mark.Attributes?.Content;
             if (content != null)
             {
-                reading.Text = content.GetUnformattedString() ?? "";
                 reading.Elements = new List<MarkContentElement>();
-                foreach (var element in content)
-                {
-                    switch (element)
-                    {
-                        case TSD.PropertyElement property:
-                            reading.Elements.Add(new MarkContentElement
-                            {
-                                Kind = "property", Name = property.Name ?? "", Value = property.Value ?? "",
-                            });
-                            break;
-                        case TSD.TextElement fixedText:
-                            reading.Elements.Add(new MarkContentElement
-                            {
-                                Kind = "text", Value = fixedText.GetUnformattedString() ?? "",
-                            });
-                            break;
-                        case TSD.ElementBase other:
-                            reading.Elements.Add(new MarkContentElement
-                            {
-                                Kind = other.GetType().Name, Value = other.GetUnformattedString() ?? "",
-                            });
-                            break;
-                    }
-                }
-                reading.IsEmpty = string.IsNullOrWhiteSpace(reading.Text);
+                FlattenContent(content, reading.Elements);
+                // Not GetUnformattedString(): it frames an empty mark as "{\n}\n" (Tekla 2021).
+                reading.Text = MarkText.Compose(reading.Elements);
+                reading.IsEmpty = reading.Text.Length == 0;
             }
         }
         catch
@@ -516,9 +503,83 @@ public sealed partial class TeklaModelService
         return reading;
     }
 
+    /// <summary>Content elements in order; nested containers (frames) are flattened.</summary>
+    private static void FlattenContent(TSD.ContainerElement content, List<MarkContentElement> into)
+    {
+        foreach (var element in content)
+        {
+            switch (element)
+            {
+                case TSD.PropertyElement property:
+                    into.Add(new MarkContentElement { Kind = "property", Name = property.Name ?? "", Value = property.Value ?? "" });
+                    break;
+                case TSD.TextElement fixedText:
+                    into.Add(new MarkContentElement { Kind = "text", Value = fixedText.Value ?? "" });
+                    break;
+                case TSD.NewLineElement _:
+                    into.Add(new MarkContentElement { Kind = "newline", Value = "" });
+                    break;
+                case TSD.ContainerElement nested:
+                    FlattenContent(nested, into);
+                    break;
+                case TSD.SymbolElement _:
+                    into.Add(new MarkContentElement { Kind = "symbol", Value = "" });
+                    break;
+                case TSD.ElementBase other:
+                    into.Add(new MarkContentElement
+                    {
+                        Kind = other.GetType().Name,
+                        Value = MarkText.StripFraming(other.GetUnformattedString()),
+                    });
+                    break;
+            }
+        }
+    }
+
     /// <summary>Per-object cache; entries die with the mark objects of the listing.</summary>
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading> MarkReadings =
         new System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading>();
+
+    /// <summary>
+    /// A ModelGuid filter would never match on Tekla 2021, whose drawing objects carry only the
+    /// model ID: resolve the GUID to its ID once, through the model.
+    /// </summary>
+    private static void ResolveModelIdFilter(DrawingObjectQuery query)
+    {
+        if (query.ModelId.HasValue || !Guid.TryParse(query.ModelGuid, out var guid)) return;
+        try
+        {
+            var mo = GetConnectedModel().SelectModelObject(new TS.Identifier(guid));
+            if (mo != null && mo.Identifier.ID != 0) query.ModelId = mo.Identifier.ID;
+        }
+        catch
+        {
+            // The GUID comparison still runs.
+        }
+    }
+
+    /// <summary>
+    /// Fills modelGuid for rows that carry only the model ID (Tekla 2021 drawing objects and the
+    /// objects their marks point at), so the GUID can go straight into model tools.
+    /// </summary>
+    private static void ResolveModelGuids(IEnumerable<DrawingObjectInfo> rows)
+    {
+        TSM.Model? model = null;
+        foreach (var row in rows)
+        {
+            if (row.ModelId == 0 || !string.IsNullOrEmpty(row.ModelGuid)) continue;
+            try
+            {
+                model ??= GetConnectedModel();
+                var mo = model.SelectModelObject(new TS.Identifier(row.ModelId));
+                if (mo != null && mo.Identifier.GUID != Guid.Empty) row.ModelGuid = mo.Identifier.GUID.ToString();
+            }
+            catch
+            {
+                return; // best-effort: the IDs are still there
+            }
+        }
+    }
 
     private static void AddDistinctPoint(List<Point3D> points, Point3D point)
     {

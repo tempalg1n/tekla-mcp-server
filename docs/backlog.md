@@ -316,7 +316,8 @@ an existing file whose extension is not `.pdf`. Both are tool/backend-local; no 
 
 ## Deferred in the v0.9.0 issue review (2026-10-16)
 
-v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33 and #25 §8. Deferred, most valuable first:
+v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33, #25 §8 and, from the second batch the same
+day, #34–#41. Deferred, most valuable first:
 
 - **#20 — reconnect when a Tekla 2021 restart changes the Model channel** (`Model-Console:` ↔
   `Model-:`). Same work as §2 (instance selection): a changed channel may be another Tekla, so the
@@ -340,3 +341,10 @@ v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33 and #25 §8. Deferred, m
   receipts (§7), modelling requests (§9).
 - **Option-list UDAs** (#21 follow-up): raw stored index vs displayed label via
   `UserPropertyItem.GetOptions`.
+- **Drawing follow-ups from #33/#37/#38/#41:** a frame computed from visible content only (today a
+  warning when hidden marks are in the view); a default `leaderStart` = the nearest point of the
+  part inside the view's restriction box; a helper that keeps one visible mark per part position and
+  hides the rest; an optional `save=true` on drawing write tools; a part's centre line in view
+  coordinates.
+- **#29 filter detail:** a ContourPlate's view-filter `PROFILE` is only the thickness (`PL6`), not
+  `PL6*240` — a future `.vi.filter` writer should warn or offer "thickness + class".
