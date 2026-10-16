@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -233,9 +234,12 @@ public sealed partial class TeklaModelService
         {
             var active = TryGetActiveDrawing(handler);
             if (active == null) return new List<DrawingObjectInfo>();
-            return GetDrawingObjectRecords(handler, active, query ?? new DrawingObjectQuery(), limit)
-                .Select(r => MapDrawingObject(r, query ?? new DrawingObjectQuery()))
-                .ToList();
+            var effective = query ?? new DrawingObjectQuery();
+            var records = GetDrawingObjectRecords(handler, active, effective, limit);
+            var rows = records.Select(r => MapDrawingObject(r, effective)).ToList();
+            if (!effective.IncludeModelGeometry) return rows;
+            AddModelGeometry(records, rows);
+            return rows.Where(row => ViewGeometry.Matches(row.ModelGeometry, effective)).ToList();
         }
         catch
         {

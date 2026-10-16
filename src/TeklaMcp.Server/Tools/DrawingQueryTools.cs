@@ -147,7 +147,12 @@ public static class DrawingQueryTools
                  "text), the whole text in 'text', isEmptyMark, and the related model object " +
                  "(modelGuid/modelId, relatedObjectType); modelGuid and textContains filter marks too, " +
                  "and emptyMarksOnly=true finds marks that show nothing (clean them up with " +
-                 "tekla_delete_drawing_objects).")]
+                 "tekla_delete_drawing_objects). Straight dimension sets come with points, upDirection " +
+                 "and dimensionDistance (view units at the current scale) + dimensionDistancePaperMm. " +
+                 "includeModelGeometry=true adds, for parts and bolts, modelGeometry in the view's " +
+                 "display coordinates (box from the solid's vertices with the z depth range, bolt " +
+                 "positions); zRange/region/nameContains/profileContains then filter — they apply to " +
+                 "the first 'limit' objects listed, so narrow with types/viewId first.")]
     public static IReadOnlyList<DrawingObjectInfo> ListDrawingObjects(
         ITeklaModelService model,
         [Description("Object IDs as 'id:id2; id:id2'.")] string? objectIds = null,
@@ -163,13 +168,37 @@ public static class DrawingQueryTools
         [Description("Include object geometry and bbox. Disable for faster large scans.")] bool includeGeometry = true,
         [Description("Include all available UDAs (slower).")] bool includeUdas = false,
         [Description("Maximum objects (default 200).")] int limit = 200,
-        [Description("Only marks whose content shows nothing.")] bool emptyMarksOnly = false) =>
-        model.FindDrawingObjects(
-            DrawingToolHelpers.BuildObjectQuery(
-                objectIds, indices, types, viewIndex, viewId, viewId2,
-                modelGuid, textContains, useSelection, recursive, includeGeometry, includeUdas,
-                emptyMarksOnly),
-            limit);
+        [Description("Only marks whose content shows nothing.")] bool emptyMarksOnly = false,
+        [Description("Parts and bolts: add their model geometry in the view's display coordinates " +
+                     "(solid-vertex box with z depth range, bolt positions) — one solid read per part.")] bool includeModelGeometry = false,
+        [Description("With includeModelGeometry: depth range 'zMin,zMax' (view z, +z toward the viewer); bolts keep only positions inside.")] string? zRange = null,
+        [Description("With includeModelGeometry: x/y region 'xMin,yMin,xMax,yMax' in view coordinates the object must overlap.")] string? region = null,
+        [Description("With includeModelGeometry: model-object name substring.")] string? nameContains = null,
+        [Description("With includeModelGeometry: profile substring.")] string? profileContains = null)
+    {
+        var query = DrawingToolHelpers.BuildObjectQuery(
+            objectIds, indices, types, viewIndex, viewId, viewId2,
+            modelGuid, textContains, useSelection, recursive, includeGeometry, includeUdas,
+            emptyMarksOnly);
+        query.IncludeModelGeometry = includeModelGeometry;
+        var z = ToolHelpers.ParseNums(zRange);
+        if (z.Count == 2) { query.ZMin = System.Math.Min(z[0], z[1]); query.ZMax = System.Math.Max(z[0], z[1]); }
+        var r = ToolHelpers.ParseNums(region);
+        if (r.Count == 4)
+        {
+            query.RegionMin = new Point3D(System.Math.Min(r[0], r[2]), System.Math.Min(r[1], r[3]), 0);
+            query.RegionMax = new Point3D(System.Math.Max(r[0], r[2]), System.Math.Max(r[1], r[3]), 0);
+        }
+        query.NameContains = string.IsNullOrWhiteSpace(nameContains) ? null : nameContains;
+        query.ProfileContains = string.IsNullOrWhiteSpace(profileContains) ? null : profileContains;
+        if ((!string.IsNullOrWhiteSpace(zRange) && z.Count != 2) || (!string.IsNullOrWhiteSpace(region) && r.Count != 4))
+            throw new ModelContextProtocol.McpException("zRange must be 'zMin,zMax' and region 'xMin,yMin,xMax,yMax'.");
+        if (!includeModelGeometry && (query.ZMin.HasValue || query.RegionMin != null ||
+                                      query.NameContains != null || query.ProfileContains != null))
+            throw new ModelContextProtocol.McpException(
+                "zRange, region, nameContains and profileContains need includeModelGeometry=true.");
+        return model.FindDrawingObjects(query, limit);
+    }
 
     [McpServerTool(Name = "tekla_get_selected_drawing_objects")]
     [Description("Return objects currently selected in the active drawing editor.")]

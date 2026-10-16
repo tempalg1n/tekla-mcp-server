@@ -52,6 +52,7 @@ internal static class DrawingToolHelpers
         new DrawingObjectQuery
         {
             EmptyMarksOnly = emptyMarksOnly,
+            // Model geometry and its filters are set by tekla_list_drawing_objects itself.
             ObjectIds = ParseIdentifiers(objectIds),
             IndexIn = ParseInts(indices),
             TypeIn = ToolHelpers.ParseList(types),

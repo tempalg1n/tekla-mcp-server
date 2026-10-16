@@ -1125,7 +1125,26 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             rows = rows.Where(o => Contains(o.Text, query.TextContains));
         if (query.EmptyMarksOnly)
             rows = rows.Where(o => o.IsEmptyMark == true);
-        return Limit(rows.ToList(), limit);
+        var page = Limit(rows.ToList(), limit);
+        if (!query.IncludeModelGeometry) return page;
+        // The mock's view coordinates are its model coordinates (issue #38 shape, not projection).
+        foreach (var row in page)
+        {
+            if (row.Type != "Part" && row.Type != "Bolt") continue;
+            var source = GetObjectByGuid(row.ModelGuid);
+            row.ModelGeometry = source == null
+                ? new DrawingModelGeometry { Message = "The model object was not found." }
+                : new DrawingModelGeometry
+                {
+                    Name = source.Name,
+                    Profile = source.Profile,
+                    AssemblyPos = source.AssemblyPos,
+                    Min = source.MinX.HasValue ? new Point3D(source.MinX.Value, source.MinY ?? 0, source.MinZ ?? 0) : null,
+                    Max = source.MaxX.HasValue ? new Point3D(source.MaxX.Value, source.MaxY ?? 0, source.MaxZ ?? 0) : null,
+                    Source = "mock bounding box",
+                };
+        }
+        return page.Where(row => ViewGeometry.Matches(row.ModelGeometry, query)).ToList();
     }
 
     public DrawingSelectionResult SelectDrawingObjects(DrawingObjectQuery query, int? limit = null)

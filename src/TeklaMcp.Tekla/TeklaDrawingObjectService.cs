@@ -10,6 +10,7 @@ using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
 using TSDI = Tekla.Structures.DrawingInternal;
 using TSG = Tekla.Structures.Geometry3d;
+using TSM = Tekla.Structures.Model;
 
 namespace TeklaMcp.Tekla;
 
@@ -1006,6 +1007,76 @@ public sealed partial class TeklaModelService
             $"View '{view.Name}': {moved} leader-line mark(s) moved to keep their paper offset at 1:{newScale:0.###}" +
             (failed > 0 ? $"; {failed} could not be moved." : ".") +
             " Dimension lines keep their paper offset by themselves — do not rescale their distances.");
+    }
+
+    /// <summary>
+    /// Parts' and bolts' model geometry in the view's display coordinates (issue #38): the solid's
+    /// own vertices (never the global AABB's corners — wrong through a tilted view) and the bolt
+    /// positions, through the same global → view matrix as coordinateSpace=model.
+    /// </summary>
+    private static void AddModelGeometry(IReadOnlyList<DrawingObjectRecord> records, IReadOnlyList<DrawingObjectInfo> rows)
+    {
+        var model = GetConnectedModel();
+        InGlobalWorkPlane(model, () =>
+        {
+            for (var i = 0; i < records.Count; i++)
+            {
+                if (!(records[i].Object is TSD.ModelObject drawingObject) || !(records[i].View is TSD.View view)) continue;
+                if (!(drawingObject is TSD.Part) && !(drawingObject is TSD.Bolt)) continue;
+                var geometry = new DrawingModelGeometry();
+                rows[i].ModelGeometry = geometry;
+                try
+                {
+                    var toView = GlobalToViewMatrix(view);
+                    var mo = model.SelectModelObject(drawingObject.ModelIdentifier);
+                    switch (mo)
+                    {
+                        case TSM.Part part:
+                            geometry.Name = part.Name ?? "";
+                            geometry.Profile = part.Profile?.ProfileString ?? "";
+                            var assemblyPos = "";
+                            if (part.GetReportProperty("ASSEMBLY_POS", ref assemblyPos) && assemblyPos.Length > 0)
+                                geometry.AssemblyPos = assemblyPos;
+                            var vertices = new List<Point3D>();
+                            var faces = part.GetSolid().GetFaceEnumerator();
+                            while (faces.MoveNext())
+                                if (faces.Current != null)
+                                    foreach (var loop in FaceLoops(faces.Current))
+                                        foreach (var vertex in loop)
+                                            vertices.Add(ToPoint3D(toView.Transform(ToPoint(vertex))));
+                            geometry.Source = "solid vertices";
+                            if (ViewGeometry.TryBox(vertices, out var min, out var max))
+                            {
+                                geometry.Min = min;
+                                geometry.Max = max;
+                            }
+                            break;
+                        case TSM.BoltGroup bolts:
+                            geometry.Name = bolts.BoltStandard ?? "";
+                            geometry.BoltSize = bolts.BoltSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            geometry.BoltPositions = new List<Point3D>();
+                            foreach (var position in bolts.BoltPositions)
+                                if (position is TSG.Point point)
+                                    geometry.BoltPositions.Add(ToPoint3D(toView.Transform(point)));
+                            geometry.Source = "bolt positions";
+                            if (ViewGeometry.TryBox(geometry.BoltPositions, out var boltMin, out var boltMax))
+                            {
+                                geometry.Min = boltMin;
+                                geometry.Max = boltMax;
+                            }
+                            break;
+                        default:
+                            geometry.Message = "The model object was not found or is not a part or bolt group.";
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    geometry.Message = ErrorText.Flatten(ex);
+                }
+            }
+            return true;
+        });
     }
 
     /// <summary>True when the view holds a hidden mark (best-effort; false when it cannot tell).</summary>

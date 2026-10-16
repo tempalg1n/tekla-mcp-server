@@ -195,6 +195,12 @@ public sealed class DrawingObjectInfo
     public string? DimensionPlacing { get; set; }
 
     /// <summary>
+    /// Parts and bolts with includeModelGeometry (issue #38): the model object's geometry in the
+    /// view's DISPLAY coordinates (the coordinateSpace=view of the drawing tools). Null otherwise.
+    /// </summary>
+    public DrawingModelGeometry? ModelGeometry { get; set; }
+
+    /// <summary>
     /// Marks only (issue #32): the content elements in order — kind "property" (Name = the
     /// property, e.g. ASSEMBLY_POS, Value = what it shows now), "text" (fixed text) or the element
     /// type. Null for other objects. <see cref="Text"/> holds the whole unformatted mark text.
@@ -209,6 +215,26 @@ public sealed class DrawingObjectInfo
     /// its model GUID/ID are in <see cref="ModelGuid"/>/<see cref="ModelId"/>.
     /// </summary>
     public string? RelatedObjectType { get; set; }
+}
+
+/// <summary>A drawing part's or bolt's model geometry in view display coordinates (issue #38).</summary>
+public sealed class DrawingModelGeometry
+{
+    public string Name { get; set; } = "";
+    public string Profile { get; set; } = "";
+    public string? AssemblyPos { get; set; }
+
+    /// <summary>Box in view display coordinates: x/y on the view, z = depth (+z toward the viewer).</summary>
+    public Point3D? Min { get; set; }
+    public Point3D? Max { get; set; }
+
+    /// <summary>Bolts: each bolt position in view display coordinates (filtered by any z range).</summary>
+    public List<Point3D>? BoltPositions { get; set; }
+    public string? BoltSize { get; set; }
+
+    /// <summary>solid vertices / bolt positions — where the box comes from.</summary>
+    public string Source { get; set; } = "";
+    public string? Message { get; set; }
 }
 
 /// <summary>One element of a mark's content.</summary>
@@ -241,6 +267,17 @@ public sealed class DrawingObjectQuery
     public bool IncludeUdas { get; set; }
     /// <summary>Only marks that show nothing (issue #32: Tekla leaves empty marks behind).</summary>
     public bool EmptyMarksOnly { get; set; }
+    /// <summary>Read parts' and bolts' model geometry into the view (issue #38) — a solid read per part.</summary>
+    public bool IncludeModelGeometry { get; set; }
+    /// <summary>With model geometry: depth range (view z) the object must overlap; bolts keep only positions inside.</summary>
+    public double? ZMin { get; set; }
+    public double? ZMax { get; set; }
+    /// <summary>With model geometry: x/y box (view coordinates) the object must overlap.</summary>
+    public Point3D? RegionMin { get; set; }
+    public Point3D? RegionMax { get; set; }
+    /// <summary>With model geometry: substrings of the model object's name / profile.</summary>
+    public string? NameContains { get; set; }
+    public string? ProfileContains { get; set; }
 }
 
 /// <summary>Result of selecting objects in the active drawing editor.</summary>
