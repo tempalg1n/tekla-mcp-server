@@ -47,9 +47,11 @@ internal static class DrawingToolHelpers
         bool useSelection = false,
         bool recursive = true,
         bool includeGeometry = true,
-        bool includeUdas = false) =>
+        bool includeUdas = false,
+        bool emptyMarksOnly = false) =>
         new DrawingObjectQuery
         {
+            EmptyMarksOnly = emptyMarksOnly,
             ObjectIds = ParseIdentifiers(objectIds),
             IndexIn = ParseInts(indices),
             TypeIn = ToolHelpers.ParseList(types),

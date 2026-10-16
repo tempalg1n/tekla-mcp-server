@@ -142,7 +142,12 @@ public static class DrawingQueryTools
                  "ID:ID2; otherwise use selection/current index and re-list after structural edits. " +
                  "Model-linked objects (Part, Bolt, ...) carry no geometry of their own in the Drawing " +
                  "API, so their points stay empty — for exact part geometry (arcs, radii, chords) call " +
-                 "tekla_get_part_curve_geometry with the object's modelGuid and this viewId.")]
+                 "tekla_get_part_curve_geometry with the object's modelGuid and this viewId. Marks " +
+                 "come with their content (markContent: property name + current value, or fixed " +
+                 "text), the whole text in 'text', isEmptyMark, and the related model object " +
+                 "(modelGuid/modelId, relatedObjectType); modelGuid and textContains filter marks too, " +
+                 "and emptyMarksOnly=true finds marks that show nothing (clean them up with " +
+                 "tekla_delete_drawing_objects).")]
     public static IReadOnlyList<DrawingObjectInfo> ListDrawingObjects(
         ITeklaModelService model,
         [Description("Object IDs as 'id:id2; id:id2'.")] string? objectIds = null,
@@ -152,16 +157,18 @@ public static class DrawingQueryTools
         [Description("Non-zero session target View ID.")] int? viewId = null,
         [Description("Session target View ID2.")] int? viewId2 = null,
         [Description("Exact represented model GUID.")] string? modelGuid = null,
-        [Description("Text substring (Text objects).")] string? textContains = null,
+        [Description("Text substring (Text objects and mark text).")] string? textContains = null,
         [Description("Use the current drawing-editor selection only.")] bool useSelection = false,
         [Description("Include children (dimensions, grid lines, etc.).")] bool recursive = true,
         [Description("Include object geometry and bbox. Disable for faster large scans.")] bool includeGeometry = true,
         [Description("Include all available UDAs (slower).")] bool includeUdas = false,
-        [Description("Maximum objects (default 200).")] int limit = 200) =>
+        [Description("Maximum objects (default 200).")] int limit = 200,
+        [Description("Only marks whose content shows nothing.")] bool emptyMarksOnly = false) =>
         model.FindDrawingObjects(
             DrawingToolHelpers.BuildObjectQuery(
                 objectIds, indices, types, viewIndex, viewId, viewId2,
-                modelGuid, textContains, useSelection, recursive, includeGeometry, includeUdas),
+                modelGuid, textContains, useSelection, recursive, includeGeometry, includeUdas,
+                emptyMarksOnly),
             limit);
 
     [McpServerTool(Name = "tekla_get_selected_drawing_objects")]

@@ -1121,6 +1121,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             rows = rows.Where(o => Eq(o.ModelGuid, query.ModelGuid));
         if (!string.IsNullOrWhiteSpace(query.TextContains))
             rows = rows.Where(o => Contains(o.Text, query.TextContains));
+        if (query.EmptyMarksOnly)
+            rows = rows.Where(o => o.IsEmptyMark == true);
         return Limit(rows.ToList(), limit);
     }
 
@@ -1651,6 +1653,19 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     ["MCP_ORIGIN"] = "mcp:create_drawing_object",
                 },
             };
+            if (info.Type == "Mark")
+            {
+                // A part mark showing the assembly position, like Tekla's default mark content.
+                var marked = GetObjectByGuid(spec.ModelGuid ?? "");
+                var mark = marked?.AssemblyPos ?? "";
+                info.MarkContent = new List<MarkContentElement>
+                {
+                    new MarkContentElement { Kind = "property", Name = "ASSEMBLY_POS", Value = mark },
+                };
+                info.Text = mark;
+                info.IsEmptyMark = mark.Trim().Length == 0;
+                info.RelatedObjectType = marked == null ? null : "Part";
+            }
             validSequence++;
             result.ObjectPreview.Add(info);
             if (!apply) continue;

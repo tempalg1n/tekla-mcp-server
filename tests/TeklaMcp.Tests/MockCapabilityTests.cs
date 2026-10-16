@@ -124,4 +124,26 @@ public class MockCapabilityTests
             missing => Assert.False(missing.Found));
         Assert.Empty(model.GetNumberingStatus(null).Objects);
     }
+
+    [Fact]
+    public void Marks_list_their_content_and_empty_marks_can_be_found()
+    {
+        var model = new MockTeklaModelService();
+        var beam = model.FindObjects(new ObjectQuery { Type = "Beam" }, 1).First();
+        DrawingObjectSpec Mark(string guid) => new DrawingObjectSpec
+        {
+            Kind = "mark", ViewId = 11001, ViewId2 = 0, ModelGuid = guid,
+        };
+        model.CreateDrawingObjects(
+            new[] { Mark(beam.Guid), Mark("00000000-0000-0000-0000-000000000002") }, apply: true);
+
+        var marks = model.FindDrawingObjects(new DrawingObjectQuery { TypeIn = { "Mark" } });
+        var full = Assert.Single(marks, m => m.ModelGuid == beam.Guid);
+        Assert.False(full.IsEmptyMark);
+        Assert.Equal(beam.AssemblyPos ?? "", full.Text);
+        Assert.Equal("ASSEMBLY_POS", Assert.Single(full.MarkContent!).Name);
+
+        var empty = model.FindDrawingObjects(new DrawingObjectQuery { EmptyMarksOnly = true });
+        Assert.Equal("00000000-0000-0000-0000-000000000002", Assert.Single(empty).ModelGuid);
+    }
 }

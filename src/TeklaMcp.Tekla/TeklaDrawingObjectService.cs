@@ -209,17 +209,23 @@ public sealed partial class TeklaModelService
                 return false;
         }
 
+        var mark = record.Object as TSD.Mark;
+        if (query.EmptyMarksOnly && (mark == null || ReadMark(mark).IsEmpty != true)) return false;
+
         if (!string.IsNullOrWhiteSpace(query.ModelGuid))
         {
-            if (!(record.Object is TSD.ModelObject modelObject) ||
-                !string.Equals(SafeGuid(modelObject.ModelIdentifier), query.ModelGuid,
-                    StringComparison.OrdinalIgnoreCase))
+            var identifier = record.Object is TSD.ModelObject modelObject
+                ? modelObject.ModelIdentifier
+                : mark != null ? ReadMark(mark).Related?.ModelIdentifier : null;
+            if (identifier == null ||
+                !string.Equals(SafeGuid(identifier), query.ModelGuid, StringComparison.OrdinalIgnoreCase))
                 return false;
         }
 
         if (!string.IsNullOrWhiteSpace(query.TextContains))
         {
-            var text = record.Object is TSD.Text textObject ? textObject.TextString ?? "" : "";
+            var text = record.Object is TSD.Text textObject ? textObject.TextString ?? ""
+                : mark != null ? ReadMark(mark).Text : "";
             if (text.IndexOf(query.TextContains, StringComparison.OrdinalIgnoreCase) < 0)
                 return false;
         }
@@ -269,6 +275,20 @@ public sealed partial class TeklaModelService
         }
         if (record.Object is TSD.Text text)
             info.Text = text.TextString ?? "";
+        if (record.Object is TSD.Mark mark)
+        {
+            var content = ReadMark(mark);
+            info.Text = content.Text;
+            info.MarkContent = content.Elements;
+            info.IsEmptyMark = content.IsEmpty;
+            if (content.Related != null)
+            {
+                info.RelatedObjectType = content.Related.GetType().Name;
+                info.ModelId = content.Related.ModelIdentifier.ID;
+                info.ModelId2 = content.Related.ModelIdentifier.ID2;
+                info.ModelGuid = SafeGuid(content.Related.ModelIdentifier);
+            }
+        }
 
         if (query.IncludeGeometry)
             MapDrawingObjectGeometry(record.Object, info);
@@ -276,6 +296,91 @@ public sealed partial class TeklaModelService
             ReadDrawingObjectUdas(record.Object, info.Udas);
         return info;
     }
+
+    private sealed class MarkReading
+    {
+        public string Text { get; set; } = "";
+        public List<MarkContentElement>? Elements { get; set; }
+        /// <summary>Null when the content could not be read (never guessed as empty).</summary>
+        public bool? IsEmpty { get; set; }
+        public TSD.ModelObject? Related { get; set; }
+    }
+
+    /// <summary>
+    /// A mark's content and the model object it marks (issue #32), best-effort: a mark that
+    /// faults during remoting still lists, just without content. Cached per mark object for the
+    /// duration of one listing (filtering and mapping read it once).
+    /// </summary>
+    private static MarkReading ReadMark(TSD.Mark mark)
+    {
+        lock (MarkReadings)
+        {
+            if (MarkReadings.TryGetValue(mark, out var cached)) return cached;
+        }
+        var reading = new MarkReading();
+        try
+        {
+            var content = mark.Attributes?.Content;
+            if (content != null)
+            {
+                reading.Text = content.GetUnformattedString() ?? "";
+                reading.Elements = new List<MarkContentElement>();
+                foreach (var element in content)
+                {
+                    switch (element)
+                    {
+                        case TSD.PropertyElement property:
+                            reading.Elements.Add(new MarkContentElement
+                            {
+                                Kind = "property", Name = property.Name ?? "", Value = property.Value ?? "",
+                            });
+                            break;
+                        case TSD.TextElement fixedText:
+                            reading.Elements.Add(new MarkContentElement
+                            {
+                                Kind = "text", Value = fixedText.GetUnformattedString() ?? "",
+                            });
+                            break;
+                        case TSD.ElementBase other:
+                            reading.Elements.Add(new MarkContentElement
+                            {
+                                Kind = other.GetType().Name, Value = other.GetUnformattedString() ?? "",
+                            });
+                            break;
+                    }
+                }
+                reading.IsEmpty = string.IsNullOrWhiteSpace(reading.Text);
+            }
+        }
+        catch
+        {
+            // TODO(windows): content of every mark type is unverified; a fault leaves IsEmpty null.
+        }
+        try
+        {
+            var related = mark.GetRelatedObjects();
+            while (SafeMoveNext(related))
+                if (related.Current is TSD.ModelObject modelObject)
+                {
+                    reading.Related = modelObject;
+                    break;
+                }
+        }
+        catch
+        {
+            // The related object is optional context.
+        }
+        lock (MarkReadings)
+        {
+            if (MarkReadings.TryGetValue(mark, out var raced)) return raced;
+            MarkReadings.Add(mark, reading);
+        }
+        return reading;
+    }
+
+    /// <summary>Per-object cache; entries die with the mark objects of the listing.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading> MarkReadings =
+        new System.Runtime.CompilerServices.ConditionalWeakTable<TSD.Mark, MarkReading>();
 
     private static void MapDrawingObjectGeometry(TSD.DrawingObject obj, DrawingObjectInfo info)
     {

@@ -164,6 +164,35 @@ public sealed class DrawingObjectInfo
     public Point3D? BoundingMax { get; set; }
     public Dictionary<string, string> Udas { get; set; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Marks only (issue #32): the content elements in order — kind "property" (Name = the
+    /// property, e.g. ASSEMBLY_POS, Value = what it shows now), "text" (fixed text) or the element
+    /// type. Null for other objects. <see cref="Text"/> holds the whole unformatted mark text.
+    /// </summary>
+    public List<MarkContentElement>? MarkContent { get; set; }
+
+    /// <summary>Marks only: true when the mark shows nothing (blank unformatted text).</summary>
+    public bool? IsEmptyMark { get; set; }
+
+    /// <summary>
+    /// Marks only: the drawing type of the model object the mark belongs to (Part, Bolt, …);
+    /// its model GUID/ID are in <see cref="ModelGuid"/>/<see cref="ModelId"/>.
+    /// </summary>
+    public string? RelatedObjectType { get; set; }
+}
+
+/// <summary>One element of a mark's content.</summary>
+public sealed class MarkContentElement
+{
+    /// <summary>property, text, or the element's type name (symbol, new line, …).</summary>
+    public string Kind { get; set; } = "";
+
+    /// <summary>The property name for kind=property.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>What the element shows now.</summary>
+    public string Value { get; set; } = "";
 }
 
 /// <summary>Filter for objects in the currently active drawing.</summary>
@@ -181,6 +210,8 @@ public sealed class DrawingObjectQuery
     public bool Recursive { get; set; } = true;
     public bool IncludeGeometry { get; set; } = true;
     public bool IncludeUdas { get; set; }
+    /// <summary>Only marks that show nothing (issue #32: Tekla leaves empty marks behind).</summary>
+    public bool EmptyMarksOnly { get; set; }
 }
 
 /// <summary>Result of selecting objects in the active drawing editor.</summary>
