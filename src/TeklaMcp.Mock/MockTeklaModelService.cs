@@ -1503,6 +1503,12 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     "Front/top/back/bottom/3D helpers do not support GA drawings; use ga_model.");
                 continue;
             }
+            var placeBy = ViewPlacement.Normalize(spec.PlaceBy);
+            if (placeBy == null)
+            {
+                result.Errors.Add("placeBy must be origin, frame_lower_left or frame_center.");
+                continue;
+            }
             var view = new DrawingViewInfo
             {
                 Index = baseViewCount + validSequence,
@@ -1516,6 +1522,21 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Scale = spec.Scale ?? 10,
                 ModelObjectCount = 12,
             };
+            if (spec.RestrictionMin != null && spec.RestrictionMax != null)
+            {
+                // The frame of a plan: the restriction box at the scale, plus a 15 mm margin.
+                var scale = view.Scale ?? 10;
+                view.FrameOrigin = new Point3D(spec.RestrictionMin.X / scale - 15, spec.RestrictionMin.Y / scale - 15, 0);
+                view.Width = (spec.RestrictionMax.X - spec.RestrictionMin.X) / scale + 30;
+                view.Height = (spec.RestrictionMax.Y - spec.RestrictionMin.Y) / scale + 30;
+            }
+            SetMockFrame(view);
+            if (placeBy != ViewPlacement.Origin)
+            {
+                view.Origin = ViewPlacement.OriginForFrame(
+                    placeBy, spec.InsertionPoint, view.Origin!, view.FrameMin!, view.FrameMax!);
+                SetMockFrame(view);
+            }
             validSequence++;
             result.ViewPreview.Add(view);
             if (!apply) continue;
@@ -1523,6 +1544,14 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             result.CreatedCount++;
         }
         return result;
+    }
+
+    private static void SetMockFrame(DrawingViewInfo view)
+    {
+        var origin = view.Origin ?? new Point3D();
+        var offset = view.FrameOrigin ?? new Point3D();
+        view.FrameMin = new Point3D(origin.X + offset.X, origin.Y + offset.Y, 0);
+        view.FrameMax = new Point3D(view.FrameMin.X + view.Width, view.FrameMin.Y + view.Height, 0);
     }
 
     public DrawingWriteResult ModifyDrawingViews(
@@ -1560,11 +1589,19 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 result.DeletedCount++;
                 continue;
             }
+            if (!string.IsNullOrWhiteSpace(mod.AttributeFile))
+            {
+                // The mock has no attribute files: scale, size and origin stay unless Keep* is off.
+                result.Warnings.Add("Mock backend: view attributes file '" + mod.AttributeFile +
+                                    "' is not evaluated; filters and model-object counts are unchanged.");
+                if (!mod.KeepScale) view.Scale = 1;
+            }
             if (mod.Name != null) view.Name = mod.Name;
             if (mod.Origin != null) view.Origin = mod.Origin;
             if (mod.Width.HasValue) view.Width = mod.Width.Value;
             if (mod.Height.HasValue) view.Height = mod.Height.Value;
             if (mod.Scale.HasValue) view.Scale = mod.Scale.Value;
+            SetMockFrame(view);
             result.ModifiedCount++;
         }
         return result;

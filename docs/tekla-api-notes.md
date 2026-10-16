@@ -555,6 +555,22 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
   input (a warning says so) and refuses collinear points. Rounded input points shift the value
   (`R1714.5` for R1715); take the points from `tekla_get_part_curve_geometry`'s view block.
 
+### View placement and view attribute files (issues #33, #28)
+
+- `View.Origin` is where the MODEL origin lands on the sheet, not the frame: a plan restricted to
+  X 55 200…62 600 at 1:50 with origin 720,150 lands ~1 100 mm off the sheet (Tekla 2021, field
+  report). Frame margins (grid labels, ~13–23 mm) exist only after the insert. `placeBy=frame_*`
+  therefore inserts, commits, reads `GetAxisAlignedBoundingBox()` (sheet paper mm) and moves the
+  origin by the difference (`Core/Geometry/ViewPlacement`), then commits again. ⚠️ The bounding
+  box right after the insert is not verified live (`TODO(windows)` in `PlaceViewsByFrame`).
+- `View.Attributes.LoadAttributes(name)` + `Modify()` overwrites scale and view size from the
+  file; the restriction box and origin have to be put back after a `Select()` (the field script,
+  verified on Tekla 2021). `tekla_modify_drawing_view attributeFile` does that and reports the
+  view's model-object count before and after.
+- **Tekla caches view filters by attribute-file NAME within a session** (verified on Tekla 2021 by
+  counting parts in the view): after editing `<name>.vi.npfilter`, loading `<name>` again keeps the
+  old neighbour filter, while edits to the `.vi` itself apply. Save under a new name instead.
+
 ### Drawing editor preconditions
 
 - Drawing status/list/QA can run without an active drawing.

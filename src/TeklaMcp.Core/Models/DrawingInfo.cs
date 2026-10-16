@@ -98,6 +98,12 @@ public sealed class DrawingViewInfo
     public Point3D? FrameOrigin { get; set; }
     public double Width { get; set; }
     public double Height { get; set; }
+    /// <summary>
+    /// The view frame on the sheet, paper mm (lower-left / upper-right). In a create preview it
+    /// is an ESTIMATE from the restriction box and scale, without Tekla's frame margins.
+    /// </summary>
+    public Point3D? FrameMin { get; set; }
+    public Point3D? FrameMax { get; set; }
     public double? Scale { get; set; }
     public Point3D? RestrictionMin { get; set; }
     public Point3D? RestrictionMax { get; set; }

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -70,6 +71,13 @@ public sealed partial class TeklaModelService
             DisplayCoordinateSystem = ToDto(view.DisplayCoordinateSystem),
         };
         try { info.Scale = view.Attributes.Scale; } catch { }
+        try
+        {
+            var frame = view.GetAxisAlignedBoundingBox();
+            info.FrameMin = ToDto(frame.LowerLeft);
+            info.FrameMax = ToDto(frame.UpperRight);
+        }
+        catch { }
         try
         {
             info.RestrictionMin = ToDto(view.RestrictionBox.MinPoint);
@@ -492,21 +500,21 @@ public sealed partial class TeklaModelService
         var result = NewDrawingWriteResult("create_drawing_views", apply);
         var safeSpecs = (specs ?? new List<DrawingViewSpec>()).Take(DrawingBatchLimit).ToList();
         result.PlannedCount = safeSpecs.Count;
+        foreach (var spec in safeSpecs)
+            if (ViewPlacement.Normalize(spec.PlaceBy) == null)
+            {
+                result.Message = "placeBy must be origin, frame_lower_left or frame_center.";
+                return result;
+            }
         if (!apply)
         {
             foreach (var spec in safeSpecs)
-                result.ViewPreview.Add(new DrawingViewInfo
-                {
-                    Index = -1,
-                    Type = spec.Type ?? "",
-                    Name = spec.Name ?? "",
-                    Origin = spec.InsertionPoint,
-                    Scale = spec.Scale,
-                });
+                result.ViewPreview.Add(PreviewView(spec, result));
             return result;
         }
 
         var createdViews = new List<TSD.View>();
+        var placements = new List<KeyValuePair<TSD.View, DrawingViewSpec>>();
         try
         {
             var handler = GetDrawingHandler();
@@ -527,6 +535,8 @@ public sealed partial class TeklaModelService
                     // the active drawing. Account for that before optional follow-ups.
                     createdViews.Add(view);
                     result.CreatedCount++;
+                    if (ViewPlacement.Normalize(spec.PlaceBy) != ViewPlacement.Origin)
+                        placements.Add(new KeyValuePair<TSD.View, DrawingViewSpec>(view, spec));
                     if (!string.IsNullOrWhiteSpace(spec.Name))
                     {
                         view.Name = spec.Name;
@@ -546,6 +556,9 @@ public sealed partial class TeklaModelService
             if (result.CreatedCount > 0)
                 CommitDrawingChanges(
                     active, "Tekla MCP: create drawing views", result);
+            if (placements.Count > 0 && PlaceViewsByFrame(placements, result))
+                CommitDrawingChanges(
+                    active, "Tekla MCP: place drawing views by frame", result);
             var allViews = EnumerateViews(active);
             result.ViewPreview = createdViews.Select(view =>
             {
@@ -578,6 +591,7 @@ public sealed partial class TeklaModelService
                 return result;
             }
             var views = EnumerateViews(active);
+            var loaded = new List<KeyValuePair<TSD.View, int?>>();
             foreach (var modification in safe)
             {
                 var view = ResolveView(views, modification.ViewIndex, modification.ViewId, modification.ViewId2);
@@ -599,6 +613,12 @@ public sealed partial class TeklaModelService
                         result.DeletedCount++;
                         continue;
                     }
+                    if (!string.IsNullOrWhiteSpace(modification.AttributeFile))
+                    {
+                        var before = CountViewModelObjects(view);
+                        LoadViewAttributeFile(view, modification);
+                        loaded.Add(new KeyValuePair<TSD.View, int?>(view, before));
+                    }
                     ApplyViewModification(view, modification);
                     if (!view.Modify()) throw new InvalidOperationException("Tekla rejected view Modify().");
                     StampDrawingOrigin(view, "mcp:modify_drawing_view");
@@ -612,12 +632,131 @@ public sealed partial class TeklaModelService
             if (apply && (result.ModifiedCount > 0 || result.DeletedCount > 0))
                 CommitDrawingChanges(
                     active, "Tekla MCP: modify drawing views", result);
+            if (loaded.Count > 0)
+            {
+                // Did the file's filters take effect? Tekla caches view filters by attribute-file
+                // NAME within a session, so an edited .vi.npfilter under the same name may not.
+                result.ViewPreview.Clear();
+                var after = EnumerateViews(active);
+                foreach (var pair in loaded)
+                {
+                    pair.Key.Select();
+                    result.ViewPreview.Add(MapView(pair.Key, after.FindIndex(v => SameDatabaseObject(v, pair.Key))));
+                    result.Message = Aggregation.Append(result.Message,
+                        $"View '{pair.Key.Name}': {pair.Value?.ToString() ?? "?"} model objects before the attribute file, " +
+                        $"{CountViewModelObjects(pair.Key)?.ToString() ?? "?"} after.");
+                }
+            }
         }
         catch (Exception ex)
         {
             result.Message = DrawingFailure(result, ex);
         }
         return result;
+    }
+
+    /// <summary>Preview of a view to create; for frame placement an estimated origin and frame.</summary>
+    private static DrawingViewInfo PreviewView(DrawingViewSpec spec, DrawingWriteResult result)
+    {
+        var info = new DrawingViewInfo
+        {
+            Index = -1,
+            Type = spec.Type ?? "",
+            Name = spec.Name ?? "",
+            Origin = spec.InsertionPoint,
+            Scale = spec.Scale,
+        };
+        if (spec.RestrictionMin == null || spec.RestrictionMax == null || !spec.Scale.HasValue) return info;
+
+        var placeBy = ViewPlacement.Normalize(spec.PlaceBy)!;
+        ViewPlacement.EstimateFrame(spec.InsertionPoint, spec.RestrictionMin, spec.RestrictionMax,
+            spec.Scale.Value, out var frameMin, out var frameMax);
+        if (placeBy != ViewPlacement.Origin)
+        {
+            var origin = ViewPlacement.OriginForFrame(placeBy, spec.InsertionPoint, spec.InsertionPoint, frameMin, frameMax);
+            ViewPlacement.EstimateFrame(origin, spec.RestrictionMin, spec.RestrictionMax,
+                spec.Scale.Value, out frameMin, out frameMax);
+            info.Origin = origin;
+        }
+        info.FrameMin = frameMin;
+        info.FrameMax = frameMax;
+        result.Warnings.Add(
+            "frameMin/frameMax in the preview are estimates from the restriction box and scale: Tekla adds " +
+            "frame margins (grid labels, ~13–23 mm) that are known only after the insert" +
+            (placeBy == ViewPlacement.Origin ? "." : "; with apply the view is moved by its real frame."));
+        return info;
+    }
+
+    /// <summary>
+    /// Second pass for placeBy=frame_* (issue #33): with the views inserted and committed, read
+    /// each frame (with its margins) and move the origin so the frame anchor lands on the
+    /// requested point. Returns true when a view was moved and needs a commit.
+    /// </summary>
+    private static bool PlaceViewsByFrame(
+        IReadOnlyList<KeyValuePair<TSD.View, DrawingViewSpec>> placements, DrawingWriteResult result)
+    {
+        var moved = false;
+        foreach (var pair in placements)
+        {
+            var view = pair.Key;
+            var spec = pair.Value;
+            var placeBy = ViewPlacement.Normalize(spec.PlaceBy)!;
+            try
+            {
+                view.Select();
+                var frame = view.GetAxisAlignedBoundingBox();
+                var origin = ViewPlacement.OriginForFrame(
+                    placeBy, spec.InsertionPoint, ToDto(view.Origin), ToDto(frame.LowerLeft), ToDto(frame.UpperRight));
+                view.Origin = ToDrawingPoint(origin);
+                if (!view.Modify())
+                {
+                    result.Warnings.Add((view.Name ?? "view") +
+                                        ": created at the model-origin placement; Tekla rejected the move by frame.");
+                    continue;
+                }
+                moved = true;
+                view.Select();
+                var placed = view.GetAxisAlignedBoundingBox();
+                if (!ViewPlacement.IsPlaced(placeBy, spec.InsertionPoint, ToDto(placed.LowerLeft), ToDto(placed.UpperRight)))
+                    result.Warnings.Add((view.Name ?? "view") +
+                                        ": the frame changed while moving; check frameMin/frameMax and adjust with tekla_modify_drawing_view.");
+            }
+            catch (Exception ex)
+            {
+                // TODO(windows): frame semantics of GetAxisAlignedBoundingBox after Insert are unverified live.
+                result.Warnings.Add((view.Name ?? "view") + ": could not place by frame — " + ErrorText.Flatten(ex));
+            }
+        }
+        return moved;
+    }
+
+    /// <summary>
+    /// Loads a view attributes file (issue #28) and puts back what the file would overwrite:
+    /// <c>LoadAttributes</c> + <c>Modify</c> replaces scale and view size from the file. The
+    /// caller's final <c>Modify()</c> stores the restored restriction box and origin.
+    /// </summary>
+    private static void LoadViewAttributeFile(TSD.View view, DrawingViewModification modification)
+    {
+        var restriction = view.RestrictionBox;
+        var origin = view.Origin;
+        var scale = view.Attributes.Scale;
+        var attributes = view.Attributes;
+        if (!attributes.LoadAttributes(modification.AttributeFile))
+            throw new InvalidOperationException(
+                "Could not load view attributes file '" + modification.AttributeFile + "'.");
+        if (modification.KeepScale) attributes.Scale = scale;
+        view.Attributes = attributes;
+        if (!view.Modify())
+            throw new InvalidOperationException("Tekla rejected Modify() after loading '" + modification.AttributeFile + "'.");
+        view.Select();
+        if (modification.KeepRestrictionBox) view.RestrictionBox = restriction;
+        if (modification.KeepOrigin) view.Origin = origin;
+    }
+
+    private static int? CountViewModelObjects(TSD.View view)
+    {
+        try { return view.GetModelObjects().GetSize(); }
+        catch { return null; }
     }
 
     private static TSD.View? CreateOneDrawingView(TSD.Drawing drawing, DrawingViewSpec spec)

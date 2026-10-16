@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Linq;
 using ModelContextProtocol.Server;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Server.Tools;
@@ -54,11 +55,15 @@ public static class DrawingContentTools
     [McpServerTool(Name = "tekla_create_ga_drawing_view")]
     [Description("Create a model view on the ACTIVE general-arrangement drawing from explicit " +
                  "global model coordinate systems and a restriction box. insertionPoint is on " +
-                 "the sheet in paper mm; restriction bounds are in view coordinates. Preview " +
-                 "unless apply=true.")]
+                 "the sheet in paper mm; restriction bounds are in view coordinates. By default " +
+                 "(placeBy=origin) insertionPoint is where the MODEL ORIGIN lands, so a restricted " +
+                 "plan can end up far off the sheet; placeBy=frame_lower_left / frame_center puts the " +
+                 "view FRAME there instead (moved after the insert, by the real frame with its " +
+                 "margins). The result's frameMin/frameMax give the frame on the sheet (in a preview: " +
+                 "an estimate without margins). Preview unless apply=true.")]
     public static DrawingWriteResult CreateGaDrawingView(
         ITeklaModelService model,
-        [Description("Sheet insertion point 'x,y,z' in paper mm.")] string insertionPoint,
+        [Description("Sheet point 'x,y,z' in paper mm; its meaning is set by placeBy.")] string insertionPoint,
         [Description("View-coordinate-system origin in global model coordinates.")] string viewOrigin,
         [Description("View-coordinate-system X axis vector.")] string viewAxisX,
         [Description("View-coordinate-system Y axis vector.")] string viewAxisY,
@@ -71,8 +76,14 @@ public static class DrawingContentTools
         [Description("Optional view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("What insertionPoint places: origin (model origin, default), frame_lower_left or frame_center.")]
+        string placeBy = "origin")
     {
+        if (ViewPlacement.Normalize(placeBy) == null)
+            return ToolValidationFailure(
+                "create_drawing_views", apply,
+                "placeBy must be origin, frame_lower_left or frame_center.");
         var insertion = ToolHelpers.ParsePoint(insertionPoint);
         var viewO = ToolHelpers.ParsePoint(viewOrigin);
         var viewX = ToolHelpers.ParsePoint(viewAxisX);
@@ -138,6 +149,7 @@ public static class DrawingContentTools
                 RestrictionMax = max,
                 AttributeFile = attributeFile ?? "",
                 Name = name ?? "",
+                PlaceBy = ViewPlacement.Normalize(placeBy)!,
                 Scale = scale,
             },
         }, apply));
@@ -255,7 +267,13 @@ public static class DrawingContentTools
 
     [McpServerTool(Name = "tekla_modify_drawing_view")]
     [Description("Modify one ACTIVE-drawing view by non-zero session ID/ID2 or ephemeral index: " +
-                 "name, sheet origin/frame size, scale and rotations. Angles are degrees. " +
+                 "name, sheet origin/frame size, scale and rotations, or load a saved view attributes " +
+                 "file (attributeFile, e.g. one carrying a part filter and neighbour-part filter) while " +
+                 "keeping the view's scale, restriction box and origin (keep* default true; explicit " +
+                 "origin/scale override them). After loading, the message gives the view's model-object " +
+                 "count before and after, so you can see whether a filter took effect. Tekla caches view " +
+                 "filters by attribute-file NAME within a session: after editing <name>.vi.npfilter, " +
+                 "save it under a NEW name, or the view keeps the old filter. Angles are degrees. " +
                  "Preview unless apply=true; re-list after structural edits.")]
     public static DrawingWriteResult ModifyDrawingView(
         ITeklaModelService model,
@@ -272,11 +290,16 @@ public static class DrawingContentTools
         [Description("Rotate around view Z in degrees.")] double? rotateZDegrees = null,
         [Description("Rotate on drawing plane in degrees.")] double? rotateOnDrawingPlaneDegrees = null,
         [Description("Set true to commit; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Saved view attributes file to load (name without extension); omit to keep.")] string? attributeFile = null,
+        [Description("Keep the current scale when loading attributeFile (default true).")] bool keepScale = true,
+        [Description("Keep the current restriction box when loading attributeFile (default true).")] bool keepRestrictionBox = true,
+        [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
-            !rotateZDegrees.HasValue && !rotateOnDrawingPlaneDegrees.HasValue)
+            !rotateZDegrees.HasValue && !rotateOnDrawingPlaneDegrees.HasValue &&
+            string.IsNullOrWhiteSpace(attributeFile))
             return ToolValidationFailure(
                 "modify_drawing_views", apply,
                 "No view changes were supplied.");
@@ -307,6 +330,10 @@ public static class DrawingContentTools
                 RotateYDegrees = rotateYDegrees,
                 RotateZDegrees = rotateZDegrees,
                 RotateOnDrawingPlaneDegrees = rotateOnDrawingPlaneDegrees,
+                AttributeFile = string.IsNullOrWhiteSpace(attributeFile) ? null : attributeFile!.Trim(),
+                KeepScale = keepScale,
+                KeepRestrictionBox = keepRestrictionBox,
+                KeepOrigin = keepOrigin,
             },
         }, apply));
     }

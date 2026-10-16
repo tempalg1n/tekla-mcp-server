@@ -72,6 +72,12 @@ public sealed class DrawingViewSpec
     public string MarkAttributeFile { get; set; } = "";
     public string Name { get; set; } = "";
     public double? Scale { get; set; }
+    /// <summary>
+    /// What <see cref="InsertionPoint"/> means (issue #33): origin (default — where the MODEL
+    /// origin lands on the sheet), frame_lower_left or frame_center (where the view FRAME goes;
+    /// the view is moved after the insert, once Tekla knows the frame with its margins).
+    /// </summary>
+    public string PlaceBy { get; set; } = "origin";
 }
 
 /// <summary>Editable properties of one active-drawing view.</summary>
@@ -90,6 +96,14 @@ public sealed class DrawingViewModification
     public double? RotateZDegrees { get; set; }
     public double? RotateOnDrawingPlaneDegrees { get; set; }
     public bool Delete { get; set; }
+    /// <summary>
+    /// A saved view attributes file to load (issue #28) — it brings its own part and
+    /// neighbour-part filters, but also scale and view size, so the Keep* flags put those back.
+    /// </summary>
+    public string? AttributeFile { get; set; }
+    public bool KeepScale { get; set; } = true;
+    public bool KeepRestrictionBox { get; set; } = true;
+    public bool KeepOrigin { get; set; } = true;
 }
 
 /// <summary>
