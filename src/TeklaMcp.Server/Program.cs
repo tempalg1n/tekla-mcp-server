@@ -146,6 +146,10 @@ const string serverInstructions =
     "component inserts fine without it (field report, not yet reduced to a repro). Prefer " +
     "tekla_copy_connection from a working detail; pass attributesFile only when a specific " +
     "saved set is genuinely required.\n" +
+    "- In a script, every GetUserProperty overload returns TRUE for a set UDA (Tekla 2021): the " +
+    "string overload gives \"\" for a number, the int/double overloads give 0 for a string. Read a " +
+    "UDA with the overload of its declared type (tekla_list_catalog kind=uda_definitions) or use " +
+    "tekla_get_object_udas, which does that for you.\n" +
     "- Prefer the batch tools (tekla_modify_parts, tekla_modify_connections, tekla_create_beams) " +
     "over N single-object calls when editing a whole axis or frame.";
 

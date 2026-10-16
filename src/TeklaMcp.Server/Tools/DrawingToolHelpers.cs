@@ -67,7 +67,8 @@ internal static class DrawingToolHelpers
     public static List<TeklaIdentifierInfo> ParseIdentifiers(string? raw)
     {
         var result = new List<TeklaIdentifierInfo>();
-        if (string.IsNullOrWhiteSpace(raw)) return result;
+        // net48's string.IsNullOrWhiteSpace carries no [NotNullWhen] annotation.
+        if (raw is null || string.IsNullOrWhiteSpace(raw)) return result;
         foreach (var token in raw.Split(
                      new[] { ',', ';', '\r', '\n' },
                      StringSplitOptions.RemoveEmptyEntries))

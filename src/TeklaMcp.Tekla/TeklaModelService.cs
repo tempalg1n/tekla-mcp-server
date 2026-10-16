@@ -7,6 +7,7 @@ using TeklaMcp.Core;
 using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
+using TSC = Tekla.Structures.Catalogs;
 using TSM = Tekla.Structures.Model;
 using TSMC = Tekla.Structures.Model.Collaboration;
 using TSMI = Tekla.Structures.ModelInternal;
@@ -939,6 +940,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (preview != null) result.Preview.Add(preview);
             result.MatchedObjects = 1;
 
+            var typeProblems = CheckUdaUpdateTypes(updates);
+            if (typeProblems.Count > 0)
+            {
+                result.Message = (apply ? "Nothing was written: " : "These values cannot be written: ") +
+                                 string.Join(" ", typeProblems);
+                if (apply) result.MatchedObjects = 0;
+                return Stamp(result, progress);
+            }
+
             if (!apply) return Stamp(result, progress);
 
             progress.BeginWrite(); // SetUserProperty writes straight to the model
@@ -974,6 +984,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             var model = GetConnectedModel();
+            var typeProblems = CheckUdaUpdateTypes(updates);
+            if (typeProblems.Count > 0)
+            {
+                result.Message = "Nothing was matched or written: " + string.Join(" ", typeProblems);
+                return Stamp(result, progress);
+            }
+
             foreach (var mo in EnumerateSource(model, query))
             {
                 var info = MapBasic(mo);
@@ -2597,6 +2614,9 @@ public sealed partial class TeklaModelService : ITeklaModelService
             info = model.GetInfo();
         }
 
+        // Another model has another UDA catalog.
+        UdaKinds.ResetIfScopeChanged(info.ModelPath + "|" + info.ModelName);
+
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,
         // instead of letting the first Insert/Modify trigger them at an arbitrary later time.
@@ -2918,31 +2938,89 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
+    /// <summary>UDA types of the connected model (reset in <see cref="ConnectModel"/>).</summary>
+    private static readonly UdaKindCache UdaKinds = new UdaKindCache();
+
+    /// <summary>
+    /// One UDA of one object, read by its type (issue #21): Tekla 2021's string getter answers
+    /// "" for a number, so the old "first getter that succeeds" exported integers as blanks.
+    /// </summary>
     private static bool TryGetUserPropertyAsString(TSM.ModelObject mo, string udaName, out string value)
     {
-        value = "";
-        var strVal = "";
-        if (mo.GetUserProperty(udaName, ref strVal))
+        var found = UdaValues.TryRead(
+            UdaKindOf(udaName), new TeklaUdaGetters(mo, udaName), out value, out var learned);
+        UdaKinds.Learn(udaName, learned);
+        return found;
+    }
+
+    /// <summary>
+    /// The declared type from the UDA catalog, looked up once per name and model
+    /// (<c>UserPropertyItem.Select()</c>, ~6 ms on Tekla 2021; the whole catalog would take ~5 s),
+    /// or what an earlier read learned. Callers are inside a tool call, after
+    /// <see cref="GetConnectedModel"/>.
+    /// </summary>
+    private static UdaValueKind UdaKindOf(string udaName)
+    {
+        if (UdaKinds.TryGet(udaName, out var kind)) return kind;
+        kind = UdaValueKind.Unknown;
+        try
         {
-            value = strVal ?? "";
-            return true;
+            var item = new TSC.UserPropertyItem { Name = udaName };
+            if (item.Select()) kind = UdaValues.FromCatalogType(item.Type.ToString());
+        }
+        catch
+        {
+            // Catalog unreachable: the read falls back to what Tekla stored on the object.
+        }
+        UdaKinds.SetDeclared(udaName, kind);
+        return kind;
+    }
+
+    private sealed class TeklaUdaGetters : IUdaGetters
+    {
+        private readonly TSM.ModelObject _mo;
+        private readonly string _name;
+
+        public TeklaUdaGetters(TSM.ModelObject mo, string name)
+        {
+            _mo = mo;
+            _name = name;
         }
 
-        var intVal = 0;
-        if (mo.GetUserProperty(udaName, ref intVal))
+        public bool TryGetString(out string value)
         {
-            value = intVal.ToString(CultureInfo.InvariantCulture);
-            return true;
+            value = "";
+            var ok = _mo.GetUserProperty(_name, ref value);
+            value ??= "";
+            return ok;
         }
 
-        var doubleVal = 0.0;
-        if (mo.GetUserProperty(udaName, ref doubleVal))
+        public bool TryGetInteger(out int value)
         {
-            value = doubleVal.ToString("G", CultureInfo.InvariantCulture);
-            return true;
+            value = 0;
+            return _mo.GetUserProperty(_name, ref value);
         }
 
-        return false;
+        public bool TryGetDouble(out double value)
+        {
+            value = 0;
+            return _mo.GetUserProperty(_name, ref value);
+        }
+
+        public UdaValueKind ReadStoredKind()
+        {
+            try
+            {
+                var all = new Hashtable();
+                return _mo.GetAllUserProperties(ref all) && all.ContainsKey(_name)
+                    ? UdaValues.FromStoredValue(all[_name])
+                    : UdaValueKind.Unknown;
+            }
+            catch
+            {
+                return UdaValueKind.Unknown;
+            }
+        }
     }
 
     private static bool TryGetAttributeValue(TSM.ModelObject mo, string attributeName, out string value)
@@ -3071,6 +3149,23 @@ public sealed partial class TeklaModelService : ITeklaModelService
         return (obj.Type ?? "") + ":" + profile;
     }
 
+    /// <summary>
+    /// The UDA values that cannot be written as their declared type ("abc" into an integer
+    /// attribute), one message each; empty when all can. Checked BEFORE the first write.
+    /// </summary>
+    private static List<string> CheckUdaUpdateTypes(IEnumerable<KeyValuePair<string, string>> updates)
+    {
+        var problems = new List<string>();
+        foreach (var kv in updates)
+        {
+            var key = (kv.Key ?? "").Trim();
+            if (key.Length == 0) continue;
+            if (!UdaValues.TryConvertForWrite(UdaKindOf(key), key, kv.Value, out _, out var error))
+                problems.Add(error!);
+        }
+        return problems;
+    }
+
     private static bool ApplyUdaUpdates(
         TSM.ModelObject mo,
         IReadOnlyDictionary<string, string> updates,
@@ -3082,14 +3177,18 @@ public sealed partial class TeklaModelService : ITeklaModelService
             var key = (kv.Key ?? "").Trim();
             if (string.IsNullOrWhiteSpace(key)) continue;
 
-            var raw = kv.Value ?? "";
+            // Written as the declared type: a string attribute keeps "123" a string (it used to
+            // become an integer, which the string getter then reads as ""). Callers check the
+            // types first; a mismatch here is skipped, never written as another type.
+            if (!UdaValues.TryConvertForWrite(UdaKindOf(key), key, kv.Value, out var typed, out _))
+                continue;
             bool ok;
-            if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intVal))
-                ok = mo.SetUserProperty(key, intVal);
-            else if (double.TryParse(raw, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleVal))
-                ok = mo.SetUserProperty(key, doubleVal);
-            else
-                ok = mo.SetUserProperty(key, raw);
+            switch (typed)
+            {
+                case int intVal: ok = mo.SetUserProperty(key, intVal); break;
+                case double doubleVal: ok = mo.SetUserProperty(key, doubleVal); break;
+                default: ok = mo.SetUserProperty(key, (string)typed); break;
+            }
 
             if (ok) changedFields++;
         }

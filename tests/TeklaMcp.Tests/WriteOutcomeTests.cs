@@ -218,6 +218,8 @@ public class WriteOutcomeTests : IDisposable
 
         public string? ReadUda(object handle, string name) => null;
 
+        public string? CheckValue(string name, string value) => null;
+
         public int WriteUdas(object handle, IReadOnlyList<KeyValuePair<string, string>> values)
         {
             if ((string)handle == ThrowOn) throw new System.Runtime.Remoting.RemotingException("IPC port gone");

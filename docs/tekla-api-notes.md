@@ -451,6 +451,28 @@ reliable path is **copy from a working source detail** (`tekla_copy_connection`)
 `attributesFile` when a specific saved set is genuinely required. Not yet reduced to a minimal
 repro — treat as environment/component dependent.
 
+### 7. Every `GetUserProperty` overload succeeds for a set UDA
+
+Verified live on Tekla 2021 (model 3155, 300 beams, read-only, 2026-10-16; issue #21): for an
+attribute that is SET, the string, int and double overloads of `ModelObject.GetUserProperty` all
+return **true**, and only the one matching the stored type returns the value — the string
+overload gives `""` for an integer or double, the int/double overloads give `0` for a string. An
+attribute that is not set returns false from all three. "Try string, then int, then double"
+therefore read every numeric UDA as blank (exported empty, `udaIsEmpty` true, the import's
+non-empty guard open).
+
+The backend reads by the DECLARED type (`Core/UdaValues`): `UserPropertyItem { Name }.Select()`
+gives `Type` (`TYPE_INT`/`TYPE_DOUBLE`/`TYPE_STRING`) in ~6 ms per name — cached per model; the
+whole `CatalogHandler.GetUserPropertyItems()` list (620 items) took ~5 s. Names are
+case-sensitive (2021 defines both `comment` and `COMMENT`). Names the catalog does not declare
+(plugin attributes such as `DIMENSION_A`, `MCP_ORIGIN`) answer `Select() == false`; for those a
+non-empty string is a string, and a `""` is resolved once per name through
+`GetAllUserProperties`, whose boxed values carry the stored type. Writes use the declared type
+too: a string UDA keeps `"123"` a string (servers up to v0.8.1 stored it as an integer, which the
+string overload then reads as `""`), and a value that does not parse as a declared number is
+refused before anything is written. Option lists (raw index vs. displayed label) are not mapped
+yet — values are the raw stored numbers.
+
 ## Drawing API implementation notes
 
 `Tekla.Structures.Drawing.dll` is referenced only by the `net48` live backend and uses the same
