@@ -334,6 +334,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   Tekla canonicalizes `Part.Position` on commit (`TOP`+180° is stored as `BELOW`+0°), so an echo
   reports values the model does not agree with and the next read looks like a lost write.
   `ModifyParts`, `ModifyConnections` and `CreateConnections` all do this; keep it.
+  `ModifyParts` also compares EVERY written part with the request (`Core/PartWriteCheck` →
+  `WriteResult.Verification`, issue #22: `Modify()` returned true and Class stayed 14): a mismatch
+  is an error line (outcome `partial`), never retried; Position is not compared (canonicalized).
+  A preview capped at 20 says so through `PreviewTotal`/`PreviewTruncated`.
 - **Connection orientation goes through `ModifyConnections`.** A written `Connection.UpVector`
   only persists under `AUTODIR_NA`; other modes accept the write and silently recompute. The
   backend switches to NA whenever an explicit vector arrives without a caller-named mode.

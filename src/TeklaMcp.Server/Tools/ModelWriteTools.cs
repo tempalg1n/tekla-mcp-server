@@ -163,7 +163,12 @@ public static class ModelWriteTools
                  "re-orienting a whole axis or frame. Preview unless apply=true. NOTE: Tekla " +
                  "canonicalizes Position on commit (TOP+180 is stored as BELOW+0), so the returned " +
                  "preview reads back from the model and may name the rotation differently than you " +
-                 "asked — the physical orientation is what you requested.")]
+                 "asked — the physical orientation is what you requested. After apply, EVERY written " +
+                 "part is read back and compared with the request: verification.status = verified / " +
+                 "mismatch / incomplete, with each mismatching field (requested vs stored) — Tekla can " +
+                 "accept Modify() and keep the old value. A mismatch makes the outcome 'partial'; do " +
+                 "not retry it blindly. The preview lists at most 20 parts (previewTotal / " +
+                 "previewTruncated say how many it stands for).")]
     public static WriteResult ModifyParts(
         ITeklaModelService model,
         [Description("Part modifications (maximum 200).")] IReadOnlyList<PartModification> modifications,

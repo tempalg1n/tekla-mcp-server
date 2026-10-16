@@ -704,6 +704,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         var result = new WriteResult { Operation = "modify", Applied = apply, Backend = BackendName };
         if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return result; }
 
+        var check = new PartWriteCheck.Batch();
         foreach (var mod in modifications)
         {
             var obj = GetObjectByGuid(mod.Guid);
@@ -713,10 +714,16 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             if (result.Preview.Count < 20) result.Preview.Add(obj);
             if (!apply) continue;
 
-            if (mod.Profile != null) obj.Profile = mod.Profile;
-            if (mod.Material != null) obj.Material = mod.Material;
-            if (mod.Class != null) obj.Class = mod.Class;
-            if (mod.Name != null) obj.Name = mod.Name;
+            PartWriteCheck.ExpectedEnds(
+                mod,
+                obj.StartX.HasValue ? new Point3D(obj.StartX.Value, obj.StartY ?? 0, obj.StartZ ?? 0) : null,
+                obj.EndX.HasValue ? new Point3D(obj.EndX.Value, obj.EndY ?? 0, obj.EndZ ?? 0) : null,
+                out var expectedStart, out var expectedEnd);
+            // Blank fields are left alone, as in the live backend.
+            if (!string.IsNullOrWhiteSpace(mod.Profile)) obj.Profile = mod.Profile!;
+            if (!string.IsNullOrWhiteSpace(mod.Material)) obj.Material = mod.Material!;
+            if (!string.IsNullOrWhiteSpace(mod.Class)) obj.Class = mod.Class!;
+            if (!string.IsNullOrWhiteSpace(mod.Name)) obj.Name = mod.Name!;
             var position = ResolveMockPosition(mod.MatchPositionGuid, mod.Position, obj.Position);
             if (position != null) obj.Position = position;
             if (mod.SwapHandles) SwapEnds(obj);
@@ -725,7 +732,15 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             Recenter(obj);
             StampOrigin(obj.Guid, "mcp:modify");
             result.ModifiedCount++;
+            check.Add(mod, obj, expectedStart, expectedEnd);
         }
+        if (apply)
+        {
+            result.Verification = check.Build();
+            result.Errors.AddRange(check.Errors);
+        }
+        result.PreviewTotal = apply ? result.ModifiedCount : result.PlannedCount;
+        result.PreviewTruncated = result.Preview.Count < result.PreviewTotal;
         return result;
     }
 

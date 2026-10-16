@@ -1158,14 +1158,18 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
             if (!apply)
             {
+                var found = 0;
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
                     var moPrev = TrySelectObjectByGuid(model, mod.Guid);
                     if (moPrev is null) { result.Errors.Add("Not found: " + mod.Guid); continue; }
+                    found++;
+                    if (result.Preview.Count >= 20) continue;
                     var info = Map(moPrev);
-                    if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
+                    if (info != null) result.Preview.Add(info);
                 }
+                SetPreviewCoverage(result, found);
                 return Stamp(result, progress);
             }
 
@@ -1174,12 +1178,17 @@ public sealed partial class TeklaModelService : ITeklaModelService
             wph.SetCurrentTransformationPlane(new TSM.TransformationPlane()); // global
             try
             {
-                var writtenGuids = new List<string>();
+                var written = new List<WrittenPart>();
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
                     var mo = TrySelectObjectByGuid(model, mod.Guid);
                     if (mo is null) { result.Errors.Add("Not found: " + mod.Guid); continue; }
+                    Point3D? expectedStart = null, expectedEnd = null;
+                    if (mo is TSM.Beam original)
+                        PartWriteCheck.ExpectedEnds(
+                            mod, ToPoint3D(original.StartPoint), ToPoint3D(original.EndPoint),
+                            out expectedStart, out expectedEnd);
                     try
                     {
                         if (mo is TSM.Part part)
@@ -1211,9 +1220,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             throw new InvalidOperationException(
                                 "Tekla rejected Modify() for " + mod.Guid + " — the geometry/properties were not changed.");
                         result.ModifiedCount++;
-                        var writtenGuid = ModelGuid(mo);
-                        if (!string.IsNullOrWhiteSpace(writtenGuid) && writtenGuids.Count < 20)
-                            writtenGuids.Add(writtenGuid);
+                        written.Add(new WrittenPart
+                        {
+                            Modification = mod,
+                            Guid = ModelGuid(mo),
+                            ExpectedStart = expectedStart,
+                            ExpectedEnd = expectedEnd,
+                        });
                     }
                     catch (Exception exItem)
                     {
@@ -1228,13 +1241,32 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 // canonicalizes Position on commit — TOP+180° comes back as BELOW+0°, LEFT
                 // flips to RIGHT (verified live, Tekla 2023) — so echoing the in-memory object
                 // would hand the caller values the model does not actually agree with, and a
-                // follow-up read looks like the write was lost.
-                foreach (var guid in writtenGuids)
+                // follow-up read looks like the write was lost. EVERY written part is compared
+                // with the request (issue #22: Modify() returned true, Class stayed 14 instead
+                // of 50); only the preview stays capped at 20.
+                var check = new PartWriteCheck.Batch();
+                foreach (var part in written)
                 {
-                    var fresh = TrySelectObjectByGuid(model, guid);
-                    var info = fresh is null ? null : Map(fresh);
-                    if (info != null) result.Preview.Add(info);
+                    ModelObjectInfo? stored = null;
+                    try
+                    {
+                        var fresh = string.IsNullOrWhiteSpace(part.Guid) ? null : TrySelectObjectByGuid(model, part.Guid);
+                        stored = fresh is null ? null : MapBasic(fresh);
+                        if (fresh != null && result.Preview.Count < 20)
+                        {
+                            var info = Map(fresh);
+                            if (info != null) result.Preview.Add(info);
+                        }
+                    }
+                    catch
+                    {
+                        // Counted as unread below; the commit itself already happened.
+                    }
+                    check.Add(part.Modification, stored, part.ExpectedStart, part.ExpectedEnd);
                 }
+                result.Verification = check.Build();
+                result.Errors.AddRange(check.Errors);
+                SetPreviewCoverage(result, written.Count);
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
@@ -1244,6 +1276,20 @@ public sealed partial class TeklaModelService : ITeklaModelService
             result.Message = ErrorText.Flatten(ex);
         }
         return Stamp(result, progress);
+    }
+
+    private sealed class WrittenPart
+    {
+        public PartModification Modification { get; set; } = null!;
+        public string Guid { get; set; } = "";
+        public Point3D? ExpectedStart { get; set; }
+        public Point3D? ExpectedEnd { get; set; }
+    }
+
+    private static void SetPreviewCoverage(WriteResult result, int total)
+    {
+        result.PreviewTotal = total;
+        result.PreviewTruncated = result.Preview.Count < total;
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
@@ -1268,6 +1314,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.PlannedCount = matched.Count;
+            SetPreviewCoverage(result, matched.Count);
             if (!apply) return Stamp(result, progress);
 
             foreach (var mo in matched)
