@@ -169,7 +169,13 @@ public static class DrawingContentTools
 
     [McpServerTool(Name = "tekla_create_section_view")]
     [Description("Create a straight or curved section view from an existing view on the ACTIVE " +
-                 "drawing. Cut points are view-local; insertionPoint is sheet paper mm. Preview unless apply=true.")]
+                 "drawing. Cut points are view-local; insertionPoint is sheet paper mm. The section " +
+                 "looks along the cut direction rotated +90° in the source view (a cut drawn upwards " +
+                 "looks toward −x; the preview states it). depthUp = how far it sees BEHIND the cut " +
+                 "plane, depthDown = the slab between the cut and the viewer; both must be > 0. " +
+                 "attributeFile is loaded after creation (Tekla ignores it in CreateSectionView), " +
+                 "keeping name, scale, label and restriction box. The created section mark is " +
+                 "returned in objectPreview (rename it with the view). Preview unless apply=true.")]
     public static DrawingWriteResult CreateSectionView(
         ITeklaModelService model,
         [Description("Source View ID from tekla_list_drawing_views.")] int sourceViewId,
@@ -178,8 +184,8 @@ public static class DrawingContentTools
         [Description("New view insertion point on sheet 'x,y,z' (paper mm).")] string insertionPoint,
         [Description("Ephemeral source-view index fallback when source IDs are zero.")] int sourceViewIndex = -1,
         [Description("true = curved section, false = straight.")] bool curved = false,
-        [Description("Depth above cut (model mm).")] double depthUp = 0,
-        [Description("Depth below cut (model mm).")] double depthDown = 0,
+        [Description("Depth BEHIND the cut plane, away from the viewer (model mm, > 0).")] double? depthUp = null,
+        [Description("Depth between the cut plane and the viewer (model mm, > 0; typically 5-10).")] double? depthDown = null,
         [Description("Saved view attributes file.")] string attributeFile = "",
         [Description("Saved section-mark attributes file.")] string markAttributeFile = "",
         [Description("Optional created-view name.")] string name = "",
@@ -199,6 +205,9 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
+        var depthProblem = SectionViews.CheckDepths(depthUp, depthDown);
+        if (depthProblem != null)
+            return ToolValidationFailure("create_drawing_views", apply, depthProblem);
 
         return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
@@ -222,7 +231,9 @@ public static class DrawingContentTools
 
     [McpServerTool(Name = "tekla_create_detail_view")]
     [Description("Create a detail view from an existing view on the ACTIVE drawing. center/boundary/" +
-                 "label are view-local; insertionPoint is sheet paper mm. Preview unless apply=true.")]
+                 "label are view-local; insertionPoint is sheet paper mm. attributeFile is loaded after " +
+                 "creation, keeping name, scale, label and restriction box; the created detail mark is " +
+                 "returned in objectPreview. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDetailView(
         ITeklaModelService model,
         [Description("Source View ID.")] int sourceViewId,

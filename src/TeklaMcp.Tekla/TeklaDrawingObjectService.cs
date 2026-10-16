@@ -529,7 +529,7 @@ public sealed partial class TeklaModelService
             {
                 try
                 {
-                    var view = CreateOneDrawingView(active, spec);
+                    var view = CreateOneDrawingView(active, spec, out var createdMark);
                     if (view == null) throw new InvalidOperationException("Tekla rejected view creation.");
                     // Static Create* methods and the GA Insert path have already mutated
                     // the active drawing. Account for that before optional follow-ups.
@@ -537,6 +537,31 @@ public sealed partial class TeklaModelService
                     result.CreatedCount++;
                     if (ViewPlacement.Normalize(spec.PlaceBy) != ViewPlacement.Origin)
                         placements.Add(new KeyValuePair<TSD.View, DrawingViewSpec>(view, spec));
+                    if (createdMark != null)
+                    {
+                        var markIdentifier = GetDrawingIdentifier(createdMark);
+                        result.ObjectPreview.Add(new DrawingObjectInfo
+                        {
+                            Index = -1,
+                            ObjectId = markIdentifier.ID,
+                            ObjectId2 = markIdentifier.ID2,
+                            Type = createdMark.GetType().Name,
+                            ViewIndex = spec.SourceViewIndex,
+                            ViewId = spec.SourceViewId ?? 0,
+                            ViewId2 = spec.SourceViewId2 ?? 0,
+                        });
+                    }
+                    // Tekla 2021 ignores the ViewAttributes handed to CreateSectionView /
+                    // CreateDetailView (issue #34): the new view takes the parent's filters and
+                    // marks. Load the file now, keeping what creation set.
+                    if (createdMark != null && !string.IsNullOrWhiteSpace(spec.AttributeFile))
+                    {
+                        LoadViewAttributeFile(view, new DrawingViewModification { AttributeFile = spec.AttributeFile });
+                        if (!view.Modify())
+                            result.Warnings.Add((spec.Type ?? "view") +
+                                                ": view was created, but Tekla rejected the attribute file '" +
+                                                spec.AttributeFile + "' afterwards.");
+                    }
                     if (!string.IsNullOrWhiteSpace(spec.Name))
                     {
                         view.Name = spec.Name;
@@ -670,6 +695,11 @@ public sealed partial class TeklaModelService
             Origin = spec.InsertionPoint,
             Scale = spec.Scale,
         };
+        var kind = (spec.Type ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        if ((kind == "section" || kind == "curved_section") && spec.Points != null && spec.Points.Count >= 2)
+            result.Message = Aggregation.Append(result.Message,
+                SectionViews.Describe(spec.Points[0], spec.Points[spec.Points.Count - 1],
+                    spec.DepthUp ?? 0, spec.DepthDown ?? 0));
         if (spec.RestrictionMin == null || spec.RestrictionMax == null || !spec.Scale.HasValue) return info;
 
         var placeBy = ViewPlacement.Normalize(spec.PlaceBy)!;
@@ -800,8 +830,10 @@ public sealed partial class TeklaModelService
         catch { return null; }
     }
 
-    private static TSD.View? CreateOneDrawingView(TSD.Drawing drawing, DrawingViewSpec spec)
+    private static TSD.View? CreateOneDrawingView(
+        TSD.Drawing drawing, DrawingViewSpec spec, out TSD.DrawingObject? createdMark)
     {
+        createdMark = null;
         var attributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
             ? new TSD.View.ViewAttributes()
             : new TSD.View.ViewAttributes(spec.AttributeFile);
@@ -880,19 +912,23 @@ public sealed partial class TeklaModelService
             case "section":
                 if (points.Count < 2) throw new ArgumentException("section requires two points.");
                 TSD.SectionMark sectionMark;
-                return TSD.View.CreateSectionView(
-                    source, points[0], points[1], insertion,
-                    spec.DepthUp ?? 0, spec.DepthDown ?? 0,
-                    attributes, markAttributes, out created, out sectionMark)
-                    ? created : null;
+                if (!TSD.View.CreateSectionView(
+                        source, points[0], points[1], insertion,
+                        spec.DepthUp ?? 0, spec.DepthDown ?? 0,
+                        attributes, markAttributes, out created, out sectionMark))
+                    return null;
+                createdMark = sectionMark;
+                return created;
             case "curved_section":
                 if (points.Count < 3) throw new ArgumentException("curved_section requires three points.");
                 TSD.CurvedSectionMark curvedMark;
-                return TSD.View.CreateCurvedSectionView(
-                    source, points[0], points[1], points[2], insertion,
-                    spec.DepthUp ?? 0, spec.DepthDown ?? 0,
-                    attributes, markAttributes, out created, out curvedMark)
-                    ? created : null;
+                if (!TSD.View.CreateCurvedSectionView(
+                        source, points[0], points[1], points[2], insertion,
+                        spec.DepthUp ?? 0, spec.DepthDown ?? 0,
+                        attributes, markAttributes, out created, out curvedMark))
+                    return null;
+                createdMark = curvedMark;
+                return created;
             case "detail":
                 if (points.Count < 3)
                     throw new ArgumentException("detail requires center, boundary and label points.");
@@ -900,10 +936,12 @@ public sealed partial class TeklaModelService
                     ? new TSD.DetailMark.DetailMarkAttributes()
                     : new TSD.DetailMark.DetailMarkAttributes(spec.MarkAttributeFile);
                 TSD.DetailMark detailMark;
-                return TSD.View.CreateDetailView(
-                    source, points[0], points[1], points[2], insertion,
-                    attributes, detailAttributes, out created, out detailMark)
-                    ? created : null;
+                if (!TSD.View.CreateDetailView(
+                        source, points[0], points[1], points[2], insertion,
+                        attributes, detailAttributes, out created, out detailMark))
+                    return null;
+                createdMark = detailMark;
+                return created;
             default:
                 throw new ArgumentException(
                     "Unknown view type. Use front, top, back, bottom, 3d, ga_model, section, curved_section or detail.");

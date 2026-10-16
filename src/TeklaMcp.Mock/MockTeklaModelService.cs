@@ -1544,9 +1544,21 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             }
             validSequence++;
             result.ViewPreview.Add(view);
+            if ((kind == "section" || kind == "curved_section") && spec.Points != null && spec.Points.Count >= 2)
+                result.Message = Aggregation.Append(result.Message, SectionViews.Describe(
+                    spec.Points[0], spec.Points[spec.Points.Count - 1], spec.DepthUp ?? 0, spec.DepthDown ?? 0));
             if (!apply) continue;
             views.Add(view);
             result.CreatedCount++;
+            if (kind == "section" || kind == "curved_section" || kind == "detail")
+                result.ObjectPreview.Add(new DrawingObjectInfo
+                {
+                    Index = -1,
+                    ObjectId = 70000 + view.ViewId,
+                    Type = kind == "detail" ? "DetailMark" : kind == "curved_section" ? "CurvedSectionMark" : "SectionMark",
+                    ViewId = spec.SourceViewId ?? 0,
+                    ViewId2 = spec.SourceViewId2 ?? 0,
+                });
         }
         _drawingSaves.Committed(result);
         return result;
