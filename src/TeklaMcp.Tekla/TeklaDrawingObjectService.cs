@@ -554,10 +554,10 @@ public sealed partial class TeklaModelService
             }
 
             if (result.CreatedCount > 0)
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: create drawing views", result);
             if (placements.Count > 0 && PlaceViewsByFrame(placements, result))
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: place drawing views by frame", result);
             var allViews = EnumerateViews(active);
             result.ViewPreview = createdViews.Select(view =>
@@ -630,7 +630,7 @@ public sealed partial class TeklaModelService
                 }
             }
             if (apply && (result.ModifiedCount > 0 || result.DeletedCount > 0))
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: modify drawing views", result);
             if (loaded.Count > 0)
             {

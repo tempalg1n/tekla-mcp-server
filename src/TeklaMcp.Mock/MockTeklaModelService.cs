@@ -978,6 +978,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             Connected = true,
             AnyDrawingOpen = active != null,
             ActiveDrawing = active,
+            UnsavedMcpWrites = active != null ? _drawingSaves.UnsavedWrites : 0,
             Backend = BackendName,
             Message = "Synthetic drawing data — no Tekla involved.",
         };
@@ -1182,6 +1183,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         {
             _activeDrawingKey = null;
             result.ModifiedCount = 1;
+            result.DrawingSaved = save;
+            _drawingSaves.Reset();
         }
         return result;
     }
@@ -1201,6 +1204,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         {
             active.ModificationDate = DateTime.UtcNow;
             result.ModifiedCount = 1;
+            result.DrawingSaved = true;
+            _drawingSaves.Reset();
         }
         return result;
     }
@@ -1543,6 +1548,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             views.Add(view);
             result.CreatedCount++;
         }
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1604,6 +1610,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             SetMockFrame(view);
             result.ModifiedCount++;
         }
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1710,6 +1717,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             objects.Add(info);
             result.CreatedCount++;
         }
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1761,6 +1769,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             result.ModifiedCount++;
         }
         ReindexMockDrawingObjects();
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1777,6 +1786,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         result.PlannedCount = targets.Count;
         result.ObjectPreview.AddRange(targets.Take(20));
         if (apply) result.ModifiedCount = targets.Count;
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1911,6 +1921,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         var invalid = System.IO.Path.GetInvalidFileNameChars();
         return new string((value ?? "").Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
+
+    /// <summary>Mock writes to the open drawing since its last save (issue #41), like the live backend.</summary>
+    private readonly DrawingSaveTracker _drawingSaves = new DrawingSaveTracker();
 
     private static DrawingWriteResult NewDrawingResult(string operation, bool apply) =>
         new DrawingWriteResult { Operation = operation, Applied = apply, Backend = BackendName };

@@ -119,7 +119,11 @@ const string serverInstructions =
     "marks) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
-    "retrying blindly or scripting around it.\n\n" +
+    "retrying blindly or scripting around it. A write to the OPEN drawing that says committed is " +
+    "NOT saved (drawingSaved=false): Tekla drops unsaved drawing edits when the model is reopened, " +
+    "so ask the user to save — or call tekla_save_drawing — after each milestone. Model object IDs " +
+    "and drawing/view IDs can change when a (multi-user) model is reopened: keep GUIDs, not IDs, " +
+    "across sessions.\n\n" +
     "CURVED PARTS: radius and curved dimensions need exact arc points. Get them from " +
     "tekla_get_part_curve_geometry (bends with radius/chord/sagitta/arc length, inner/outer arcs " +
     "of round tubes and bars, optional view coordinates) — never estimate them from bounding " +

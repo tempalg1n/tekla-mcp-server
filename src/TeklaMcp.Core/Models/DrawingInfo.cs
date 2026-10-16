@@ -9,6 +9,11 @@ public sealed class DrawingStatusInfo
     public bool Connected { get; set; }
     public bool AnyDrawingOpen { get; set; }
     public DrawingInfo? ActiveDrawing { get; set; }
+    /// <summary>
+    /// Writes this server committed to the open drawing since it was last saved or closed
+    /// (issue #41). Edits made by hand in Tekla are not counted.
+    /// </summary>
+    public int UnsavedMcpWrites { get; set; }
     public string Backend { get; set; } = "";
     public string? Message { get; set; }
 }

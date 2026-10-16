@@ -78,7 +78,7 @@ public sealed partial class TeklaModelService
             }
 
             if (result.CreatedCount > 0)
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: create drawing objects", result);
             result.ObjectPreview = createdRecords
                 .Select(record => MapDrawingObject(record, new DrawingObjectQuery()))
@@ -153,7 +153,7 @@ public sealed partial class TeklaModelService
             }
 
             if (result.ModifiedCount > 0 || result.DeletedCount > 0)
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: modify drawing objects", result);
         }
         catch (Exception ex)
@@ -213,7 +213,7 @@ public sealed partial class TeklaModelService
             {
                 throw new ArgumentException("operation must be merge or split.");
             }
-            CommitDrawingChanges(
+            CommitActiveDrawingChanges(
                 active, "Tekla MCP: " + op + " drawing marks", result);
         }
         catch (Exception ex)

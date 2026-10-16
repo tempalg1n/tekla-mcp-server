@@ -193,6 +193,12 @@ public sealed class DrawingWriteResult
     public List<DrawingViewInfo> ViewPreview { get; set; } = new List<DrawingViewInfo>();
     public List<DrawingObjectInfo> ObjectPreview { get; set; } = new List<DrawingObjectInfo>();
     public List<string> OutputFiles { get; set; } = new List<string>();
+    /// <summary>
+    /// False when this write was committed to the OPEN drawing but not saved (issue #41) —
+    /// <c>CommitChanges</c> does not save; tekla_save_drawing does. True after a save. Null
+    /// when the write did not touch the open drawing.
+    /// </summary>
+    public bool? DrawingSaved { get; set; }
     public List<string> Errors { get; set; } = new List<string>();
     /// <summary>Non-fatal warnings, including possible partial changes after a failed commit.</summary>
     public List<string> Warnings { get; set; } = new List<string>();

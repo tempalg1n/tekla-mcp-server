@@ -40,6 +40,7 @@ public sealed partial class TeklaModelService
             var active = TryGetActiveDrawing(handler);
             result.AnyDrawingOpen = active != null;
             if (active != null) result.ActiveDrawing = MapDrawing(active, active);
+            result.UnsavedMcpWrites = active != null ? DrawingSaves.UnsavedWrites : 0;
         }
         catch (Exception ex)
         {
@@ -340,6 +341,8 @@ public sealed partial class TeklaModelService
                 return result;
             }
             result.ModifiedCount = 1;
+            result.DrawingSaved = save;
+            DrawingSaves.Reset();
             if (!save)
                 result.Message = "Active drawing closed WITHOUT saving; unsaved editor changes were discarded.";
         }
@@ -371,6 +374,8 @@ public sealed partial class TeklaModelService
                 return result;
             }
             result.ModifiedCount = 1;
+            result.DrawingSaved = true;
+            DrawingSaves.Reset();
         }
         catch (Exception ex)
         {
@@ -718,7 +723,7 @@ public sealed partial class TeklaModelService
                             if (!drawing.PlaceViews()) throw new InvalidOperationException("Tekla rejected PlaceViews().");
                             StampDrawingOrigin(drawing, "mcp:place_drawing_views");
                             result.ModifiedCount++;
-                            CommitDrawingChanges(
+                            CommitActiveDrawingChanges(
                                 drawing, "Tekla MCP: place drawing views", result);
                             break;
                         case "print":
@@ -1138,6 +1143,19 @@ public sealed partial class TeklaModelService
         {
             // TODO(windows): Drawing UDA support varies by object and environment.
         }
+    }
+
+    /// <summary>MCP writes committed to the open drawing since its last save (issue #41).</summary>
+    private static readonly DrawingSaveTracker DrawingSaves = new DrawingSaveTracker();
+
+    /// <summary>Commit to the OPEN drawing — committed is not saved, so the result says so.</summary>
+    private static void CommitActiveDrawingChanges(
+        TSD.Drawing drawing,
+        string message,
+        DrawingWriteResult result)
+    {
+        CommitDrawingChanges(drawing, message, result);
+        DrawingSaves.Committed(result);
     }
 
     private static void CommitDrawingChanges(
