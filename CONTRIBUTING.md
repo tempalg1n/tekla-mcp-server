@@ -30,7 +30,7 @@ dotnet build src/TeklaMcp.Server -c Release
 dotnet test tests/TeklaMcp.Tests -c Release
 # MCP stdio smoke — the second argument is the exact number of registered tools:
 dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
-  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 116
+  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 117
 ```
 
 If you changed anything under `src/TeklaMcp.Tekla/`, also compile the solution for every

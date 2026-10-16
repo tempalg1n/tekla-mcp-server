@@ -311,3 +311,32 @@ Mitigated by preview-by-default, `overwrite=false` by default, a warning in the 
 **If it ever needs tightening:** an opt-in variable (e.g. `TEKLA_MCP_PDF_ROOT`) that routes the
 resolved paths through `FilePathPolicy` with `.pdf` allowed, and/or refusing `overwrite=true` for
 an existing file whose extension is not `.pdf`. Both are tool/backend-local; no interface change.
+
+---
+
+## Deferred in the v0.9.0 issue review (2026-10-16)
+
+v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33 and #25 §8. Deferred, most valuable first:
+
+- **#20 — reconnect when a Tekla 2021 restart changes the Model channel** (`Model-Console:` ↔
+  `Model-:`). Same work as §2 (instance selection): a changed channel may be another Tekla, so the
+  reconnect must map channels to PIDs/models before adopting one. Do both together, with the
+  restart acceptance from §1 on Tekla 2021.
+- **#31 — `tekla_capture_drawing`.** Needs the drawing editor's window structure on Tekla 2021
+  (class names, which child renders the sheet) with a drawing OPEN — probe it with the user's
+  go-ahead, then follow the `tekla_capture_view` rules (PrintWindow on Tekla's own window only,
+  never the screen; refuse covered windows). Fallback in the issue: print the open drawing to a
+  temporary PDF and rasterize.
+- **#25 §2 — numbering-audit export** (native `PartNumber`/`AssemblyNumber` prefix/start number,
+  `PART_POS`, owner/main/parent assembly identities, manifest with counts/hash) — extend
+  `tekla_export_parts_file` fields; pairs with `tekla_get_numbering_status`.
+- **#29 — writing `.vi`/`.vi.filter`/`.vi.npfilter` files.** cp1251 with raw UTF-8 islands, writes
+  into the model's `attributes` folder (outside `FilePathPolicy`), and Tekla caches filters by name
+  (see "View placement and view attribute files" in `docs/tekla-api-notes.md`).
+- **#24 — Organizer.** Research first: read exported `.propertytemplate`/`.category` XML; no
+  public API is confirmed.
+- **#25 rest** — component inspection and grouped inputs (§1), reference-model inventory (§3), base
+  points and ProjectInfo UDAs (§4), bolt/weld details (§5), drawing revisions (§6), operation
+  receipts (§7), modelling requests (§9).
+- **Option-list UDAs** (#21 follow-up): raw stored index vs displayed label via
+  `UserPropertyItem.GetOptions`.

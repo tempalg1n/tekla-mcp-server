@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-16
+
+Field fixes from Tekla 2021 audit and drawing work: numeric UDAs that read as blank, edits that
+Tekla accepted but did not store, dimensions in the wrong units or on the wrong arc, and a closed
+model that looked empty. Plus a read-only numbering status, curved Beams in the curve tool, mark
+contents, and GA views placed by their frame. One tool added (117 in total, 51 for drawings).
+
+### Added
+
+- **`tekla_get_numbering_status`** ([#23](https://github.com/tempalg1n/tekla-mcp-server/issues/23)).
+  Read-only: `Operation.IsNumberingUpToDateAll()` for the model, plus `IsNumberingUpToDate` and the
+  current `PART_POS`/`ASSEMBLY_POS` for up to 200 parts/assemblies by GUID, with the model identity.
+  It never numbers or saves. In scripts, a direct call of `Operation.IsNumberingUpToDate`,
+  `IsNumberingUpToDateAll` or `IsNumberingAllowed` no longer counts as a mutation; every other use
+  of `Operation` (method groups, aliases, `using static` included) still does.
+- **Curved Beams in `tekla_get_part_curve_geometry`** ([#30](https://github.com/tempalg1n/tekla-mcp-server/issues/30)).
+  A Beam with a `RADIUS` came back as one straight chord. It is now one arc through its
+  centerline — the vertices of `Part.GetCenterLine`, which lie on the arc (live Tekla 2021) — with
+  the same merged arcs, inner/outer arcs and view block as a PolyBeam. `RADIUS` cross-checks the
+  radius; a difference means the part is offset from its reference line.
+- **Mark content in `tekla_list_drawing_objects`** ([#32](https://github.com/tempalg1n/tekla-mcp-server/issues/32)).
+  Marks carry `markContent` (property name + current value, or fixed text), the whole text in
+  `text`, `isEmptyMark` and the marked model object (`modelGuid`/`modelId`, `relatedObjectType`).
+  `modelGuid` and `textContains` filter marks too; `emptyMarksOnly=true` finds the empty marks Tekla
+  leaves on neighbour parts.
+- **GA views placed by frame** ([#33](https://github.com/tempalg1n/tekla-mcp-server/issues/33)).
+  `tekla_create_ga_drawing_view placeBy=frame_lower_left|frame_center` puts the view FRAME at
+  `insertionPoint` instead of the model origin: the view is inserted, measured with its real frame
+  (margins included) and moved. Views report `frameMin`/`frameMax`; a preview estimates them.
+- **View attribute files on existing views** ([#28](https://github.com/tempalg1n/tekla-mcp-server/issues/28)).
+  `tekla_modify_drawing_view attributeFile` loads a saved view attributes file (with its part and
+  neighbour-part filters) and keeps the scale, restriction box and origin the file would overwrite
+  (`keepScale`/`keepRestrictionBox`/`keepOrigin`, default true); the message gives the view's
+  model-object count before and after. The description warns that Tekla caches view filters by
+  file name within a session.
+- `connectionInfo.modelOpen` ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8),
+  and `previewTotal`/`previewTruncated` on part write results.
+
+### Fixed
+
+- **Numeric UDAs read as blank** ([#21](https://github.com/tempalg1n/tekla-mcp-server/issues/21)).
+  For a set UDA, Tekla 2021 answers true from every `GetUserProperty` overload, and only the one
+  matching the stored type has the value (measured live on 300 beams): the string overload gives
+  `""` for numbers. Trying string first therefore exported integers as blanks, and the same reader
+  fed named reads, grouping, `udaEquals`/`udaIsEmpty` and the import's non-empty guard (an integer
+  0 looked empty and could be overwritten). Reads now use the type the UDA catalog declares
+  (`UserPropertyItem.Select`, cached per model) and learn the stored type once for undeclared
+  names. Writes follow the declared type as well: a string UDA keeps `"123"` a string (it used to be
+  stored as an integer), and a value that does not fit a declared number is refused before anything
+  is written (`tekla_set_udas_from_file` counts it in `invalidValues`).
+- **`tekla_modify_parts` reported edits Tekla did not store** ([#22](https://github.com/tempalg1n/tekla-mcp-server/issues/22)).
+  A Class 14 → 50 edit returned `committed` with no errors while the part kept 14, and only 20 of
+  200 parts were read back. Every written part is now re-selected and compared with the request
+  (profile, material, class, name, end points); `verification` gives the status and each mismatching
+  field (requested vs stored), and a mismatch makes the outcome `partial`. Position is not compared,
+  because Tekla canonicalizes it on commit.
+- **Straight dimensions sat on the parts** ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26)).
+  `distance` is paper mm, but `CreateDimensionSet` takes view units: at 1:50 the line landed 0.16 mm
+  from the parts. It is multiplied by the view scale now. If you passed `paper mm × scale` as a
+  workaround, pass paper mm again.
+- **Radius dimensions drew the complementary arc** ([#27](https://github.com/tempalg1n/tekla-mcp-server/issues/27)).
+  Tekla draws the arc clockwise from point 1 to point 3 whatever point 2; a counter-clockwise arc
+  came out as a near-full circle. Points 1 and 3 are swapped for counter-clockwise input (a warning
+  says so), and collinear points are refused.
+- **A closed model looked empty** ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8).
+  With the model closed and Tekla running, connection info said `connected=true` and the summary
+  counted zero objects. `modelOpen=false` now says so, and model scans, counts and the summary
+  refuse instead of answering for an empty model.
+- The net48 server build compiles without warnings again (CS8602 in `DrawingToolHelpers`).
+
+### Known limitations
+
+- Not run live as tools yet: the frame placement of GA views, attribute files through
+  `tekla_modify_drawing_view`, the mark-content listing, the verification of `tekla_modify_parts`
+  against a real refusal, the typed UDA writes, and the distance units of radius, curved and angle
+  dimensions (passed unchanged; angle and curved are documented as paper mm, radius is
+  undocumented). Run live read-only on Tekla 2021: typed UDA reads, the numbering status, curved
+  Beams, `modelOpen`.
+- Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
+- `tekla_capture_drawing` ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)) is not in
+  this release.
+
 ## [0.8.1] - 2026-10-01
 
 A hotfix for the first Tekla 2026 field report — v0.8.0 could not connect to Tekla 2026 at all —
@@ -855,7 +937,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.6.0...v0.7.0

@@ -7,7 +7,7 @@ An [MCP](https://modelcontextprotocol.io/) server that connects AI assistants to
 
 Ask natural-language questions about steel structures — weights, counts, materials, profiles, selections — and let the assistant query the open model for you.
 
-> **Status: early development (v0.8.1).** The server builds and runs on Windows and has been exercised on live Tekla 2021 and 2023 models. The Tekla 2024–2026 builds compile; apart from one Tekla 2026 field report ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17), fixed in v0.8.1) they are untested — testers wanted. The tool set is growing; APIs and behavior may change between releases. See [Known limitations](#known-limitations) and [Roadmap](#roadmap).
+> **Status: early development (v0.9.0).** The server builds and runs on Windows and has been exercised on live Tekla 2021 and 2023 models. The Tekla 2024–2026 builds compile; apart from one Tekla 2026 field report ([#17](https://github.com/tempalg1n/tekla-mcp-server/issues/17), fixed in v0.8.1) they are untested — testers wanted. The tool set is growing; APIs and behavior may change between releases. See [Known limitations](#known-limitations) and [Roadmap](#roadmap).
 
 **Languages:** English (this file) · [Русский](README.ru.md)
 
@@ -93,7 +93,7 @@ tekla-mcp-server/
 
 ## Tools
 
-All tools use the `tekla_` prefix. The current build exposes **116 tools** in total, including
+All tools use the `tekla_` prefix. The current build exposes **117 tools** in total, including
 **51 drawing-specific tools**.
 
 | Tool | Description |
@@ -101,6 +101,7 @@ All tools use the `tekla_` prefix. The current build exposes **116 tools** in to
 | `tekla_get_connection_info` | Check whether a model is open; return name, path, active backend, and which server answered (version, PID, start time, Tekla build/bin folder, running Tekla processes, `lastReconnect`). A lost connection is explained with cause and action instead of a raw remoting error. |
 | `tekla_report_gap` | Report a missing capability / insufficient data; returns a ready-to-file issue draft. Use instead of scripting around gaps. |
 | `tekla_get_model_summary` | Model-wide summary: object count, total weight, breakdowns by type/class/profile/material. On huge models use `includeWeights=false` / `maxObjects` to keep it fast. |
+| `tekla_get_numbering_status` | Read-only: is numbering of the whole model up to date (`IsNumberingUpToDateAll`), plus the status and current marks of up to 200 parts/assemblies by GUID. Never numbers or saves. |
 | `tekla_list_objects` | List objects with core properties (with limit; `useSelection` for the UI selection). |
 | `tekla_find_objects` | Search by filters: type, class, profile, material, name, UDA/attribute. `udaIsEmpty=true` selects objects whose UDA is still blank. |
 | `tekla_get_object_by_guid` | Fetch a single object by GUID. |
@@ -109,7 +110,7 @@ All tools use the `tekla_` prefix. The current build exposes **116 tools** in to
 | `tekla_get_reference_geometry` | Inspect IFC/reference objects by selection, integer id or IFC GlobalId: external GUID/entity, dimensions, world AABB, placement and capped face polygons (falls back to parsing the IFC file, labelled via `aabbSource`/`placementSource`). |
 | `tekla_get_solid_bbox` | Read explicit native-part solid bounding boxes (or current selection). |
 | `tekla_get_part_solid` | The real shape of up to 20 parts: faces with outward normals and the part that produced them (cuts), outer/inner loops, vertices — GLOBAL mm, cuts and fittings applied (or `RAW`). Capped (`maxFaces`/`maxPoints`) with an explicit `truncated` flag; faces are never cut in half. |
-| `tekla_get_part_curve_geometry` | Exact centerline of one part for dimensioning curved members: a PolyBeam's own lines and arcs (center, start/mid/end, radius, sweep, arc length, chord, sagitta), arcs merged per physical bend, inner/outer arcs of round tubes and bars, the modelled contour with chamfers, and optionally every point in an active-drawing view. |
+| `tekla_get_part_curve_geometry` | Exact centerline of one part for dimensioning curved members: a PolyBeam's own lines and arcs, or the arc of a curved Beam (one with a `RADIUS`) (center, start/mid/end, radius, sweep, arc length, chord, sagitta), arcs merged per physical bend, inner/outer arcs of round tubes and bars, the modelled contour with chamfers, and optionally every point in an active-drawing view. |
 | `tekla_list_control_lines` | List ControlLine start/end coordinates. |
 | `tekla_list_grids` | List grid lines and levels with their real Tekla labels: axis (X/Y/Z), label, global coordinate, grid id and end points. Handles several grids with their own origins. |
 | `tekla_resolve_point` | Resolve a point from axis labels + elevation (e.g. `1` × `Д` × `6000`). |
@@ -234,7 +235,7 @@ Axis labels for the grid-based tools come from `tekla_list_grids` / `tekla_resol
 | `tekla_create_column` | Create a vertical column at (x,y) from bottomZ to topZ. |
 | `tekla_create_plate` | Create a contour plate from 3+ points. |
 | `tekla_modify_part` | Edit properties/endpoints/Position, or copy Position from an exemplar. |
-| `tekla_modify_parts` | Batch form of the above — up to 200 parts in one call (whole-axis re-orientation); can also swap handles per item. |
+| `tekla_modify_parts` | Batch form of the above — up to 200 parts in one call (whole-axis re-orientation); can also swap handles per item. After apply every written part is read back and compared with the request (`verification`: verified / mismatch / incomplete). |
 | `tekla_create_connection` | Create a system/custom Connection (primary, secondaries, UpVector, attributes file); `replaceExisting` swaps an occupied pair. |
 | `tekla_create_component` | Insert a plugin / custom / system component with an ordered input list (objects, points, point pairs, polygons) and typed attributes. After apply each component is read back with its children — `childCount=0` (the plugin created nothing) is an error, not success. |
 | `tekla_copy_connection` | Copy a Connection's exact name/number/orientation to new parts; `replaceExisting` swaps the node type. |
@@ -288,7 +289,7 @@ environment; do not rely on the tag as the only rollback mechanism. Pay particul
 | `tekla_get_drawing_model_objects` | Return a bounded/paginated page of full model identifiers represented by a drawing. |
 | `tekla_get_drawing_sheet` | Read active-sheet width, height, origin and configured layout size/mode in paper millimetres. |
 | `tekla_list_drawing_views` | List active-drawing views with best-effort ID/ID2, paper frame, scale, restriction box, and coordinate systems. |
-| `tekla_list_drawing_objects` | Filter active-drawing objects by ID/index/type/view/model GUID/text/selection, with optional geometry and UDAs. |
+| `tekla_list_drawing_objects` | Filter active-drawing objects by ID/index/type/view/model GUID/text/selection, with optional geometry and UDAs. Marks come with their content and the marked model object; `emptyMarksOnly` finds empty marks. |
 | `tekla_get_selected_drawing_objects` | Return the current drawing-editor selection. |
 | `tekla_select_drawing_objects` | Select/highlight matching active-drawing objects (an immediate UI side effect, not a model mutation). |
 
@@ -320,10 +321,10 @@ file names are passed to Tekla and resolved by the running environment.
 | Tool | Description |
 |---|---|
 | `tekla_create_drawing_view` | Create a front/top/back/bottom/3D view on a non-GA drawing. |
-| `tekla_create_ga_drawing_view` | Create a GA model view from explicit global view/display coordinate systems and a restriction box. |
+| `tekla_create_ga_drawing_view` | Create a GA model view from explicit global view/display coordinate systems and a restriction box; `placeBy=frame_lower_left/frame_center` places the view frame instead of the model origin. |
 | `tekla_create_section_view` | Create a straight or curved section view and section mark from a source view. |
 | `tekla_create_detail_view` | Create a detail view and detail mark from a source view. |
-| `tekla_modify_drawing_view` | Edit a view's name, sheet origin/frame, scale, and rotations. |
+| `tekla_modify_drawing_view` | Edit a view's name, sheet origin/frame, scale, and rotations, or load a saved view attributes file (filters) keeping scale, restriction box and origin. |
 | `tekla_delete_drawing_view` | Delete a view and its children. |
 | `tekla_create_drawing_objects` | Batch-create up to 200 structured annotations/graphics/dimensions/marks. |
 | `tekla_create_drawing_text` | Create text in a view or on the sheet. |
@@ -336,7 +337,7 @@ file names are passed to Tekla and resolved by the running environment.
 | `tekla_create_revision_cloud` | Create a revision cloud graphic. |
 | `tekla_create_straight_dimension` | Create a straight dimension set. |
 | `tekla_create_angle_dimension` | Create an angle dimension. |
-| `tekla_create_radius_dimension` | Create a radius dimension. |
+| `tekla_create_radius_dimension` | Create a radius dimension from start, a point between and end (either direction; ordered for Tekla). |
 | `tekla_create_curved_dimension` | Create a radial or orthogonal curved dimension set. |
 | `tekla_create_drawing_mark` | Create a mark for a model object represented in a target view. |
 | `tekla_create_level_mark` | Create a level mark. |
@@ -602,11 +603,11 @@ Plugins directory. Every Windows release zip ships a `codex` folder whose script
 with its own switch ([#18](https://github.com/tempalg1n/tekla-mcp-server/issues/18)).
 
 1. Unpack the zips for your Tekla versions next to each other, e.g.
-   `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2021` and `C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026`.
+   `C:\MCP\TeklaMcp.Server-v0.9.0-tekla2021` and `C:\MCP\TeklaMcp.Server-v0.9.0-tekla2026`.
 2. Run the script from one of them:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File C:\MCP\TeklaMcp.Server-v0.8.1-tekla2026\codex\Install-CodexPlugin.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File C:\MCP\TeklaMcp.Server-v0.9.0-tekla2026\codex\Install-CodexPlugin.ps1
    ```
 
 3. Quit the Codex app completely (also from the system tray), start it again and open a new thread.
@@ -675,6 +676,10 @@ environment.
   outcome, `tekla_get_part_solid`, `tekla_save_model` / `tekla_open_model`,
   `tekla_create_component` with a real plugin, and UDA definitions with `details=true`. What is
   live-verified is stated per entry in [CHANGELOG.md](CHANGELOG.md).
+- **Not yet run live in v0.9.0:** placing GA views by frame, view attribute files through
+  `tekla_modify_drawing_view`, the mark-content listing, the paper-mm distance of new dimensions and
+  the write verification of `tekla_modify_parts` against a real refusal (see
+  [CHANGELOG.md](CHANGELOG.md)).
 - **The drawing layer is experimental** (new in v0.7.0, limited field testing) — see
   [Drawing tools](#drawing-tools).
 - **`tekla_render_schematic` is beta**: simplified geometry that can look cluttered on dense models.

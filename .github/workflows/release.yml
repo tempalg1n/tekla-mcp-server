@@ -32,7 +32,7 @@ jobs:
       - name: MCP initialize, tools/list and query smoke
         run: >-
           dotnet run --project tests/TeklaMcp.Smoke -c Release --
-          src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 116
+          src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 117
 
   build-tekla:
     name: Build Tekla ${{ matrix.tekla.year }} (net48)
