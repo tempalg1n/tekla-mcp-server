@@ -78,4 +78,19 @@ public static class ModelInfoTools
         [Description("Stop after scanning this many objects; 0 = scan everything. A capped result has truncated=true.")]
         int maxObjects = 0)
         => model.GetModelSummary(includeWeights, maxObjects > 0 ? maxObjects : (int?)null);
+
+    [McpServerTool(Name = "tekla_get_numbering_status", ReadOnly = true, Destructive = false,
+        Idempotent = true, OpenWorld = false)]
+    [Description("READ-ONLY numbering status: whether numbering of the whole model is up to date " +
+                 "(Operation.IsNumberingUpToDateAll — every assembly, part and rebar) and, for up to " +
+                 "200 parts/assemblies given by GUID, each one's own status plus its current " +
+                 "PART_POS/ASSEMBLY_POS. Never numbers, saves or changes anything, so it needs no " +
+                 "approval. Use it before trusting marks in an audit: visible marks without '?' do " +
+                 "not prove numbering is current. Running the numbering is a separate, user-approved " +
+                 "action in Tekla.")]
+    public static NumberingStatus GetNumberingStatus(
+        ITeklaModelService model,
+        [Description("Optional part/assembly GUIDs to check individually (separated by ',', ';' or new lines; max 200).")]
+        string? guids = null)
+        => model.GetNumberingStatus(ToolHelpers.ParseList(guids));
 }

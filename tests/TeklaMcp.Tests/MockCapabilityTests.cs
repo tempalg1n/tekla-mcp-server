@@ -108,4 +108,20 @@ public class MockCapabilityTests
         Assert.Equal(before + 1, model.GetConnections(parts[0].Guid).Count);
         Assert.Contains(model.GetConnections(parts[0].Guid), c => c.Name == "Колонна-фахверк");
     }
+
+    [Fact]
+    public void Numbering_status_is_read_only_and_reports_unknown_guids()
+    {
+        var model = new MockTeklaModelService();
+        var beam = model.FindObjects(new ObjectQuery { Type = "Beam" }, 1).First();
+
+        var status = model.GetNumberingStatus(new[] { beam.Guid, "00000000-0000-0000-0000-000000000001" });
+
+        Assert.True(status.UpToDateAll);
+        Assert.Equal(1, status.NotFound);
+        Assert.Collection(status.Objects,
+            found => Assert.True(found.Found && found.UpToDate == true),
+            missing => Assert.False(missing.Found));
+        Assert.Equal(0, model.GetNumberingStatus(null).Objects.Count);
+    }
 }

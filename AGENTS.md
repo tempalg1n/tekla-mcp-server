@@ -121,7 +121,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 
 | File | Tools / role |
 |---|---|
-| `ModelInfoTools.cs` | `tekla_get_connection_info`, `tekla_get_model_summary` |
+| `ModelInfoTools.cs` | `tekla_get_connection_info`, `tekla_get_model_summary`, `tekla_get_numbering_status` |
 | `ModelQueryTools.cs` | list/find/get-by-GUID/selected objects, solid bbox, control lines |
 | `ModelWorkflowTools.cs` | count, `sum_weight`, `group_weight_by`, `list_distinct_values`, `select_objects`, `export_objects` |
 | `ModelAnalysisTools.cs` | `tekla_analyze_by_material` |
@@ -591,7 +591,11 @@ dedicated tool exists. Rules for maintaining it:
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
   A name belongs in `MutatingMembers` only if a FALSE POSITIVE is unlikely: bare `Split` was
   removed because it only ever fired on `string.Split` while the real target, `Operation.Split`,
-  is already caught by the `Operation` token — do not re-add it. When a banned identifier is also
+  is already caught by the `Operation` token — do not re-add it. The `Operation` token itself has
+  ONE exception (issue #23): a direct call `[Namespace.]Operation.IsNumberingUpToDate(All)/
+  IsNumberingAllowed(...)` is read-only (`ReadOnlyOperationMembers`); a method group, alias or
+  `using static` keeps the whole type gated. Add a member there only if Tekla documents it as a
+  pure query. When a banned identifier is also
   DECLARED by the script (a local function named `Process`), the violation message says "rename
   your declaration" rather than accusing the script of process access; the ban itself still
   applies, because a syntax-only check cannot tell the two apart once the name is in scope.

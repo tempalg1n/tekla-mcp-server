@@ -180,6 +180,62 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
+    public NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids)
+    {
+        // A lost connection propagates (the tool-error filter diagnoses it): never "unknown".
+        var model = ConnectModel(out var info);
+        var status = new NumberingStatus
+        {
+            Backend = BackendName,
+            ModelName = info.ModelName ?? "",
+            ModelPath = info.ModelPath ?? "",
+        };
+        status.Notes.Add(
+            "Status queries only (Operation.IsNumberingUpToDateAll / IsNumberingUpToDate): nothing " +
+            "was numbered, saved or changed. Marks without '?' are not proof of current numbering.");
+
+        try
+        {
+            status.UpToDateAll = TSM.Operations.Operation.IsNumberingUpToDateAll();
+        }
+        catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            status.Message = "IsNumberingUpToDateAll failed: " + ErrorText.Flatten(ex);
+        }
+
+        var requested = (guids ?? new List<string>()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+        status.NotChecked = Math.Max(0, requested.Count - NumberingStatus.ObjectLimit);
+        foreach (var guid in requested.Take(NumberingStatus.ObjectLimit))
+        {
+            var row = new NumberingObjectStatus { Guid = guid.Trim() };
+            status.Objects.Add(row);
+            var mo = TrySelectObjectByGuid(model, row.Guid);
+            if (mo is null)
+            {
+                status.NotFound++;
+                continue;
+            }
+            row.Found = true;
+            row.Type = mo.GetType().Name;
+            try
+            {
+                row.UpToDate = TSM.Operations.Operation.IsNumberingUpToDate(mo);
+            }
+            catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+            {
+                row.Error = ErrorText.Flatten(ex);
+            }
+            var partPos = "";
+            if (mo.GetReportProperty("PART_POS", ref partPos) && partPos.Length > 0) row.PartPos = partPos;
+            var assemblyPos = "";
+            if (mo.GetReportProperty("ASSEMBLY_POS", ref assemblyPos) && assemblyPos.Length > 0) row.AssemblyPos = assemblyPos;
+        }
+        if (status.NotChecked > 0)
+            status.Message = Aggregation.Append(status.Message,
+                $"Only the first {NumberingStatus.ObjectLimit} GUIDs were checked; {status.NotChecked} were not.");
+        return status;
+    }
+
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var model = GetConnectedModel();

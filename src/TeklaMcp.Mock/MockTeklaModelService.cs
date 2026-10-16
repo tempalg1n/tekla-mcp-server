@@ -95,6 +95,36 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         Note = "Mock backend — no Tekla process.",
     };
 
+    public NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids)
+    {
+        // The mock never edits geometry behind its marks, so its numbering is always current.
+        var status = new NumberingStatus
+        {
+            Backend = BackendName,
+            ModelName = "MockModel",
+            ModelPath = "",
+            UpToDateAll = true,
+            Notes = { "Mock backend: numbering is always reported as up to date." },
+        };
+        var requested = (guids ?? new List<string>()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+        status.NotChecked = Math.Max(0, requested.Count - NumberingStatus.ObjectLimit);
+        foreach (var guid in requested.Take(NumberingStatus.ObjectLimit))
+        {
+            var obj = GetObjectByGuid(guid);
+            if (obj is null)
+            {
+                status.NotFound++;
+                status.Objects.Add(new NumberingObjectStatus { Guid = guid, Found = false });
+                continue;
+            }
+            status.Objects.Add(new NumberingObjectStatus
+            {
+                Guid = obj.Guid, Found = true, Type = obj.Type, UpToDate = true, AssemblyPos = obj.AssemblyPos,
+            });
+        }
+        return status;
+    }
+
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var s = new ModelSummary { Backend = BackendName };

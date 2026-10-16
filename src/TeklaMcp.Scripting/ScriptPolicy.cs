@@ -325,13 +325,14 @@ public static class ScriptPolicy
     /// Avoid flagging innocent property reads/local names such as Drawing attributes'
     /// <c>Scale</c>. Almost every entry is a method and therefore only counts when used as an
     /// invocation target. AutoFetch is the one static property assignment we gate explicitly.
-    /// Operation remains conservative because its mutating surface is too broad and versioned.
+    /// Operation remains conservative because its mutating surface is too broad and versioned —
+    /// except for a direct call of one of <see cref="ReadOnlyOperationMembers"/> (issue #23).
     /// </summary>
     private static bool IsMutatingUse(SyntaxToken token)
     {
         var name = token.ValueText;
         if (name == "Operation")
-            return true;
+            return !IsReadOnlyOperationCall(token);
 
         var identifier = token.Parent as IdentifierNameSyntax;
         if (identifier == null)
@@ -350,5 +351,28 @@ public static class ScriptPolicy
 
         var invocation = expression.Parent as InvocationExpressionSyntax;
         return invocation != null && ReferenceEquals(invocation.Expression, expression);
+    }
+
+    /// <summary>
+    /// Numbering-status QUERIES of <c>Operation</c> (Tekla documents them as checks; they do
+    /// not number). Allowed only as a direct call, <c>[Namespace.]Operation.Member(...)</c>:
+    /// a method group, an alias or <c>using static</c> keeps the whole type gated.
+    /// </summary>
+    private static readonly HashSet<string> ReadOnlyOperationMembers = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "IsNumberingUpToDate", "IsNumberingUpToDateAll", "IsNumberingAllowed",
+    };
+
+    private static bool IsReadOnlyOperationCall(SyntaxToken token)
+    {
+        if (!(token.Parent is IdentifierNameSyntax identifier)) return false;
+        SyntaxNode typeExpression = identifier;
+        if (identifier.Parent is MemberAccessExpressionSyntax qualified && ReferenceEquals(qualified.Name, identifier))
+            typeExpression = qualified; // Tekla.Structures.Model.Operations.Operation
+        if (!(typeExpression.Parent is MemberAccessExpressionSyntax member) ||
+            !ReferenceEquals(member.Expression, typeExpression) ||
+            !ReadOnlyOperationMembers.Contains(member.Name.Identifier.ValueText))
+            return false;
+        return member.Parent is InvocationExpressionSyntax call && ReferenceEquals(call.Expression, member);
     }
 }

@@ -79,6 +79,14 @@ public interface ITeklaModelService
     ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null);
 
     /// <summary>
+    /// Read-only numbering status (issue #23): whether numbering of the whole model is up to
+    /// date, plus the status of up to <see cref="NumberingStatus.ObjectLimit"/> parts/assemblies
+    /// by GUID. Never numbers or changes anything. A GUID not in the model is reported with
+    /// Found=false, not as an error; a failed status call leaves its value null with a message.
+    /// </summary>
+    NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids);
+
+    /// <summary>
     /// Count objects matching <paramref name="query"/> WITHOUT materializing them.
     /// Implementations should use the cheapest possible path (e.g. an enumerator size for
     /// an unfiltered count) and must not read properties the query does not filter on.
