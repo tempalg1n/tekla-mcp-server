@@ -162,12 +162,16 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
    `ReadOnly = false, Destructive = …, Idempotent = …, OpenWorld = false` for anything else (rules
    in "Tool annotations, read-only mode and toolsets" below). The smoke fails on a tool without
    them. A new tool CLASS also needs `[Toolset(ToolExposure.…)]`, or the server does not start.
-5. Update the tool table AND the tool count in [README.md](README.md) ("exposes **N tools**",
-   drawing-specific count included).
+5. Add the tool to its table in [docs/tools.md](docs/tools.md) and update every count: total and
+   drawing-specific ("exposes **N tools**") and read-only/writer split in `docs/tools.md`, the
+   `MCP tools` badge, the mermaid diagram and the toolset tables (`Tools` column) in
+   [README.md](README.md) and [README.ru.md](README.ru.md), the toolset table in
+   [docs/setup.md](docs/setup.md), and the read-only count in all of them. The README is the
+   short overview: it lists toolsets, not tools — keep per-tool detail in `docs/tools.md`.
 6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
    tools, passed as its second argument in BOTH `.github/workflows/ci.yml` and
    `.github/workflows/release.yml` (currently `120`). Adding or removing a tool without changing
-   both fails CI. Keep workflows, README count and `tools/list` equal.
+   both fails CI. Keep workflows, the documented counts and `tools/list` equal.
 7. Add the user-facing change to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md), and tests in
    `tests/TeklaMcp.Tests` for any Core/Mock/Scripting logic.
 
@@ -734,8 +738,8 @@ dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
 It is what CI and the release workflow run after the unit tests, and it asserts EXACT values:
 
 - **tool count** = the second argument, hard-coded in `.github/workflows/ci.yml` AND
-  `.github/workflows/release.yml`. Adding/removing a tool means changing both (and the README
-  count) in the same change.
+  `.github/workflows/release.yml`. Adding/removing a tool means changing both (and the counts in
+  the READMEs and `docs/`, §4 step 5) in the same change.
 - **server version** = the string hard-coded in `tests/TeklaMcp.Smoke/Program.cs`. A version bump
   touches three places: `<Version>` in `Directory.Build.props`, the smoke's version check, and
   the `?? "x.y.z"` fallback in `src/TeklaMcp.Server/Program.cs`.

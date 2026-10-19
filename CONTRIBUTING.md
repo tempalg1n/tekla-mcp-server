@@ -57,6 +57,38 @@ The Tekla DLLs are not bundled; they load at runtime from your installed Tekla. 
 can't locate it automatically, set `TEKLA_BIN_DIR` to the Tekla `bin` folder. See
 [docs/tekla-api-notes.md](docs/tekla-api-notes.md#tekla-version-compatibility) for details.
 
+## Repository layout
+
+```
+tekla-mcp-server/
+├── README.md, README.ru.md  ← short overview (English, Russian)
+├── CHANGELOG.md
+├── AGENTS.md              ← conventions for AI-assisted development
+├── docs/
+│   ├── setup.md           ← install, MCP clients, Codex card, configuration, build
+│   ├── tools.md           ← every tool and its conventions
+│   ├── architecture.md
+│   ├── tekla-api-notes.md
+│   ├── backlog.md         ← analysed and deferred work
+│   ├── releasing.md
+│   └── releases/          ← per-version release notes
+├── TeklaMcp.sln
+├── src/
+│   ├── TeklaMcp.Core/      ← interface + DTOs (netstandard2.0)
+│   ├── TeklaMcp.Mock/      ← mock backend (netstandard2.0)
+│   ├── TeklaMcp.Scripting/ ← C# script escape hatch + API reference generation/search (netstandard2.0)
+│   ├── TeklaMcp.Tekla/     ← Tekla Open API backend (net48, Windows)
+│   └── TeklaMcp.Server/    ← MCP host + tools (net8.0; +net48 on Windows)
+├── tests/
+│   ├── TeklaMcp.Tests/     ← unit tests (net8.0, mock-only)
+│   └── TeklaMcp.Smoke/     ← MCP stdio smoke test (initialize, tools/list, queries)
+├── tools/
+│   └── TeklaApiDoc/        ← CLI for the offline Tekla Open API reference
+├── integrations/
+│   └── codex/              ← Codex plugin card installer (in every Windows zip under codex\)
+└── scripts/                ← build helper + Python smoke test
+```
+
 ## Adding a new capability
 
 Follow the pattern documented in [AGENTS.md](AGENTS.md):
@@ -65,7 +97,9 @@ Follow the pattern documented in [AGENTS.md](AGENTS.md):
 2. Implement it in both `MockTeklaModelService` and `TeklaModelService` (a new area gets its own
    partial file on each side; logic both backends share goes into Core with unit tests).
 3. Expose it as an MCP tool in `src/TeklaMcp.Server/Tools/`.
-4. Update the tool table and the tool count in [README.md](README.md).
+4. Add the tool to [docs/tools.md](docs/tools.md) and update the tool counts there, in
+   [README.md](README.md) and [README.ru.md](README.ru.md) (badge, diagram, toolset table) and in
+   [docs/setup.md](docs/setup.md) (details in [AGENTS.md](AGENTS.md) §4).
 5. **Adding or removing a tool:** change the expected tool count passed to `tests/TeklaMcp.Smoke`
    in BOTH `.github/workflows/ci.yml` and `.github/workflows/release.yml`. The smoke asserts the
    exact number, so CI fails otherwise.
