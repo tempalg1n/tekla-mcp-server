@@ -2831,12 +2831,30 @@ public sealed partial class TeklaModelService : ITeklaModelService
         RequireOpenModel();
         if (query != null && query.UseSelection)
             return Drain(new TSMUI.ModelObjectSelector().GetSelectedObjects());
+        if (query?.GuidIn != null && query.GuidIn.Count > 0)
+            return SelectByGuids(model, query.GuidIn);
         if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
             TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
             return Drain(model.GetModelObjectSelector().GetAllObjectsWithType(objectType));
         if (partsFallback && (query is null || string.IsNullOrWhiteSpace(query.Type)))
             return EnumerateParts(model);
         return Drain(model.GetModelObjectSelector().GetAllObjects());
+    }
+
+    /// <summary>
+    /// The objects a GuidIn filter names, selected directly. The filter used to be applied after
+    /// a whole-model scan: deleting one beam by GUID took ~60 s on a 443k-object model (live Tekla
+    /// 2021) — past the MCP client's timeout, so the delete happened and its answer was lost.
+    /// Malformed and unknown GUIDs are skipped; Matches still applies the other filters.
+    /// </summary>
+    private static IEnumerable<TSM.ModelObject> SelectByGuids(TSM.Model model, IEnumerable<string> guids)
+    {
+        foreach (var text in guids.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Guid.TryParse((text ?? "").Trim(), out var guid)) continue;
+            var mo = model.SelectModelObject(new TS.Identifier(guid));
+            if (mo != null) yield return mo;
+        }
     }
 
     /// <summary>Chain the per-type enumerators for every physical part type.</summary>

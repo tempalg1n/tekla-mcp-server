@@ -74,4 +74,18 @@ public class ViewGeometryTests
         });
         Assert.Empty(none);
     }
+
+    [Fact]
+    public void HasFilter_and_MatchesText_cover_name_and_profile()
+    {
+        // Backends apply these filters before the result cap when HasFilter is true: capping first
+        // returned [] for 17 monorails in a view of 419 parts (live Tekla 2021).
+        Assert.False(ViewGeometry.HasFilter(new DrawingObjectQuery()));
+        Assert.True(ViewGeometry.HasFilter(new DrawingObjectQuery { ProfileContains = "I36M" }));
+        Assert.True(ViewGeometry.HasFilter(new DrawingObjectQuery { ZMin = 0 }));
+
+        var monorail = new DrawingModelGeometry { Name = "Монорельс", Profile = "I36M_19425_74" };
+        Assert.True(ViewGeometry.MatchesText(monorail, new DrawingObjectQuery { NameContains = "монорельс", ProfileContains = "i36m" }));
+        Assert.False(ViewGeometry.MatchesText(monorail, new DrawingObjectQuery { ProfileContains = "PL8" }));
+    }
 }

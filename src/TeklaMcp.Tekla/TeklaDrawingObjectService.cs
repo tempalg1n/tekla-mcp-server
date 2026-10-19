@@ -41,6 +41,54 @@ public sealed partial class TeklaModelService
         return false;
     }
 
+    private static readonly object AutoFetchToggle = new object();
+
+    /// <summary>
+    /// The objects of a view or the sheet, read into a list. With
+    /// <c>DrawingEnumeratorBase.AutoFetch</c> on, Tekla serializes the owner's whole snapshot in
+    /// the enumerator's constructor, so one DetailMark makes <c>GetObjects()</c> ITSELF throw the
+    /// SerializationException (live Tekla 2021) — <see cref="SafeMoveNext"/> never gets a chance,
+    /// and the listing, edits and deletes of the whole drawing used to fail with it. Such an owner
+    /// is read again without AutoFetch, one object per MoveNext, where the faulting objects are
+    /// skipped. Connection failures propagate.
+    /// </summary>
+    private static List<TSD.DrawingObject> ReadOwnedObjects(TSD.ViewBase owner, Type[]? types = null)
+    {
+        try
+        {
+            return Drain(types == null ? owner.GetObjects() : owner.GetObjects(types));
+        }
+        catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            lock (AutoFetchToggle)
+            {
+                var autoFetch = TSD.DrawingEnumeratorBase.AutoFetch;
+                try
+                {
+                    TSD.DrawingEnumeratorBase.AutoFetch = false;
+                    return Drain(types == null ? owner.GetObjects() : owner.GetObjects(types));
+                }
+                finally
+                {
+                    TSD.DrawingEnumeratorBase.AutoFetch = autoFetch;
+                }
+            }
+        }
+    }
+
+    private static List<TSD.DrawingObject> Drain(TSD.DrawingObjectEnumerator enumerator)
+    {
+        var objects = new List<TSD.DrawingObject>();
+        while (SafeMoveNext(enumerator))
+        {
+            TSD.DrawingObject? current;
+            try { current = enumerator.Current; }
+            catch { continue; }
+            if (current != null) objects.Add(current);
+        }
+        return objects;
+    }
+
     private static List<TSD.View> EnumerateViews(
         TSD.Drawing drawing,
         bool recursive = true)
@@ -173,10 +221,10 @@ public sealed partial class TeklaModelService
         {
             try
             {
-                var marks = view.GetObjects(new[] { typeof(TSD.SectionMark), typeof(TSD.CurvedSectionMark), typeof(TSD.DetailMark) });
-                while (SafeMoveNext(marks))
+                foreach (var current in ReadOwnedObjects(
+                             view, new[] { typeof(TSD.SectionMark), typeof(TSD.CurvedSectionMark), typeof(TSD.DetailMark) }))
                 {
-                    switch (marks.Current)
+                    switch (current)
                     {
                         case TSD.SectionMarkBase section when section.Attributes?.MarkName == oldName:
                             candidates.Add(section);
@@ -265,10 +313,11 @@ public sealed partial class TeklaModelService
         TSD.DrawingHandler handler,
         TSD.Drawing drawing,
         DrawingObjectQuery query,
-        int? limit)
+        int? limit,
+        int hardLimit = DrawingObjectBatchLimit)
     {
         var records = new List<DrawingObjectRecord>();
-        var cap = NormalizeLimit(limit, DrawingObjectBatchLimit);
+        var cap = NormalizeLimit(limit, hardLimit);
         if (cap == 0) return records;
         ResolveModelIdFilter(query);
         var views = EnumerateViews(drawing, query.Recursive);
@@ -295,7 +344,14 @@ public sealed partial class TeklaModelService
             };
             if (selected != null &&
                 !selected.Any(o => SameDatabaseObject(o, record.Object))) return false;
-            if (!MatchesDrawingObject(record, query)) return false;
+            try
+            {
+                if (!MatchesDrawingObject(record, query)) return false;
+            }
+            catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+            {
+                return false; // an object that faults while being read is skipped, not the drawing
+            }
             records.Add(record);
             return records.Count >= cap;
         }
@@ -306,24 +362,17 @@ public sealed partial class TeklaModelService
             // Views are already enumerated recursively when requested. Reading only direct
             // children here avoids returning a child-view object once via its parent and again
             // via the child itself.
-            var enumerator = view.GetObjects();
-            while (SafeMoveNext(enumerator))
-            {
-                var obj = enumerator.Current;
-                if (obj == null) continue;
+            foreach (var obj in ReadOwnedObjects(view))
                 if (TryAdd(obj, view, viewIndex)) return records;
-            }
         }
 
         // Sheet-owned annotations/graphics are not children of a placed View and would
         // otherwise be invisible to list/select/modify/delete. GetObjects() (not
         // GetAllObjects()) avoids walking into the placed views and duplicating their content.
         var sheet = drawing.GetSheet();
-        var sheetObjects = sheet.GetObjects();
-        while (SafeMoveNext(sheetObjects))
+        foreach (var obj in ReadOwnedObjects(sheet))
         {
-            var obj = sheetObjects.Current;
-            if (obj == null || obj is TSD.ViewBase) continue;
+            if (obj is TSD.ViewBase) continue;
             if (TryAdd(obj, sheet, -1)) return records;
         }
         return records;
@@ -829,6 +878,7 @@ public sealed partial class TeklaModelService
             }
             var views = EnumerateViews(active);
             var loaded = new List<KeyValuePair<TSD.View, int?>>();
+            var modified = new List<TSD.View>();
             foreach (var modification in safe)
             {
                 var view = ResolveView(views, modification.ViewIndex, modification.ViewId, modification.ViewId2);
@@ -867,6 +917,7 @@ public sealed partial class TeklaModelService
                     if (!view.Modify()) throw new InvalidOperationException("Tekla rejected view Modify().");
                     StampDrawingOrigin(view, "mcp:modify_drawing_view");
                     result.ModifiedCount++;
+                    modified.Add(view);
                     if (oldScale.HasValue && Math.Abs(oldScale.Value - modification.Scale!.Value) > 1e-9)
                         KeepMarkOffsets(view, oldScale.Value, modification.Scale.Value, result);
                     if (modification.RenameMark && modification.Name != null && modification.Name != oldName &&
@@ -881,16 +932,24 @@ public sealed partial class TeklaModelService
             if (apply && (result.ModifiedCount > 0 || result.DeletedCount > 0))
                 CommitActiveDrawingChanges(
                     active, "Tekla MCP: modify drawing views", result);
+            if (modified.Count > 0)
+            {
+                // Read the modified views back: the preview above holds their state BEFORE the
+                // edit (a new scale or label came back as the old one, live Tekla 2021).
+                result.ViewPreview.Clear();
+                var after = EnumerateViews(active);
+                foreach (var view in modified)
+                {
+                    view.Select();
+                    result.ViewPreview.Add(MapView(view, after.FindIndex(v => SameDatabaseObject(v, view))));
+                }
+            }
             if (loaded.Count > 0)
             {
                 // Did the file's filters take effect? Tekla caches view filters by attribute-file
                 // NAME within a session, so an edited .vi.npfilter under the same name may not.
-                result.ViewPreview.Clear();
-                var after = EnumerateViews(active);
                 foreach (var pair in loaded)
                 {
-                    pair.Key.Select();
-                    result.ViewPreview.Add(MapView(pair.Key, after.FindIndex(v => SameDatabaseObject(v, pair.Key))));
                     result.Message = Aggregation.Append(result.Message,
                         $"View '{pair.Key.Name}': {pair.Value?.ToString() ?? "?"} model objects before the attribute file, " +
                         $"{CountViewModelObjects(pair.Key)?.ToString() ?? "?"} after.");
@@ -1004,13 +1063,15 @@ public sealed partial class TeklaModelService
         var restriction = view.RestrictionBox;
         var origin = view.Origin;
         var name = view.Name;
+        // Load into a NEW object: LoadAttributes rewrites the TagsAttributes instance it holds in
+        // place, so a label "kept" by reference came back as the file's label (live Tekla 2021).
         var kept = view.Attributes;
         var scale = kept.Scale;
         var tags = kept.TagsAttributes;
         var labelVertical = kept.LabelPositionVertical;
         var labelHorizontal = kept.LabelPositionHorizontal;
 
-        var attributes = view.Attributes;
+        var attributes = new TSD.View.ViewAttributes();
         if (!attributes.LoadAttributes(modification.AttributeFile))
             throw new InvalidOperationException(
                 "Could not load view attributes file '" + modification.AttributeFile + "'.");
@@ -1040,10 +1101,9 @@ public sealed partial class TeklaModelService
         int moved = 0, failed = 0;
         try
         {
-            var marks = view.GetObjects(new[] { typeof(TSD.Mark) });
-            while (SafeMoveNext(marks))
+            foreach (var current in ReadOwnedObjects(view, new[] { typeof(TSD.Mark) }))
             {
-                if (!(marks.Current is TSD.Mark mark) || !(mark.Placing is TSD.LeaderLinePlacing leader)) continue;
+                if (!(current is TSD.Mark mark) || !(mark.Placing is TSD.LeaderLinePlacing leader)) continue;
                 try
                 {
                     var target = ViewPlacement.RescaleMarkOffset(
@@ -1075,69 +1135,83 @@ public sealed partial class TeklaModelService
     /// own vertices (never the global AABB's corners — wrong through a tilted view) and the bolt
     /// positions, through the same global → view matrix as coordinateSpace=model.
     /// </summary>
-    private static void AddModelGeometry(IReadOnlyList<DrawingObjectRecord> records, IReadOnlyList<DrawingObjectInfo> rows)
+    private static List<(DrawingObjectRecord Record, DrawingModelGeometry? Geometry)> WithModelGeometry(
+        IReadOnlyList<DrawingObjectRecord> records, DrawingObjectQuery query, int cap)
     {
+        var matches = new List<(DrawingObjectRecord Record, DrawingModelGeometry? Geometry)>();
         var model = GetConnectedModel();
         InGlobalWorkPlane(model, () =>
         {
-            for (var i = 0; i < records.Count; i++)
+            foreach (var record in records)
             {
-                if (!(records[i].Object is TSD.ModelObject drawingObject) || !(records[i].View is TSD.View view)) continue;
-                if (!(drawingObject is TSD.Part) && !(drawingObject is TSD.Bolt)) continue;
-                var geometry = new DrawingModelGeometry();
-                rows[i].ModelGeometry = geometry;
-                try
-                {
-                    var toView = GlobalToViewMatrix(view);
-                    var mo = model.SelectModelObject(drawingObject.ModelIdentifier);
-                    switch (mo)
-                    {
-                        case TSM.Part part:
-                            geometry.Name = part.Name ?? "";
-                            geometry.Profile = part.Profile?.ProfileString ?? "";
-                            var assemblyPos = "";
-                            if (part.GetReportProperty("ASSEMBLY_POS", ref assemblyPos) && assemblyPos.Length > 0)
-                                geometry.AssemblyPos = assemblyPos;
-                            var vertices = new List<Point3D>();
-                            var faces = part.GetSolid().GetFaceEnumerator();
-                            while (faces.MoveNext())
-                                if (faces.Current != null)
-                                    foreach (var loop in FaceLoops(faces.Current))
-                                        foreach (var vertex in loop)
-                                            vertices.Add(ToPoint3D(toView.Transform(ToPoint(vertex))));
-                            geometry.Source = "solid vertices";
-                            if (ViewGeometry.TryBox(vertices, out var min, out var max))
-                            {
-                                geometry.Min = min;
-                                geometry.Max = max;
-                            }
-                            break;
-                        case TSM.BoltGroup bolts:
-                            geometry.Name = bolts.BoltStandard ?? "";
-                            geometry.BoltSize = bolts.BoltSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                            geometry.BoltPositions = new List<Point3D>();
-                            foreach (var position in bolts.BoltPositions)
-                                if (position is TSG.Point point)
-                                    geometry.BoltPositions.Add(ToPoint3D(toView.Transform(point)));
-                            geometry.Source = "bolt positions";
-                            if (ViewGeometry.TryBox(geometry.BoltPositions, out var boltMin, out var boltMax))
-                            {
-                                geometry.Min = boltMin;
-                                geometry.Max = boltMax;
-                            }
-                            break;
-                        default:
-                            geometry.Message = "The model object was not found or is not a part or bolt group.";
-                            break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    geometry.Message = ErrorText.Flatten(ex);
-                }
+                if (matches.Count >= cap) break;
+                var geometry = ReadModelGeometry(model, record, query);
+                if (ViewGeometry.Matches(geometry, query)) matches.Add((record, geometry));
             }
             return true;
         });
+        return matches;
+    }
+
+    /// <summary>One part's or bolt group's geometry; null for other objects. The solid is read
+    /// only when the name/profile filters pass.</summary>
+    private static DrawingModelGeometry? ReadModelGeometry(TSM.Model model, DrawingObjectRecord record, DrawingObjectQuery query)
+    {
+        if (!(record.Object is TSD.ModelObject drawingObject) || !(record.View is TSD.View view)) return null;
+        if (!(drawingObject is TSD.Part) && !(drawingObject is TSD.Bolt)) return null;
+        var geometry = new DrawingModelGeometry();
+        try
+        {
+            var toView = GlobalToViewMatrix(view);
+            var mo = model.SelectModelObject(drawingObject.ModelIdentifier);
+            switch (mo)
+            {
+                case TSM.Part part:
+                    geometry.Name = part.Name ?? "";
+                    geometry.Profile = part.Profile?.ProfileString ?? "";
+                    if (!ViewGeometry.MatchesText(geometry, query)) break;
+                    var assemblyPos = "";
+                    if (part.GetReportProperty("ASSEMBLY_POS", ref assemblyPos) && assemblyPos.Length > 0)
+                        geometry.AssemblyPos = assemblyPos;
+                    var vertices = new List<Point3D>();
+                    var faces = part.GetSolid().GetFaceEnumerator();
+                    while (faces.MoveNext())
+                        if (faces.Current != null)
+                            foreach (var loop in FaceLoops(faces.Current))
+                                foreach (var vertex in loop)
+                                    vertices.Add(ToPoint3D(toView.Transform(ToPoint(vertex))));
+                    geometry.Source = "solid vertices";
+                    if (ViewGeometry.TryBox(vertices, out var min, out var max))
+                    {
+                        geometry.Min = min;
+                        geometry.Max = max;
+                    }
+                    break;
+                case TSM.BoltGroup bolts:
+                    geometry.Name = bolts.BoltStandard ?? "";
+                    geometry.BoltSize = bolts.BoltSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!ViewGeometry.MatchesText(geometry, query)) break;
+                    geometry.BoltPositions = new List<Point3D>();
+                    foreach (var position in bolts.BoltPositions)
+                        if (position is TSG.Point point)
+                            geometry.BoltPositions.Add(ToPoint3D(toView.Transform(point)));
+                    geometry.Source = "bolt positions";
+                    if (ViewGeometry.TryBox(geometry.BoltPositions, out var boltMin, out var boltMax))
+                    {
+                        geometry.Min = boltMin;
+                        geometry.Max = boltMax;
+                    }
+                    break;
+                default:
+                    geometry.Message = "The model object was not found or is not a part or bolt group.";
+                    break;
+            }
+        }
+        catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            geometry.Message = ErrorText.Flatten(ex);
+        }
+        return geometry;
     }
 
     /// <summary>True when the view holds a hidden mark (best-effort; false when it cannot tell).</summary>
@@ -1145,9 +1219,8 @@ public sealed partial class TeklaModelService
     {
         try
         {
-            var objects = view.GetObjects(new[] { typeof(TSD.Mark) });
-            while (SafeMoveNext(objects))
-                if (objects.Current is TSD.Mark mark && mark.Hideable != null && mark.Hideable.IsHidden)
+            foreach (var current in ReadOwnedObjects(view, new[] { typeof(TSD.Mark) }))
+                if (current is TSD.Mark mark && mark.Hideable != null && mark.Hideable.IsHidden)
                     return true;
         }
         catch

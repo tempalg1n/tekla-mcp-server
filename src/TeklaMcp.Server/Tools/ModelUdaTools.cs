@@ -51,18 +51,19 @@ public static class ModelUdaTools
         [Description("Safety limit on number of matched objects. Default 200.")] int limit = 200,
         [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false,
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
-        => ToolHelpers.Write(model, expectedModelPath, () => model.SetUdas(
-            new ObjectQuery
+        => ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var query = new ObjectQuery
             {
                 Type = type,
                 Class = @class,
                 Profile = profile,
                 Material = material,
                 NameContains = nameContains,
-            },
-            ParseKeyValuePairs(updates),
-            apply,
-            limit));
+            };
+            ToolHelpers.RequireWriteScope(query);
+            return model.SetUdas(query, ParseKeyValuePairs(updates), apply, limit);
+        });
 
     private static IReadOnlyList<string> ParseList(string raw)
     {

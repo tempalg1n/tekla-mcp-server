@@ -1125,10 +1125,11 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             rows = rows.Where(o => Contains(o.Text, query.TextContains));
         if (query.EmptyMarksOnly)
             rows = rows.Where(o => o.IsEmptyMark == true);
-        var page = Limit(rows.ToList(), limit);
-        if (!query.IncludeModelGeometry) return page;
+        if (!query.IncludeModelGeometry) return Limit(rows.ToList(), limit);
         // The mock's view coordinates are its model coordinates (issue #38 shape, not projection).
-        foreach (var row in page)
+        // Model-geometry filters run before the cap, as in the live backend (ViewGeometry.HasFilter).
+        var candidates = rows.ToList();
+        foreach (var row in candidates)
         {
             if (row.Type != "Part" && row.Type != "Bolt") continue;
             var source = GetObjectByGuid(row.ModelGuid);
@@ -1144,7 +1145,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     Source = "mock bounding box",
                 };
         }
-        return page.Where(row => ViewGeometry.Matches(row.ModelGeometry, query)).ToList();
+        return Limit(candidates.Where(row => ViewGeometry.Matches(row.ModelGeometry, query)).ToList(), limit);
     }
 
     public DrawingSelectionResult SelectDrawingObjects(DrawingObjectQuery query, int? limit = null)

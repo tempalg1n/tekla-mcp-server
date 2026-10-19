@@ -35,14 +35,11 @@ public static class ViewGeometry
     /// </summary>
     public static bool Matches(DrawingModelGeometry? geometry, DrawingObjectQuery query)
     {
-        var hasGeometryFilter = query.ZMin.HasValue || query.ZMax.HasValue ||
-                                query.RegionMin != null || query.RegionMax != null;
-        var hasTextFilter = !string.IsNullOrWhiteSpace(query.NameContains) ||
-                            !string.IsNullOrWhiteSpace(query.ProfileContains);
-        if (!hasGeometryFilter && !hasTextFilter) return true;
+        var hasGeometryFilter = HasGeometryFilter(query);
+        if (!hasGeometryFilter && !HasTextFilter(query)) return true;
         if (geometry == null) return false;
 
-        if (!Contains(geometry.Name, query.NameContains) || !Contains(geometry.Profile, query.ProfileContains))
+        if (!MatchesText(geometry, query))
             return false;
         if (!hasGeometryFilter) return true;
 
@@ -71,6 +68,23 @@ public static class ViewGeometry
             return false;
         return true;
     }
+
+    /// <summary>
+    /// True when the query filters on model geometry (name, profile, z range, region). Backends must
+    /// then apply the filters BEFORE the result cap: capping first returned the first N parts of a
+    /// view and filtered those, so 17 monorails in a view of 419 parts came back as [] (live Tekla 2021).
+    /// </summary>
+    public static bool HasFilter(DrawingObjectQuery query) => HasGeometryFilter(query) || HasTextFilter(query);
+
+    /// <summary>The name/profile half of <see cref="Matches"/> — check it before paying for a solid.</summary>
+    public static bool MatchesText(DrawingModelGeometry geometry, DrawingObjectQuery query) =>
+        Contains(geometry.Name, query.NameContains) && Contains(geometry.Profile, query.ProfileContains);
+
+    private static bool HasGeometryFilter(DrawingObjectQuery query) =>
+        query.ZMin.HasValue || query.ZMax.HasValue || query.RegionMin != null || query.RegionMax != null;
+
+    private static bool HasTextFilter(DrawingObjectQuery query) =>
+        !string.IsNullOrWhiteSpace(query.NameContains) || !string.IsNullOrWhiteSpace(query.ProfileContains);
 
     private const double Tolerance = 0.01;
 

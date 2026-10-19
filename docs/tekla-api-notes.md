@@ -512,9 +512,11 @@ yet — values are the raw stored numbers.
 common 2021 reference surface. The drawing layer arrived in v0.7.0 and is still **experimental**;
 v0.8.0 changed only its connection handling (guard, reconnect, no more empty lists without a
 connection) and write outcomes (a lost connection during apply → `unknown`). Apart from a v0.7.0
-smoke test on Tekla 2023 (which found and fixed the `DetailMark` enumeration fault) and what is
-stated below, the Drawing API path has **not** been exercised against a live Windows drawing
-editor.
+smoke test on Tekla 2023 (which found and fixed the `DetailMark` enumeration fault), what is
+stated below and the v0.9.0 live run on Tekla 2021 (2026-10-19, a test copy of model 3155: a new
+GA drawing with a plan by frame, a section, straight and radius dimensions, custom and copied
+marks, standalone detail/section marks, attribute files, labels, rescale, save), the Drawing API
+path has **not** been exercised against a live Windows drawing editor.
 
 | Area | API | Status |
 |---|---|---|
@@ -589,6 +591,21 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
   input (a warning says so) and refuses collinear points. Rounded input points shift the value
   (`R1714.5` for R1715); take the points from `tekla_get_part_curve_geometry`'s view block.
 
+### Enumerating view objects with AutoFetch: one DetailMark empties the view (Tekla 2021)
+
+With `DrawingEnumeratorBase.AutoFetch = true` (set since v0.7.0) Tekla fetches the whole snapshot
+when the enumerator is CREATED, and a `DetailMark` cannot be serialized
+(`DetailMarkSymbolAttributes` is not `[Serializable]`). On Tekla 2021 the
+`SerializationException` therefore comes out of `View.GetObjects()` itself — not out of
+`MoveNext()`, where `SafeMoveNext` would have skipped the object (that is what v0.7.0 saw on
+2023). Before v0.9.0's fix, one detail mark in a view (a standalone callout, or the mark of a
+detail view) made `tekla_list_drawing_objects` answer `[]` for the whole drawing, and modify,
+delete, `keepMarkOffsets` and `renameMark` found nothing. `ReadOwnedObjects` now reads such an
+owner again without AutoFetch (one object per `MoveNext`, under a lock, AutoFetch restored); the
+detail mark then enumerates fine (live, 2026-10-19). A read-only script that ran before any
+listing had enabled AutoFetch enumerated the same view without errors — that is how the cause was
+found.
+
 ### View placement and view attribute files (issues #33, #28)
 
 - `View.Origin` is where the MODEL origin lands on the sheet, not the frame: a plan restricted to
@@ -604,8 +621,17 @@ coordinate systems returned by `tekla_list_drawing_views` instead of assuming gl
   `tekla_modify_drawing_view attributeFile` does that and reports the view's model-object count
   before and after. File names are used verbatim: `" Truss node"` (leading space) loads only with
   the space. Reloading recreates marks for newly visible parts only.
+- **`LoadAttributes` rewrites the `TagsAttributes` object it holds IN PLACE** (Tekla 2021,
+  2026-10-19, read-only script: the reference kept before the load showed the file's label after
+  it, `ReferenceEquals` true). So "keep tags, load, restore" restored the file's label. The server
+  loads the file into a NEW `View.ViewAttributes` and takes scale, label and label position from
+  the view's untouched attributes (`LoadViewAttributeFile`); verified live afterwards: the label
+  stays, scale/box/origin/name stay, and the file's filters apply (449 → 372 objects).
 - After `LoadAttributes` + `Modify`, `GetAxisAlignedBoundingBox()` returns the OLD box within the
   same call — re-list views before laying them out.
+- A section created by `View.CreateSectionView` gets a mark named by Tekla (`"1"`), not the view
+  name, so `renameMark` (which looks for a mark named like the view's old name) finds nothing and
+  says so (Tekla 2021, 2026-10-19).
 - **The view frame includes HIDDEN marks** (Tekla 2021): hidden member marks stay at their parts'
   midpoints, often far outside a detail view's restriction box, and still extend
   `Origin + FrameOrigin`/`Width × Height` and push the view label. Moving each hidden mark to its

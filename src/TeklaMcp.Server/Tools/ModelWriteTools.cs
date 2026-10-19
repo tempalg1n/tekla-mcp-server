@@ -199,9 +199,9 @@ public static class ModelWriteTools
         [Description("Set true to commit. Default false = preview.")] bool apply = false,
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
     {
-        var targets = model.FindObjects(
-            ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, guidIn: guidIn, useSelection: useSelection),
-            limit);
+        var query = ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, guidIn: guidIn, useSelection: useSelection);
+        ToolHelpers.RequireWriteScope(query);
+        var targets = model.FindObjects(query, limit);
         var mods = targets.Select(o => new PartModification { Guid = o.Guid, SwapHandles = true }).ToList();
         return ToolHelpers.Write(model, expectedModelPath, () => model.ModifyParts(mods, apply));
     }
@@ -223,8 +223,10 @@ public static class ModelWriteTools
         [Description("Safety cap. Default 200.")] int limit = 200,
         [Description("Set true to commit. Default false = preview.")] bool apply = false,
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
-        => ToolHelpers.Write(model, expectedModelPath, () => model.DeleteObjects(
-            ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, guidIn, useSelection),
-            apply,
-            limit));
+        => ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var query = ToolHelpers.BuildQuery(type, @class, profile, material, nameContains, udaName, udaEquals, guidIn, useSelection);
+            ToolHelpers.RequireWriteScope(query);
+            return model.DeleteObjects(query, apply, limit);
+        });
 }

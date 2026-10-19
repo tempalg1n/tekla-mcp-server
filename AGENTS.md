@@ -328,6 +328,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
 - **Tag origin.** Backends stamp created/modified objects with the `MCP_ORIGIN` UDA so agent
   output is findable and reversible. Keep this behavior.
 - **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
+- **No filter, no write.** A mutating-by-filter tool calls `ToolHelpers.RequireWriteScope(query)`
+  before it reads or writes: MCP clients drop arguments a tool does not declare, so a misspelled
+  filter leaves an empty query that would write to the first `limit` objects of the model.
+  `guidIn` is a scope; `EnumerateSource` selects those GUIDs directly (never a whole-model scan).
 - **Outcome + target on every write result** (`WriteResult`, `UdaOperationResult`,
   `UdaFileWriteResult`, `DrawingWriteResult`, `ModelFileOperationResult`; `ScriptResult` gets the
   target via `ToolHelpers.ResolveTarget`). Every mutating
@@ -506,6 +510,14 @@ behavior.
   used as a placed View's own identity. Drawing keys therefore need a public-property fallback;
   object/view indices are ephemeral and must never be described as durable. Prefer non-zero
   ID/ID2, and re-list after structural edits.
+- **Read a view's or the sheet's objects through `ReadOwnedObjects`, never `GetObjects()` directly.**
+  With drawing AutoFetch on, one `DetailMark` makes `GetObjects()` itself throw on Tekla 2021, and
+  the listing, edits and deletes of the whole drawing went empty (since v0.7.0). The helper reads
+  such an owner again without AutoFetch. A listing that fails is a tool error, never `[]`.
+- **Load a view attributes file into a NEW `View.ViewAttributes`** (`LoadViewAttributeFile`):
+  `LoadAttributes` rewrites the label object it holds in place, so anything "kept" by reference
+  from the same attributes is already the file's. Edits read their objects back after the commit
+  (`Select()` + map); the preview taken before the edit holds the old values.
 - **Keep coordinate spaces explicit.** `view` is target-view local, `model` is global model
   coordinates transformed through `DisplayCoordinateSystem`, and `sheet` is paper millimetres
   with the sheet target (`viewIndex=-1`, no view ID). View insertion/frame and dimension-line

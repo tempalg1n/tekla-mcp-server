@@ -32,7 +32,11 @@ public sealed partial class TeklaModelService
         if (!apply)
         {
             foreach (var spec in safeSpecs)
-                result.ObjectPreview.Add(PreviewDrawingObject(spec));
+            {
+                var preview = PreviewDrawingObject(spec);
+                PreviewRadiusOrder(spec, preview, result);
+                result.ObjectPreview.Add(preview);
+            }
             return result;
         }
 
@@ -132,6 +136,7 @@ public sealed partial class TeklaModelService
                 records.Take(20).Select(r => MapDrawingObject(r, effective)));
             if (!apply) return result;
 
+            var modified = new List<DrawingObjectRecord>();
             foreach (var record in records)
             {
                 try
@@ -149,6 +154,7 @@ public sealed partial class TeklaModelService
                         throw new InvalidOperationException("Tekla rejected Modify().");
                     StampDrawingOrigin(record.Object, "mcp:modify_drawing_object");
                     result.ModifiedCount++;
+                    modified.Add(record);
                 }
                 catch (Exception exItem)
                 {
@@ -160,6 +166,17 @@ public sealed partial class TeklaModelService
             if (result.ModifiedCount > 0 || result.DeletedCount > 0)
                 CommitActiveDrawingChanges(
                     active, "Tekla MCP: modify drawing objects", result);
+            if (modified.Count > 0)
+            {
+                // Read the edited objects back: the preview holds their state BEFORE the edit (a
+                // mark given new content came back with its old text, live Tekla 2021).
+                result.ObjectPreview.Clear();
+                foreach (var record in modified.Take(20))
+                {
+                    try { record.Object.Select(); } catch { }
+                    result.ObjectPreview.Add(MapDrawingObject(record, effective));
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -623,6 +640,27 @@ public sealed partial class TeklaModelService
         points[2] = first;
         return "radius_dimension: points 1 and 3 were swapped so that Tekla's clockwise arc " +
                "from point 1 to point 3 passes through point 2.";
+    }
+
+    /// <summary>
+    /// The preview of a radius dimension given in view/sheet coordinates says what apply will do:
+    /// swap points 1 and 3 or refuse collinear points (the preview used to plan both silently).
+    /// Model-space points are checked at apply, after the view transform.
+    /// </summary>
+    private static void PreviewRadiusOrder(DrawingObjectSpec spec, DrawingObjectInfo preview, DrawingWriteResult result)
+    {
+        if (NormalizeDrawingObjectKind(spec.Kind) != "RadiusDimension" || preview.Points.Count != 3) return;
+        if ((spec.CoordinateSpace ?? "view").Trim().Equals("model", StringComparison.OrdinalIgnoreCase)) return;
+        var ordered = DimensionMath.OrderArcClockwise(preview.Points[0], preview.Points[1], preview.Points[2], out var reversed);
+        if (ordered == null)
+        {
+            result.Errors.Add("radius_dimension needs three distinct points on an arc, not on a straight line.");
+            return;
+        }
+        if (!reversed) return;
+        preview.Points = ordered.ToList();
+        result.Warnings.Add("radius_dimension: points 1 and 3 will be swapped so that Tekla's clockwise arc " +
+                            "from point 1 to point 3 passes through point 2.");
     }
 
     private static List<TSG.Point> TransformPoints(TSD.ViewBase target, DrawingObjectSpec spec)

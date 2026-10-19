@@ -25,6 +25,9 @@ public sealed partial class TeklaModelService
     private const int DrawingBatchLimit = 50;
     private const int DrawingObjectBatchLimit = 200;
 
+    /// <summary>Objects scanned when model-geometry filters run before the result cap.</summary>
+    private const int DrawingObjectScanLimit = 50000;
+
     public DrawingStatusInfo GetDrawingStatus()
     {
         var result = new DrawingStatusInfo { Backend = BackendName };
@@ -229,23 +232,33 @@ public sealed partial class TeklaModelService
         DrawingObjectQuery query,
         int? limit = null)
     {
-        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
-        try
+        // No connection, or a drawing that cannot be read, is a tool error — never an empty list:
+        // a swallowed exception used to answer [] ("nothing there") for a whole drawing.
+        var handler = GetDrawingHandler();
+        var active = TryGetActiveDrawing(handler);
+        if (active == null) return new List<DrawingObjectInfo>();
+        var effective = query ?? new DrawingObjectQuery();
+        var cap = NormalizeLimit(limit, DrawingObjectBatchLimit);
+        if (!effective.IncludeModelGeometry)
         {
-            var active = TryGetActiveDrawing(handler);
-            if (active == null) return new List<DrawingObjectInfo>();
-            var effective = query ?? new DrawingObjectQuery();
-            var records = GetDrawingObjectRecords(handler, active, effective, limit);
-            var rows = records.Select(r => MapDrawingObject(r, effective)).ToList();
-            ResolveModelGuids(rows);
-            if (!effective.IncludeModelGeometry) return rows;
-            AddModelGeometry(records, rows);
-            return rows.Where(row => ViewGeometry.Matches(row.ModelGeometry, effective)).ToList();
+            var plain = GetDrawingObjectRecords(handler, active, effective, cap)
+                .Select(r => MapDrawingObject(r, effective)).ToList();
+            ResolveModelGuids(plain);
+            return plain;
         }
-        catch
+
+        // Model-geometry filters run before the cap (see ViewGeometry.HasFilter).
+        var scan = ViewGeometry.HasFilter(effective) ? DrawingObjectScanLimit : cap;
+        var records = GetDrawingObjectRecords(handler, active, effective, scan, scan);
+        var rows = new List<DrawingObjectInfo>();
+        foreach (var match in WithModelGeometry(records, effective, cap))
         {
-            return new List<DrawingObjectInfo>();
+            var row = MapDrawingObject(match.Record, effective);
+            row.ModelGeometry = match.Geometry;
+            rows.Add(row);
         }
+        ResolveModelGuids(rows);
+        return rows;
     }
 
     public DrawingSelectionResult SelectDrawingObjects(
