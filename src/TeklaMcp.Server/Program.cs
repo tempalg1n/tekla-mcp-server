@@ -158,7 +158,10 @@ const string serverInstructions =
     "restored change on the user's screen). tekla_render_schematic (BETA — an early, simplified " +
     "sketch that can look cluttered on dense models) draws a numbered plan/elevation/iso with real " +
     "grid labels and a legend with GUIDs, without touching Tekla. Use them to orient yourself, to " +
-    "identify what the user points at, and to check what a write created before you report success.\n\n" +
+    "identify what the user points at, and to check what a write created before you report success. " +
+    "After DRAWING edits, look at the result with tekla_capture_drawing (the open drawing: whole sheet, " +
+    "one view by viewId, or a sheet region; read-only) before you report success: dimensions on top of " +
+    "parts, a radius drawn as a full circle or a wrong view label are obvious on the picture.\n\n" +
     "KNOWN MODEL-LAYER QUIRKS (verified on live Tekla — trust the tools over a raw script here):\n" +
     "- Connection.UpVector is only STORED under auto-direction NA. Under BASIC the Open API " +
     "returns success and silently recomputes the vector. Use tekla_modify_connections, which " +

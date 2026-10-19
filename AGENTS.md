@@ -108,7 +108,7 @@ Where to find things (verify with `ls` — this list is a map, not a contract):
 | curve geometry | `Geometry/CurveMath` | `.CurveGeometry.cs` | `TeklaCurveGeometryService.cs` |
 | file exchange | `FileExchange/*` (`FilePathPolicy`, `ExportRunner`, `UdaImportRunner`, readers/writers) | `.FileExchange.cs` | `TeklaFileExchangeService.cs` |
 | reference models / IFC | `Ifc/IfcPlacementReader` | `MockTeklaModelService.cs` | `TeklaModelService.cs` |
-| schematic + view capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
+| schematic + view/drawing capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`, `SheetLocator`, `DrawingCapturePlan`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaDrawingCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
 | drawings | `Models/DrawingInfo.cs`, `Models/DrawingWriteModels.cs` | `MockTeklaModelService.cs` | `TeklaDrawingService.cs`, `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs` |
 | connection lifecycle, assembly loading | `ConnectionErrors`, `ErrorText`, `RemotingChannelNames`, `TeklaBinLayout`, `TeklaAssemblyProbe` | — | `TeklaAssemblyResolver.cs`, `TeklaBackendFactory.cs`, `TeklaRemotingChannel.cs` |
 
@@ -141,7 +141,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 | `ModelVisualTools.cs` | `tekla_capture_view`, `tekla_render_schematic` (image + JSON answers) |
 | `ModelScriptTools.cs` | `run_csharp`, `check_csharp`, `search_api`, `get_api_doc`, `get_api_reference_status` |
 | `ModelMetaTools.cs` | `tekla_report_gap` |
-| `DrawingQueryTools.cs` / `DrawingWriteTools.cs` / `DrawingContentTools.cs` | drawing reads / drawing lifecycle + batch writes / views, annotations, dimensions, marks |
+| `DrawingQueryTools.cs` / `DrawingWriteTools.cs` / `DrawingContentTools.cs` | drawing reads (incl. `tekla_capture_drawing`) / drawing lifecycle + batch writes / views, annotations, dimensions, marks |
 | `ToolHelpers.cs`, `DrawingToolHelpers.cs` | shared parsing, `BuildQuery`, the `Write(...)` wrappers (target + outcome) |
 
 ---
@@ -166,7 +166,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
    drawing-specific count included).
 6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
    tools, passed as its second argument in BOTH `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` (currently `119`). Adding or removing a tool without changing
+   `.github/workflows/release.yml` (currently `120`). Adding or removing a tool without changing
    both fails CI. Keep workflows, README count and `tools/list` equal.
 7. Add the user-facing change to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md), and tests in
    `tests/TeklaMcp.Tests` for any Core/Mock/Scripting logic.
@@ -546,11 +546,12 @@ drawing `Part` has no geometry of its own, and `Part.GetCenterLine` is a segment
 New files: `src/TeklaMcp.Core/Geometry/CurveMath.cs`, `src/TeklaMcp.Core/Models/PartCurveGeometry.cs`,
 `src/TeklaMcp.Mock/MockTeklaModelService.CurveGeometry.cs`, `src/TeklaMcp.Tekla/TeklaCurveGeometryService.cs`.
 
-### Conventions for VISUAL tools (`tekla_capture_view`, `tekla_render_schematic`)
+### Conventions for VISUAL tools (`tekla_capture_view`, `tekla_render_schematic`, `tekla_capture_drawing`)
 
-Agents were "blind": they found objects by indirect signs and never saw the model. Both tools return
-an MCP `ImageContentBlock` (the agent sees it) plus a JSON text block, built in
-`ModelVisualTools.Answer`; the image bytes travel in `RenderedImage` and are nulled out of the DTO
+Agents were "blind": they found objects by indirect signs and never saw the model. Every visual tool
+returns an MCP `ImageContentBlock` (the agent sees it) plus a JSON text block, built in
+`ModelVisualTools.Answer` (`tekla_capture_drawing` lives in `DrawingQueryTools.cs` so the drawings
+toolset carries it, and calls the same `Answer`); the image bytes travel in `RenderedImage` and are nulled out of the DTO
 before it is serialized.
 
 - **Never capture the screen.** `tekla_capture_view` copies pixels ONLY from Tekla's own view window
@@ -588,12 +589,25 @@ before it is serialized.
 - **Grids** (shared with `tekla_list_grids`/`tekla_resolve_point`): `GridMath` parses X/Y as spacings,
   Z as absolute levels, reads real `LabelX/Y/Z` and each grid's own `GetCoordinateSystem()`; labels
   repeat across grids, so `Resolve` prefers a pair from the same grid and says when it had to choose.
+- **The drawing capture is read-only — keep it so.** `tekla_capture_drawing` (issue #31) copies the
+  drawing editor's own window (an MDI child next to the model views, picked by
+  `DrawingCapturePlan.PickEditorWindow`: the drawing mark in its title, else elimination of model
+  views) and never zooms, scrolls or selects. The Open API has no drawing-editor zoom, so
+  `Core/Rendering/SheetLocator` finds the sheet from its edges on the picture (a rectangle of long
+  lines with the paper's aspect ratio; a missing edge only ON the window border). When the sheet is
+  not found the tool returns the whole window as `scope="visible"` with no coordinates and says so —
+  never guess a mapping, and never "fix" it by zooming the user's editor. Two rules keep it honest
+  (tests in `DrawingCaptureTests`): a missing edge only on the border, because a title-block frame
+  inside a zoomed-in sheet fits three lines at the wrong scale; and no edge line may run on past a
+  corner, because title-block cells seen up close matched A2's proportions live. Crop and pixel→sheet math is `DrawingCapturePlan`, shared with the mock.
+  Settling uses `TeklaWindowCapture.CaptureSettled` without a baseline (nothing was changed).
 
 New files: `src/TeklaMcp.Core/Rendering/*`, `src/TeklaMcp.Core/Geometry/GridMath.cs`,
 `src/TeklaMcp.Core/Models/SchematicModels.cs`, `src/TeklaMcp.Core/Models/ViewCaptureModels.cs`,
 `src/TeklaMcp.Mock/MockTeklaModelService.Visual.cs`, `src/TeklaMcp.Tekla/TeklaSchematicService.cs`,
 `src/TeklaMcp.Tekla/TeklaViewCaptureService.cs`, `src/TeklaMcp.Tekla/TeklaWindowCapture.cs`,
-`src/TeklaMcp.Server/Tools/ModelVisualTools.cs`.
+`src/TeklaMcp.Server/Tools/ModelVisualTools.cs`; for the drawing capture
+`src/TeklaMcp.Core/Models/DrawingCaptureModels.cs`, `src/TeklaMcp.Tekla/TeklaDrawingCaptureService.cs`.
 
 ### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
 
@@ -715,7 +729,7 @@ Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8
 ```bash
 dotnet build src/TeklaMcp.Server -c Release
 dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
-  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 119
+  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 120
 ```
 It is what CI and the release workflow run after the unit tests, and it asserts EXACT values:
 

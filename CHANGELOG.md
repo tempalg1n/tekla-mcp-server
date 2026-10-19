@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tekla_capture_drawing` — a picture of the open drawing** ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)).
+  The whole sheet, one view's frame (`viewId`/`viewId2`, plus `marginMm`) or a sheet region, as Tekla
+  draws it in the drawing editor, returned as an image plus JSON: every view's frame and pixel box on
+  the picture, `pixelToSheet` (picture pixel → sheet paper mm), `shownMin`/`shownMax`, `clipped`.
+  Agents can now check their own dimensions, marks and labels instead of asking the user for a
+  screenshot. Read-only: the pixels come from Tekla's own drawing window (`PrintWindow`, never a screen
+  copy), and nothing is zoomed or selected. The Open API cannot read the drawing editor's zoom, so the
+  sheet is located from its edges on the picture; zoomed in past them, the tool returns the whole
+  window with `scope="visible"` and says so. A minimized or covered drawing window is refused. The
+  mock returns a labelled stand-in of the sheet and view frames. 120 tools in total, 54 for drawings.
+
+### Known limitations
+
+- `tekla_capture_drawing` is live-verified on Tekla 2021 only (one A2 GA sheet: as opened, zoomed out,
+  zoomed in). The drawing window's title and the drawn sheet edge on 2022–2026 are untested.
+- With a drawing open, `tekla_capture_view` without `viewName` captures the drawing window as if it
+  were the active model view.
+
 ## [0.9.0] - 2026-10-16
 
 Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs

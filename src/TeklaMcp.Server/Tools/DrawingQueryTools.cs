@@ -2,13 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using TeklaMcp.Core;
 using TeklaMcp.Core.Models;
+using TeklaMcp.Core.Rendering;
 
 namespace TeklaMcp.Server.Tools;
 
-/// <summary>Drawing-list, active-editor, view and drawing-object discovery.</summary>
+/// <summary>Drawing-list, active-editor, view and drawing-object discovery, and a picture of the open drawing.</summary>
 [McpServerToolType]
 [Toolset(ToolExposure.Drawings)]
 public static class DrawingQueryTools
@@ -233,6 +236,69 @@ public static class DrawingQueryTools
                 objectIds: objectIds, types: types, viewId: viewId, viewId2: viewId2,
                 modelGuid: modelGuid, textContains: textContains),
             limit);
+    }
+
+    [McpServerTool(Name = "tekla_capture_drawing", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description(
+        "SCREENSHOT of the drawing open in Tekla's DRAWING EDITOR — exactly what Tekla draws (dimensions, marks, " +
+        "texts, symbols, view labels, title block) — returned as an image you can look at, plus JSON. Use it to " +
+        "CHECK your own drawing edits before reporting success: dimension lines on top of parts, a radius dimension " +
+        "drawn as a full circle, a wrong view label or overlapping marks are obvious on the picture and invisible in " +
+        "property lists. Scope: the whole sheet (default), one view's frame (viewId/viewId2 from " +
+        "tekla_list_drawing_views, plus marginMm) or a sheet region ('minX,minY,maxX,maxY' in sheet paper mm). " +
+        "Read-only: nothing in Tekla is zoomed, selected or changed, and only Tekla's own drawing window is " +
+        "captured, never other windows. The picture is never sharper than the user's screen: at the editor's " +
+        "zoom a whole A2 sheet has ~3 px per mm, so capture a view or region to read small text, or ask the user " +
+        "to zoom in. JSON: scope (sheet|view|region|visible), shownMin/shownMax (sheet mm on the picture), " +
+        "pixelToSheet (sheetX = originX + px*mmPerPixel, sheetY = originY - py*mmPerPixel), views[] with each " +
+        "view's frame and pixel box on the picture, clipped, warnings. The sheet is located from its edges on the " +
+        "screen; when the editor is zoomed in past the sheet's edges the WHOLE drawing window is returned with " +
+        "scope='visible' and no coordinates — say so, or ask the user to zoom out. Needs an open drawing visible on " +
+        "screen (not minimized or hidden behind a model view). Windows + live Tekla only; the mock backend returns " +
+        "a stand-in of the sheet and view frames labelled as such (source='mock-schematic'). A picture costs " +
+        "about 1-3k tokens; png (default) keeps thin lines crisp.")]
+    public static IEnumerable<ContentBlock> CaptureDrawing(
+        ITeklaModelService model,
+        [Description("Non-zero session View ID of the view to frame (tekla_list_drawing_views). Default: the whole sheet.")]
+        int? viewId = null,
+        [Description("Session View ID2, with viewId.")] int? viewId2 = null,
+        [Description("Sheet region 'minX,minY,maxX,maxY' in sheet paper mm (origin = sheet lower-left, like " +
+                     "tekla_get_drawing_sheet and view frames). Not together with viewId.")]
+        string? region = null,
+        [Description("Paper mm shown around the view frame or region. Default 5.")] double marginMm = 5,
+        [Description("Maximum picture width in px. Default 1600.")] int maxWidth = 1600,
+        [Description("Maximum picture height in px. Default 1600.")] int maxHeight = 1600,
+        [Description("png (default) | jpeg.")] string format = "png")
+    {
+        if (viewId.HasValue && viewId.Value == 0)
+            throw new McpException("viewId must be a non-zero session View ID from tekla_list_drawing_views.");
+        if (viewId.HasValue && !string.IsNullOrWhiteSpace(region))
+            throw new McpException("Pass viewId or region, not both.");
+
+        var request = new DrawingCaptureRequest
+        {
+            ViewId = viewId,
+            ViewId2 = viewId.HasValue ? viewId2 : null,
+            MarginMm = marginMm < 0 ? 0 : Math.Min(marginMm, 200),
+            MaxWidth = maxWidth,
+            MaxHeight = maxHeight,
+            Format = string.IsNullOrWhiteSpace(format) ? "png" : format,
+        };
+        if (!string.IsNullOrWhiteSpace(region))
+        {
+            if (!DrawingCapturePlan.TryParseRegion(region, out var regionMin, out var regionMax, out var regionError))
+                throw new McpException(regionError);
+            request.RegionMin = regionMin;
+            request.RegionMax = regionMax;
+        }
+
+        var result = model.CaptureDrawing(request);
+        if (!result.Captured || result.Image == null)
+            throw new McpException(result.Message ?? "The drawing could not be captured.");
+
+        var image = result.Image;
+        result.Image = null;
+        return ModelVisualTools.Answer(image, result);
     }
 
     private static void Bump(IDictionary<string, int> dictionary, string value)

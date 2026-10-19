@@ -16,6 +16,8 @@ namespace TeklaMcp.Server.Tools;
 /// <summary>
 /// Pictures for agents. Both tools answer with an MCP image block (the agent actually sees it)
 /// plus a JSON text block that maps what is on the picture back to GUIDs and model millimetres.
+/// The drawing picture, <c>tekla_capture_drawing</c>, lives with the drawing reads in
+/// DrawingQueryTools and answers through <see cref="Answer"/>.
 /// </summary>
 [McpServerToolType]
 [Toolset(ToolExposure.Visual)]
@@ -229,7 +231,8 @@ public static class ModelVisualTools
         return Answer(image, result);
     }
 
-    private static IEnumerable<ContentBlock> Answer(RenderedImage image, object description) =>
+    /// <summary>An image block plus the JSON description (also used by <c>tekla_capture_drawing</c>).</summary>
+    internal static IEnumerable<ContentBlock> Answer(RenderedImage image, object description) =>
         new List<ContentBlock>
         {
             ImageContentBlock.FromBytes(image.Bytes, image.MimeType),

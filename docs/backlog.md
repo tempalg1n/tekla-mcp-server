@@ -324,11 +324,11 @@ day, #34–#41. Deferred, most valuable first:
   `Model-:`). Same work as §2 (instance selection): a changed channel may be another Tekla, so the
   reconnect must map channels to PIDs/models before adopting one. Do both together, with the
   restart acceptance from §1 on Tekla 2021.
-- **#31 — `tekla_capture_drawing`.** Needs the drawing editor's window structure on Tekla 2021
-  (class names, which child renders the sheet) with a drawing OPEN — probe it with the user's
-  go-ahead, then follow the `tekla_capture_view` rules (PrintWindow on Tekla's own window only,
-  never the screen; refuse covered windows). Fallback in the issue: print the open drawing to a
-  temporary PDF and rasterize.
+- **#31 follow-ups — `tekla_capture_drawing`** (shipped after the review, live-verified on Tekla
+  2021 only). Check the drawing window's title and the drawn sheet edge on 2022–2026 and display
+  scaling above 100 % (a sheet partly off screen is refused, verified on 2021). If the sheet edge is not
+  drawn on some version, the issue's fallback remains: print the open drawing to a temporary PDF
+  and rasterize it (PrintWindow itself works, so it is not needed on 2021).
 - **#25 §2 — numbering-audit export** (native `PartNumber`/`AssemblyNumber` prefix/start number,
   `PART_POS`, owner/main/parent assembly identities, manifest with counts/hash) — extend
   `tekla_export_parts_file` fields; pairs with `tekla_get_numbering_status`.

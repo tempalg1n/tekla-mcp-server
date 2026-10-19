@@ -341,6 +341,38 @@ The Open API has no screenshot call (no member mentions one, 2021–2026). Probe
 - The server must run in the user's desktop session (a stdio child of the MCP client does); a
   service in session 0 cannot see Tekla's windows.
 
+### Drawing capture (`tekla_capture_drawing`, issue #31)
+
+Probed read-only on Tekla 2021 (model 3155, GA drawing [268] on an A2 sheet 594×420, editor as the
+user opened it, 2026-10-16):
+
+- Window tree: the drawing editor is one more MDI child of the same `MDIClient` as the model views —
+  `AfxFrameOrView140` titled with the drawing type letter and mark ("G   [268]"), maximized, with one
+  child (class `Afx:…`, title "View_10 window_1") that draws the sheet. The model view ("View 1 -
+  3D-view") stays open behind it. The main title becomes "Tekla Structures - <model path> - G   [268]".
+- `PrintWindow` returns the sheet with and without `PW_RENDERFULLCONTENT` (GDI drawing, unlike the
+  DirectX model view), ~40 ms for 2523×1208. The window rectangle includes a 2-px sunken border
+  (grey/white lines); the capture keeps only the client area.
+- The Open API has no drawing-editor zoom or scroll position (2021–2026: only
+  `DrawingInternal.LayoutManager.ZoomToLayout`, which zooms the LAYOUT editor). The sheet is
+  therefore located on the picture: freshly opened, the sheet filled the editor's height — left,
+  right and top edges drawn as full-length lines, the bottom edge on the window border — at
+  1703 px / 594 mm = 2.867 px/mm, sheet left edge at client x = 408. The title-block frame (20/5 mm
+  margins) is the next rectangle inside and does NOT have the paper's aspect ratio.
+- View frames: `View.GetAxisAlignedBoundingBox()` = `Origin + FrameOrigin` and `Width × Height`, in
+  sheet paper mm with the origin at the sheet's lower-left corner (sheet AABB 0,0–594,420). Both
+  views of the drawing, cropped with that mapping, framed exactly what Tekla drew for them.
+- End to end through the tool (own MCP client, same session): sheet zoomed out inside the window →
+  four edges at 1.964 px/mm, sheet and view crops correct; zoomed in on a plan → `scope="visible"`.
+- ⚠️ A first version took title-block CELLS for the sheet: zoomed in on the title block, the cells
+  around "Лист / №док. / Подпись" (91×65 px) matched A2's aspect ratio to 0.3 %. Table lines run on
+  past a cell's corners, the sheet's edges do not — `SheetLocator` now rejects a rectangle whose edge
+  lines continue beyond a corner.
+- With a drawing open, `tekla_capture_view` without `viewName` captured the drawing window as "the
+  active view" (title "G   [268]") — it does not tell model views from the drawing editor yet.
+- ⚠️ Not verified: the window title and a drawn sheet edge on 2022–2026; display scaling above
+  100 %.
+
 ### Cost of a whole-model export (why the exchange tools page)
 
 Measured on the field model (3155, ~65 700 parts, Tekla 2021): `Part.GetSolid()` + AABB ≈ **1.5 ms
