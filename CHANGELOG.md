@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-16
+
+Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs
+that read as blank, edits that Tekla accepted but did not store, dimensions in the wrong units or on
+the wrong arc, section views without their properties, drawing edits that were committed but never
+saved, and a closed model that looked empty. Plus a read-only numbering status, curved Beams in the
+curve tool, mark contents and custom marks, view labels, standalone callouts, view-coordinate
+geometry of parts and bolts, approval of scripts by reference, and a picture of the open drawing so
+agents can check their own drawing edits. Every tool now carries MCP annotations, and operators can
+start the server read-only or with fewer toolsets. Four tools added (120 in total, 54 for drawings).
+
 ### Added
 
 - **`tekla_capture_drawing` — a picture of the open drawing** ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)).
@@ -18,27 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy), and nothing is zoomed or selected. The Open API cannot read the drawing editor's zoom, so the
   sheet is located from its edges on the picture; zoomed in past them, the tool returns the whole
   window with `scope="visible"` and says so. A minimized or covered drawing window is refused. The
-  mock returns a labelled stand-in of the sheet and view frames. 120 tools in total, 54 for drawings.
-
-### Known limitations
-
-- `tekla_capture_drawing` is live-verified on Tekla 2021 only (one A2 GA sheet: as opened, zoomed out,
-  zoomed in). The drawing window's title and the drawn sheet edge on 2022–2026 are untested.
-- With a drawing open, `tekla_capture_view` without `viewName` captures the drawing window as if it
-  were the active model view.
-
-## [0.9.0] - 2026-10-16
-
-Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs
-that read as blank, edits that Tekla accepted but did not store, dimensions in the wrong units or on
-the wrong arc, section views without their properties, drawing edits that were committed but never
-saved, and a closed model that looked empty. Plus a read-only numbering status, curved Beams in the
-curve tool, mark contents and custom marks, view labels, standalone callouts, view-coordinate
-geometry of parts and bolts, and approval of scripts by reference. Three tools added (119 in total,
-53 for drawings).
-
-### Added
-
+  mock returns a labelled stand-in of the sheet and view frames.
 - **`tekla_get_numbering_status`** ([#23](https://github.com/tempalg1n/tekla-mcp-server/issues/23)).
   Read-only: `Operation.IsNumberingUpToDateAll()` for the model, plus `IsNumberingUpToDate` and the
   current `PART_POS`/`ASSEMBLY_POS` for up to 200 parts/assemblies by GUID, with the model identity.
@@ -99,24 +90,24 @@ geometry of parts and bolts, and approval of scripts by reference. Three tools a
 - `connectionInfo.modelOpen` ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8),
   `previewTotal`/`previewTruncated` on part write results, and `drawingSaved` on drawing write
   results ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
-- **MCP tool annotations on every tool.** Each of the 119 tools now says whether it only reads
-  (`readOnlyHint`, 49 tools), and the 70 others whether they can modify or delete what exists
+- **MCP tool annotations on every tool.** Each of the 120 tools now says whether it only reads
+  (`readOnlyHint`, 50 tools), and the 70 others whether they can modify or delete what exists
   (`destructiveHint`) and whether a repeat changes anything more (`idempotentHint`); all are
   `openWorldHint=false`. Clients such as Claude Desktop and Codex use these to approve reads
   without asking and to ask before writes. The hints describe what a tool can do with
   `apply=true`, not its preview default; selection, `tekla_capture_view` and `tekla_open_drawing`
   count as (non-destructive) writers because they change the Tekla UI, and the file exports and
   `tekla_report_gap` because they write files. The MCP smoke now fails on a tool without hints.
-- **Read-only mode: `TEKLA_MCP_READ_ONLY=1`.** The server then serves only the 49 read-only tools
-  (no writes, no `tekla_run_csharp`, no selection or view capture, no file exports), says so in
+- **Read-only mode: `TEKLA_MCP_READ_ONLY=1`.** The server then serves only the 50 read-only tools
+  (no writes, no `tekla_run_csharp`, no selection or model-view capture, no file exports), says so in
   its instructions and in `tekla_get_connection_info` (`serverReadOnly`), and the write paths
   refuse at runtime as well — the write wrappers, the script tool and the tools that write outside
-  the wrappers — so a tool annotated read-only by mistake still cannot write. A value other than
-  `0`/`false`/`no`/`off` (or unset) turns it on.
+  the wrappers — so a tool annotated read-only by mistake still cannot write. Unset means off; any
+  value other than `0`/`false`/`no`/`off` turns it on.
 - **Toolsets: `TEKLA_MCP_TOOLSETS`** (`core`, `model`, `analytics`, `files`, `drawings`,
   `scripting`, `visual`; `core` is always served) narrows `tools/list` for clients that load every
-  tool description into the context: the full list is about 208k characters, the 53 drawing
-  tools alone about 85k. Not a safety feature. An unknown name stops the server with a message
+  tool description into the context: the full list is about 195k characters, the 54 drawing
+  tools alone about 82k. Not a safety feature. An unknown name stops the server with a message
   instead of hiding tools. `tekla_get_connection_info` reports the served set (`serverToolsets`).
 
 ### Fixed
@@ -189,8 +180,12 @@ geometry of parts and bolts, and approval of scripts by reference. Three tools a
 - Renaming a detail view's mark can miss it: detail marks do not always enumerate on Tekla 2021, and
   the mark is found by its name (the Open API has no mark ↔ view link).
 - Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
-- `tekla_capture_drawing` ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)) is not in
-  this release.
+- `tekla_capture_drawing` is live-verified on Tekla 2021 only (one A2 GA sheet: as opened, zoomed out,
+  zoomed in). The drawing window's title and the drawn sheet edge on 2022–2026 are untested.
+- With a drawing open, `tekla_capture_view` without `viewName` captures the drawing window as if it
+  were the active model view.
+- Tool annotations and read-only mode are checked by the MCP smoke only: no client's approval UX
+  (Claude Desktop, Codex) and no live Tekla run has been checked against them yet.
 
 ## [0.8.1] - 2026-10-01
 

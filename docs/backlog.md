@@ -317,8 +317,8 @@ an existing file whose extension is not `.pdf`. Both are tool/backend-local; no 
 
 ## Deferred in the v0.9.0 issue review (2026-10-16)
 
-v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33, #25 §8 and, from the second batch the same
-day, #34–#41. Deferred, most valuable first:
+v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33, #25 §8, from the second batch the same
+day #34–#41, and #31 (merged into the release on 2026-10-19). Deferred, most valuable first:
 
 - **#20 — reconnect when a Tekla 2021 restart changes the Model channel** (`Model-Console:` ↔
   `Model-:`). Same work as §2 (instance selection): a changed channel may be another Tekla, so the

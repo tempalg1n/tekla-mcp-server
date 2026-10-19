@@ -97,7 +97,7 @@ All tools use the `tekla_` prefix. The current build exposes **120 tools** in to
 **54 drawing-specific tools**.
 
 Every tool declares MCP **tool annotations**, so clients such as Claude Desktop or Codex can
-approve reads without asking and ask before writes: 49 tools are `readOnlyHint=true`; the other 70
+approve reads without asking and ask before writes: 50 tools are `readOnlyHint=true`; the other 70
 also say whether they are `destructiveHint` (can modify or delete what is there) and
 `idempotentHint`. The hints describe what a tool can do with `apply=true`, not its preview
 default. Selection (`tekla_select_objects`, `tekla_select_drawing_objects`), `tekla_capture_view`
@@ -686,16 +686,16 @@ environment.
 #### Read-only mode and toolsets
 
 **`TEKLA_MCP_READ_ONLY=1`** is for an agent that may look but not touch. The server then lists
-only the 49 tools annotated `readOnlyHint=true` — no model or drawing writes, no
+only the 50 tools annotated `readOnlyHint=true` — no model or drawing writes, no
 `tekla_run_csharp` (whether a script mutates is decided by a syntax check, which read-only mode
-does not rely on), no selection or view capture, no file exports, no `tekla_report_gap`. It is
+does not rely on), no selection or model-view capture, no file exports, no `tekla_report_gap`. It is
 also enforced at runtime, not only by hiding tools: every write wrapper, the script tool and the
 tools that write outside the wrappers refuse with a message naming the switch, so a tool annotated
 read-only by mistake still cannot write. The server instructions tell the agent that it runs
 read-only, and `tekla_get_connection_info` reports `serverReadOnly`.
 
 **`TEKLA_MCP_TOOLSETS`** trims `tools/list` for clients that load every tool description into the
-context (the full list is about 208k characters; read-only mode alone cuts it to about 67k).
+context (the full list is about 195k characters; read-only mode alone cuts it to about 61k).
 `core` is always served. It hides tools; it is not a safety feature — combine it with read-only
 mode for that.
 
@@ -705,7 +705,7 @@ mode for that.
 | `model` | 42 | queries, properties, geometry, grids, reference models, assemblies, environment, UDAs, part/connection/component writes, generators, model save/open |
 | `analytics` | 10 | count / sum / group / distinct values, material breakdown, attribute search and UDA discovery, QA checks, selection, table export |
 | `files` | 3 | `tekla_export_parts_file`, `tekla_set_udas_from_file`, `tekla_export_reference_objects_file` |
-| `drawings` | 53 | every drawing tool (about 85k characters on its own) |
+| `drawings` | 54 | every drawing tool, `tekla_capture_drawing` included (about 82k characters on its own) |
 | `scripting` | 5 | `tekla_run_csharp`, `tekla_check_csharp`, API reference search and docs |
 | `visual` | 2 | `tekla_capture_view`, `tekla_render_schematic` |
 
