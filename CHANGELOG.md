@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-10-16
+## [0.9.0] - 2026-10-19
 
 Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs
 that read as blank, edits that Tekla accepted but did not store, dimensions in the wrong units or on
