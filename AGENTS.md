@@ -80,11 +80,11 @@ Windows `net48` build.
 
 | Path | TFM | Role |
 |---|---|---|
-| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve/solid/grid math, schematic renderer + PNG encoder, write outcomes, connection-error classification) |
+| `src/TeklaMcp.Core/` | netstandard2.0 | `ITeklaModelService` + DTOs + backend-agnostic logic (aggregation, IFC placement reader, file-exchange formats/policy, curve/solid/grid math, schematic renderer + PNG encoder, write outcomes, connection-error classification, `ToolExposure` = the read-only/toolset switches) |
 | `src/TeklaMcp.Mock/` | netstandard2.0 | mock backend: synthetic frame + arch PolyBeam, stateful drawings; one partial file per area |
 | `src/TeklaMcp.Scripting/` | netstandard2.0 | Roslyn script escape hatch (policy, approval gate, reference selection, engine, SafeJson) + API reference generation and search. References Core; no Tekla references — Tekla assemblies are supplied at runtime |
 | `src/TeklaMcp.Tekla/` | net48 (x64) | real Tekla Open API backend (runs on Windows only; compiles anywhere) — `TeklaModelService` split into one partial file per area, plus assembly loading and the remoting channel |
-| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host (`Program.cs`, `ToolErrorFilter`, `ShutdownGuard`) + `tekla_*` tools in `Tools/` |
+| `src/TeklaMcp.Server/` | net8.0 (+net48 on Windows) | MCP host (`Program.cs`, `ToolErrorFilter`, `ShutdownGuard`, `ToolRegistration` + `ServerMode` for read-only mode/toolsets) + `tekla_*` tools in `Tools/` |
 | `tests/TeklaMcp.Tests/` | net8.0 | xUnit tests (mock-only, no Tekla). References Core/Mock/Scripting — NOT the Server, so the tool layer is covered only by the smoke |
 | `tests/TeklaMcp.Smoke/` | net8.0 exe | MCP stdio smoke: launches the built server DLL as a real MCP client, checks initialize + `tools/list` + a few calls. Not in `TeklaMcp.sln` |
 | `tools/TeklaApiDoc/` | net8.0 exe | CLI over `ApiReferenceGenerator` (writes `reference/tekla-api/`). Not in `TeklaMcp.sln` |
@@ -108,7 +108,7 @@ Where to find things (verify with `ls` — this list is a map, not a contract):
 | curve geometry | `Geometry/CurveMath` | `.CurveGeometry.cs` | `TeklaCurveGeometryService.cs` |
 | file exchange | `FileExchange/*` (`FilePathPolicy`, `ExportRunner`, `UdaImportRunner`, readers/writers) | `.FileExchange.cs` | `TeklaFileExchangeService.cs` |
 | reference models / IFC | `Ifc/IfcPlacementReader` | `MockTeklaModelService.cs` | `TeklaModelService.cs` |
-| schematic + view capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
+| schematic + view/drawing capture | `Rendering/*` (`SchematicRenderer`, `ViewProjection`, `RasterCanvas`, `BitmapFont`, `PngEncoder`, `SheetLocator`, `DrawingCapturePlan`) | `.Visual.cs` | `TeklaSchematicService.cs`, `TeklaViewCaptureService.cs`, `TeklaDrawingCaptureService.cs`, `TeklaWindowCapture.cs` (Win32) |
 | drawings | `Models/DrawingInfo.cs`, `Models/DrawingWriteModels.cs` | `MockTeklaModelService.cs` | `TeklaDrawingService.cs`, `TeklaDrawingObjectService.cs`, `TeklaDrawingContentService.cs` |
 | connection lifecycle, assembly loading | `ConnectionErrors`, `ErrorText`, `RemotingChannelNames`, `TeklaBinLayout`, `TeklaAssemblyProbe` | — | `TeklaAssemblyResolver.cs`, `TeklaBackendFactory.cs`, `TeklaRemotingChannel.cs` |
 
@@ -121,7 +121,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 
 | File | Tools / role |
 |---|---|
-| `ModelInfoTools.cs` | `tekla_get_connection_info`, `tekla_get_model_summary` |
+| `ModelInfoTools.cs` | `tekla_get_connection_info`, `tekla_get_model_summary`, `tekla_get_numbering_status` |
 | `ModelQueryTools.cs` | list/find/get-by-GUID/selected objects, solid bbox, control lines |
 | `ModelWorkflowTools.cs` | count, `sum_weight`, `group_weight_by`, `list_distinct_values`, `select_objects`, `export_objects` |
 | `ModelAnalysisTools.cs` | `tekla_analyze_by_material` |
@@ -141,7 +141,7 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 | `ModelVisualTools.cs` | `tekla_capture_view`, `tekla_render_schematic` (image + JSON answers) |
 | `ModelScriptTools.cs` | `run_csharp`, `check_csharp`, `search_api`, `get_api_doc`, `get_api_reference_status` |
 | `ModelMetaTools.cs` | `tekla_report_gap` |
-| `DrawingQueryTools.cs` / `DrawingWriteTools.cs` / `DrawingContentTools.cs` | drawing reads / drawing lifecycle + batch writes / views, annotations, dimensions, marks |
+| `DrawingQueryTools.cs` / `DrawingWriteTools.cs` / `DrawingContentTools.cs` | drawing reads (incl. `tekla_capture_drawing`) / drawing lifecycle + batch writes / views, annotations, dimensions, marks |
 | `ToolHelpers.cs`, `DrawingToolHelpers.cs` | shared parsing, `BuildQuery`, the `Write(...)` wrappers (target + outcome) |
 
 ---
@@ -158,12 +158,20 @@ Tool files (`src/TeklaMcp.Server/Tools/`):
 4. Expose it as a tool in `src/TeklaMcp.Server/Tools/` with `[McpServerTool(Name = "tekla_...")]`
    and a clear `[Description]`. First parameter is `ITeklaModelService model` (DI-injected,
    not shown to the LLM). Remaining parameters become tool inputs — give each a `[Description]`.
-5. Update the tool table AND the tool count in [README.md](README.md) ("exposes **N tools**",
-   drawing-specific count included).
+   **Declare the annotations on the attribute** — `ReadOnly = true, OpenWorld = false` for a read,
+   `ReadOnly = false, Destructive = …, Idempotent = …, OpenWorld = false` for anything else (rules
+   in "Tool annotations, read-only mode and toolsets" below). The smoke fails on a tool without
+   them. A new tool CLASS also needs `[Toolset(ToolExposure.…)]`, or the server does not start.
+5. Add the tool to its table in [docs/tools.md](docs/tools.md) and update every count: total and
+   drawing-specific ("exposes **N tools**") and read-only/writer split in `docs/tools.md`, the
+   `MCP tools` badge, the mermaid diagram and the toolset tables (`Tools` column) in
+   [README.md](README.md) and [README.ru.md](README.ru.md), the toolset table in
+   [docs/setup.md](docs/setup.md), and the read-only count in all of them. The README is the
+   short overview: it lists toolsets, not tools — keep per-tool detail in `docs/tools.md`.
 6. **Bump the smoke's tool count.** `tests/TeklaMcp.Smoke` asserts the EXACT number of registered
    tools, passed as its second argument in BOTH `.github/workflows/ci.yml` and
-   `.github/workflows/release.yml` (currently `116`). Adding or removing a tool without changing
-   both fails CI. Keep workflows, README count and `tools/list` equal.
+   `.github/workflows/release.yml` (currently `120`). Adding or removing a tool without changing
+   both fails CI. Keep workflows, the documented counts and `tools/list` equal.
 7. Add the user-facing change to `[Unreleased]` in [CHANGELOG.md](CHANGELOG.md), and tests in
    `tests/TeklaMcp.Tests` for any Core/Mock/Scripting logic.
 
@@ -184,6 +192,41 @@ Acquire the handler/model outside a best-effort `try`.
 Process lifetime: `ShutdownGuard` (Server, Windows) ends the process when the parent that launched
 it exits and cuts a shutdown that hangs for 10 s (a Tekla call cannot be cancelled). Closing
 stdin already stops the host; keep both so orphaned servers cannot pile up and hold Tekla.
+
+### Tool annotations, read-only mode and toolsets
+
+Clients (Claude Desktop, Codex) build their approval UX on MCP tool annotations, and read-only mode
+serves exactly the tools annotated read-only — so a wrong `ReadOnly = true` is a safety bug, not a
+cosmetic one.
+
+- **Every `[McpServerTool]` sets its hints explicitly** (the SDK leaves unset hints out, and the
+  spec defaults are the pessimistic ones). The smoke requires `readOnlyHint` and `openWorldHint`
+  on every tool, plus `destructiveHint` and `idempotentHint` when `readOnlyHint` is false.
+- **`ReadOnly = true` only if the tool changes nothing** — not the model, not a drawing, not a
+  file, not the Tekla UI (selection, camera, highlight, open editor). A server-owned cache
+  (the API reference) counts as computation, not a change.
+- **Annotate what the tool CAN do with `apply=true`**, not its preview default. `Destructive = true`
+  when it can modify or delete what exists (modify/delete/set/issue/update/save/close/open_model,
+  `replaceExisting`, a file export that replaces a file, `tekla_run_csharp`); `false` for pure
+  creates and for UI-only changes (selection, `tekla_capture_view`, `tekla_open_drawing`) and
+  append-only logs (`tekla_report_gap`). `Idempotent = true` only when a repeat with the same
+  arguments changes nothing more: absolute sets yes; creates, relative moves/rotations, toggles
+  (`swap_handles`, `PartModification.SwapHandles`), `append=true` and filter + `limit` deletes no.
+  When unsure, false. `OpenWorld = false` everywhere: the domain is the open model and local files.
+- **Read-only mode (`TEKLA_MCP_READ_ONLY`, `Core/ToolExposure` + `Server/ServerMode`) is enforced
+  twice.** `ToolRegistration` (Program.cs uses it instead of `WithToolsFromAssembly()`) registers
+  only `ReadOnly = true` methods, filtering on the attribute so an unannotated tool is never
+  created. And every write path calls `ServerMode.ThrowIfReadOnly` before its first side effect:
+  `ToolHelpers.ResolveTarget` (so every `Write(...)` wrapper, previews included), `tekla_run_csharp`
+  (every run — mutation detection is a syntax check, not a guarantee) and the tools that write
+  outside the wrappers (selection, view capture, the two file exports, `tekla_report_gap`). A new
+  tool with a side effect that does not go through a wrapper calls it too. An unrecognized value of
+  the variable turns read-only ON; keep that fail-closed.
+- **Toolsets (`TEKLA_MCP_TOOLSETS`) are per tool class** (`[Toolset]`, names in
+  `ToolExposure.AllToolsets`; `core` is always served). They only trim `tools/list` and are not a
+  safety feature. An unknown name stops the server with exit code 2 — never hide tools silently.
+- A reduced surface is announced in front of the server instructions (`ToolExposure.DescribeMode`)
+  and in `tekla_get_connection_info` (`serverReadOnly`, `serverToolsets`).
 
 ### Conventions added for the analytics tools
 
@@ -285,6 +328,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
 - **Tag origin.** Backends stamp created/modified objects with the `MCP_ORIGIN` UDA so agent
   output is findable and reversible. Keep this behavior.
 - **Cap batches.** Mutating-by-filter tools must pass a `limit` (default 200) for safety.
+- **No filter, no write.** A mutating-by-filter tool calls `ToolHelpers.RequireWriteScope(query)`
+  before it reads or writes: MCP clients drop arguments a tool does not declare, so a misspelled
+  filter leaves an empty query that would write to the first `limit` objects of the model.
+  `guidIn` is a scope; `EnumerateSource` selects those GUIDs directly (never a whole-model scan).
 - **Outcome + target on every write result** (`WriteResult`, `UdaOperationResult`,
   `UdaFileWriteResult`, `DrawingWriteResult`, `ModelFileOperationResult`; `ScriptResult` gets the
   target via `ToolHelpers.ResolveTarget`). Every mutating
@@ -292,8 +339,8 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   optional `expectedModelPath` parameter (`ToolHelpers.ExpectedModelPathDescription`): the
   wrapper resolves `ITeklaModelService.GetWriteTarget()` (model path + Tekla PID), refuses a
   mismatch BEFORE the backend is called, stamps `Target`, derives a missing `Outcome` from the
-  counters and turns `unknown` into `isError` with the full result in the text. A new write
-  tool that bypasses the wrapper is a bug.
+  counters and turns `unknown` into `isError` with the full result in the text. It also refuses
+  in read-only mode (`ServerMode`). A new write tool that bypasses the wrapper is a bug.
 - **Model lifecycle (`tekla_save_model` / `tekla_open_model`).** `ModelHandler.Open` discards
   unsaved changes — `OpenModel` re-checks `IsModelSaved()` immediately before the call and refuses
   unless `discardUnsavedChanges`; never weaken that, and never add an implicit save or close to
@@ -334,6 +381,10 @@ Write tools are now in scope (explicitly requested, with safety gates). Rules:
   Tekla canonicalizes `Part.Position` on commit (`TOP`+180° is stored as `BELOW`+0°), so an echo
   reports values the model does not agree with and the next read looks like a lost write.
   `ModifyParts`, `ModifyConnections` and `CreateConnections` all do this; keep it.
+  `ModifyParts` also compares EVERY written part with the request (`Core/PartWriteCheck` →
+  `WriteResult.Verification`, issue #22: `Modify()` returned true and Class stayed 14): a mismatch
+  is an error line (outcome `partial`), never retried; Position is not compared (canonicalized).
+  A preview capped at 20 says so through `PreviewTotal`/`PreviewTruncated`.
 - **Connection orientation goes through `ModifyConnections`.** A written `Connection.UpVector`
   only persists under `AUTODIR_NA`; other modes accept the write and silently recompute. The
   backend switches to NA whenever an explicit vector arrives without a caller-named mode.
@@ -459,6 +510,14 @@ behavior.
   used as a placed View's own identity. Drawing keys therefore need a public-property fallback;
   object/view indices are ephemeral and must never be described as durable. Prefer non-zero
   ID/ID2, and re-list after structural edits.
+- **Read a view's or the sheet's objects through `ReadOwnedObjects`, never `GetObjects()` directly.**
+  With drawing AutoFetch on, one `DetailMark` makes `GetObjects()` itself throw on Tekla 2021, and
+  the listing, edits and deletes of the whole drawing went empty (since v0.7.0). The helper reads
+  such an owner again without AutoFetch. A listing that fails is a tool error, never `[]`.
+- **Load a view attributes file into a NEW `View.ViewAttributes`** (`LoadViewAttributeFile`):
+  `LoadAttributes` rewrites the label object it holds in place, so anything "kept" by reference
+  from the same attributes is already the file's. Edits read their objects back after the commit
+  (`Select()` + map); the preview taken before the edit holds the old values.
 - **Keep coordinate spaces explicit.** `view` is target-view local, `model` is global model
   coordinates transformed through `DisplayCoordinateSystem`, and `sheet` is paper millimetres
   with the sheet target (`viewIndex=-1`, no view ID). View insertion/frame and dimension-line
@@ -503,11 +562,12 @@ drawing `Part` has no geometry of its own, and `Part.GetCenterLine` is a segment
 New files: `src/TeklaMcp.Core/Geometry/CurveMath.cs`, `src/TeklaMcp.Core/Models/PartCurveGeometry.cs`,
 `src/TeklaMcp.Mock/MockTeklaModelService.CurveGeometry.cs`, `src/TeklaMcp.Tekla/TeklaCurveGeometryService.cs`.
 
-### Conventions for VISUAL tools (`tekla_capture_view`, `tekla_render_schematic`)
+### Conventions for VISUAL tools (`tekla_capture_view`, `tekla_render_schematic`, `tekla_capture_drawing`)
 
-Agents were "blind": they found objects by indirect signs and never saw the model. Both tools return
-an MCP `ImageContentBlock` (the agent sees it) plus a JSON text block, built in
-`ModelVisualTools.Answer`; the image bytes travel in `RenderedImage` and are nulled out of the DTO
+Agents were "blind": they found objects by indirect signs and never saw the model. Every visual tool
+returns an MCP `ImageContentBlock` (the agent sees it) plus a JSON text block, built in
+`ModelVisualTools.Answer` (`tekla_capture_drawing` lives in `DrawingQueryTools.cs` so the drawings
+toolset carries it, and calls the same `Answer`); the image bytes travel in `RenderedImage` and are nulled out of the DTO
 before it is serialized.
 
 - **Never capture the screen.** `tekla_capture_view` copies pixels ONLY from Tekla's own view window
@@ -545,12 +605,25 @@ before it is serialized.
 - **Grids** (shared with `tekla_list_grids`/`tekla_resolve_point`): `GridMath` parses X/Y as spacings,
   Z as absolute levels, reads real `LabelX/Y/Z` and each grid's own `GetCoordinateSystem()`; labels
   repeat across grids, so `Resolve` prefers a pair from the same grid and says when it had to choose.
+- **The drawing capture is read-only — keep it so.** `tekla_capture_drawing` (issue #31) copies the
+  drawing editor's own window (an MDI child next to the model views, picked by
+  `DrawingCapturePlan.PickEditorWindow`: the drawing mark in its title, else elimination of model
+  views) and never zooms, scrolls or selects. The Open API has no drawing-editor zoom, so
+  `Core/Rendering/SheetLocator` finds the sheet from its edges on the picture (a rectangle of long
+  lines with the paper's aspect ratio; a missing edge only ON the window border). When the sheet is
+  not found the tool returns the whole window as `scope="visible"` with no coordinates and says so —
+  never guess a mapping, and never "fix" it by zooming the user's editor. Two rules keep it honest
+  (tests in `DrawingCaptureTests`): a missing edge only on the border, because a title-block frame
+  inside a zoomed-in sheet fits three lines at the wrong scale; and no edge line may run on past a
+  corner, because title-block cells seen up close matched A2's proportions live. Crop and pixel→sheet math is `DrawingCapturePlan`, shared with the mock.
+  Settling uses `TeklaWindowCapture.CaptureSettled` without a baseline (nothing was changed).
 
 New files: `src/TeklaMcp.Core/Rendering/*`, `src/TeklaMcp.Core/Geometry/GridMath.cs`,
 `src/TeklaMcp.Core/Models/SchematicModels.cs`, `src/TeklaMcp.Core/Models/ViewCaptureModels.cs`,
 `src/TeklaMcp.Mock/MockTeklaModelService.Visual.cs`, `src/TeklaMcp.Tekla/TeklaSchematicService.cs`,
 `src/TeklaMcp.Tekla/TeklaViewCaptureService.cs`, `src/TeklaMcp.Tekla/TeklaWindowCapture.cs`,
-`src/TeklaMcp.Server/Tools/ModelVisualTools.cs`.
+`src/TeklaMcp.Server/Tools/ModelVisualTools.cs`; for the drawing capture
+`src/TeklaMcp.Core/Models/DrawingCaptureModels.cs`, `src/TeklaMcp.Tekla/TeklaDrawingCaptureService.cs`.
 
 ### Conventions for the SCRIPT escape hatch (`tekla_run_csharp`)
 
@@ -581,13 +654,21 @@ dedicated tool exists. Rules for maintaining it:
   because it never executes, and returns the source SHA-256 + detected mutating members for
   approval. `tekla_run_csharp` binds a run to that approval: `ScriptApprovalGate` (tool layer,
   before the backend) requires `expectedSha256` when `allowMutations=true` and rejects any
-  mismatch, read-only runs included — keep it in front of every execution path. The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
+  mismatch, read-only runs included — keep it in front of every execution path. The hash is over
+  `ScriptEngine.NormalizeForHash` (LF line endings, no trailing whitespace — issue #40); a
+  successful check also returns a `checkId` (`ScriptCheckStore`, in memory, a few hours) that
+  `tekla_run_csharp` runs instead of re-sent code, still through the same gate. The policy's one
+  reflection exception is `x.GetType().Name`/`.FullName` (`IsTypeNameRead`). The mock NEVER executes; only the net48 backend runs scripts. `Executed` and
   `ExecutionAttempted` become true as soon as the live worker starts, including failure/timeout.
   Never throw — report failures and partial-mutation warnings in the DTO.
 - **Safety gates live in `ScriptPolicy`** (syntax-level whitelist/banlist + mutation detection).
   A name belongs in `MutatingMembers` only if a FALSE POSITIVE is unlikely: bare `Split` was
   removed because it only ever fired on `string.Split` while the real target, `Operation.Split`,
-  is already caught by the `Operation` token — do not re-add it. When a banned identifier is also
+  is already caught by the `Operation` token — do not re-add it. The `Operation` token itself has
+  ONE exception (issue #23): a direct call `[Namespace.]Operation.IsNumberingUpToDate(All)/
+  IsNumberingAllowed(...)` is read-only (`ReadOnlyOperationMembers`); a method group, alias or
+  `using static` keeps the whole type gated. Add a member there only if Tekla documents it as a
+  pure query. When a banned identifier is also
   DECLARED by the script (a local function named `Process`), the violation message says "rename
   your declaration" rather than accusing the script of process access; the ban itself still
   applies, because a syntax-only check cannot tell the two apart once the name is in scope.
@@ -664,19 +745,23 @@ Add tests when you touch `Core`/`Mock`/`Scripting` logic (keep the project `net8
 ```bash
 dotnet build src/TeklaMcp.Server -c Release
 dotnet run --project tests/TeklaMcp.Smoke -c Release -- \
-  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 116
+  src/TeklaMcp.Server/bin/Release/net8.0/TeklaMcp.Server.dll 120
 ```
 It is what CI and the release workflow run after the unit tests, and it asserts EXACT values:
 
 - **tool count** = the second argument, hard-coded in `.github/workflows/ci.yml` AND
-  `.github/workflows/release.yml`. Adding/removing a tool means changing both (and the README
-  count) in the same change.
+  `.github/workflows/release.yml`. Adding/removing a tool means changing both (and the counts in
+  the READMEs and `docs/`, §4 step 5) in the same change.
 - **server version** = the string hard-coded in `tests/TeklaMcp.Smoke/Program.cs`. A version bump
   touches three places: `<Version>` in `Directory.Build.props`, the smoke's version check, and
   the `?? "x.y.z"` fallback in `src/TeklaMcp.Server/Program.cs`.
 - plus: server name `tekla-mcp`, non-empty server instructions, no duplicate names, a few
   required tools with descriptions/schemas, `tekla_get_connection_info` reporting the server
   identity, and `tekla_run_csharp` refusing a mutating run without `expectedSha256`.
+- **annotations**: every tool declares its hints (§4), and a few spot checks pin the classification.
+- two more launches: `TEKLA_MCP_READ_ONLY=1` must serve exactly the `readOnlyHint=true` tools of
+  the default listing and refuse write calls; `TEKLA_MCP_TOOLSETS=drawings` must serve `core` +
+  drawings only. Neither count is an argument — they follow from the annotations.
 
 **Compile check of every Tekla version (any OS):** CI builds `TeklaMcp.sln` once per
 `TeklaVersion` in the matrix (2021.0.0, 2022.0.10715, 2023.0.1, 2024.0.4, 2025.0.0, 2026.0.3 —

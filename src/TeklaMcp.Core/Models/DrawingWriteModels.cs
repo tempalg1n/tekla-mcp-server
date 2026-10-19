@@ -72,6 +72,12 @@ public sealed class DrawingViewSpec
     public string MarkAttributeFile { get; set; } = "";
     public string Name { get; set; } = "";
     public double? Scale { get; set; }
+    /// <summary>
+    /// What <see cref="InsertionPoint"/> means (issue #33): origin (default — where the MODEL
+    /// origin lands on the sheet), frame_lower_left or frame_center (where the view FRAME goes;
+    /// the view is moved after the insert, once Tekla knows the frame with its margins).
+    /// </summary>
+    public string PlaceBy { get; set; } = "origin";
 }
 
 /// <summary>Editable properties of one active-drawing view.</summary>
@@ -90,6 +96,44 @@ public sealed class DrawingViewModification
     public double? RotateZDegrees { get; set; }
     public double? RotateOnDrawingPlaneDegrees { get; set; }
     public bool Delete { get; set; }
+    /// <summary>
+    /// A saved view attributes file to load (issue #28), used verbatim (a leading space is part
+    /// of the name). It brings its own part and neighbour-part filters, but also scale, view
+    /// size, the label and the name, so the Keep* flags put those back.
+    /// </summary>
+    public string? AttributeFile { get; set; }
+    public bool KeepScale { get; set; } = true;
+    public bool KeepRestrictionBox { get; set; } = true;
+    public bool KeepOrigin { get; set; } = true;
+    /// <summary>Keep the view label (TagsAttributes and label positions) — the file replaces it.</summary>
+    public bool KeepLabel { get; set; } = true;
+    /// <summary>Keep the view Name — the file replaces it.</summary>
+    public bool KeepName { get; set; } = true;
+    /// <summary>
+    /// With a new Scale: move each leader-line mark's text so its paper distance to the leader
+    /// start stays the same (issue #39). Dimension lines keep their paper offset by themselves.
+    /// </summary>
+    public bool KeepMarkOffsets { get; set; } = true;
+    /// <summary>
+    /// New view label text (issue #35): replaces tag A1 with this text. Views created or reloaded
+    /// through the API often get an empty label.
+    /// </summary>
+    public string? LabelText { get; set; }
+    /// <summary>Label font name; default = the font of the current label text, else Arial.</summary>
+    public string? LabelFont { get; set; }
+    /// <summary>Label text height, paper mm (default 3.5 or the current label's).</summary>
+    public double? LabelHeight { get; set; }
+    /// <summary>top or bottom.</summary>
+    public string? LabelVertical { get; set; }
+    /// <summary>centered_by_frame, centered_by_restriction_box, left_by_frame, right_by_frame, left_by_restriction_box, right_by_restriction_box.</summary>
+    public string? LabelHorizontal { get; set; }
+    /// <summary>With LabelText: empty tags A2–A5 so only the new text shows (default true).</summary>
+    public bool ClearOtherTags { get; set; } = true;
+    /// <summary>
+    /// With a new Name: also rename the section/detail mark (in any view of the drawing) whose
+    /// mark name equals the view's old name, so mark and view agree.
+    /// </summary>
+    public bool RenameMark { get; set; }
 }
 
 /// <summary>
@@ -101,7 +145,7 @@ public sealed class DrawingObjectSpec
     /// <summary>text, line, rectangle, circle, arc, polyline, polygon, cloud, dimension or mark.</summary>
     [Description("Object kind: text, line, rectangle, circle, arc, polyline, polygon, cloud, " +
                  "straight_dimension, angle_dimension, radius_dimension, curved_radial, " +
-                 "curved_orthogonal, mark, level_mark, or symbol.")]
+                 "curved_orthogonal, mark, level_mark, detail_mark, section_mark, or symbol.")]
     public string Kind { get; set; } = "";
     [Description("Ephemeral target view index; use -1 only for the drawing sheet.")]
     public int ViewIndex { get; set; }
@@ -115,9 +159,10 @@ public sealed class DrawingObjectSpec
     /// </summary>
     [Description("view, model, or sheet. sheet requires ViewIndex=-1.")]
     public string CoordinateSpace { get; set; } = "view";
-    [Description("Defining points in CoordinateSpace.")]
+    [Description("Defining points in CoordinateSpace. radius_dimension: arc start, a point " +
+                 "between, arc end (either direction; the server orders them for Tekla).")]
     public List<Point3D> Points { get; set; } = new List<Point3D>();
-    [Description("Text contents for a text object.")]
+    [Description("Text contents for a text object; the mark name for detail_mark / section_mark.")]
     public string Text { get; set; } = "";
     [Description("Represented model GUID for a mark.")]
     public string ModelGuid { get; set; } = "";
@@ -141,8 +186,22 @@ public sealed class DrawingObjectSpec
     public double? AngleDegrees { get; set; }
     [Description("Dimension up direction in view coordinates.")]
     public Point3D? UpDirection { get; set; }
-    [Description("Dimension line distance in paper millimetres.")]
+    [Description("Dimension line distance in paper millimetres (converted to view units with " +
+                 "the view scale where Tekla expects them). Straight dimensions: measured from " +
+                 "the outermost point along UpDirection.")]
     public double? Distance { get; set; }
+    [Description("Straight dimensions: 'fixed' keeps the line exactly at Distance; 'free' lets Tekla move " +
+                 "it away from marks (it then does not keep the offset). Marks: leader_line (needs LeaderStart), " +
+                 "base_line / along_line (LeaderStart → LineEnd is the line) or point. Empty = default.")]
+    public string? Placing { get; set; }
+    [Description("Marks: where the leader line starts (a point on the VISIBLE part), in CoordinateSpace.")]
+    public Point3D? LeaderStart { get; set; }
+    [Description("Marks with base_line / along_line placing: the line's end point, in CoordinateSpace.")]
+    public Point3D? LineEnd { get; set; }
+    [Description("Marks: replace the content with this text.")]
+    public string? ContentText { get; set; }
+    [Description("Marks: copy the content of this existing mark ('id:id2' from tekla_list_drawing_objects).")]
+    public string? CopyContentFromObjectId { get; set; }
 }
 
 /// <summary>Batch edit/action over active-drawing objects selected by a query.</summary>
@@ -153,6 +212,12 @@ public sealed class DrawingObjectModification
     /// <summary>drawing, view, show_drawing, show_view, or null to keep.</summary>
     public string? Visibility { get; set; }
     public string? AttributeFile { get; set; }
+    /// <summary>Marks only (issue #37): new insertion point (object/view coordinates).</summary>
+    public Point3D? InsertionPoint { get; set; }
+    /// <summary>Marks only: put the mark on a leader line starting here (object/view coordinates).</summary>
+    public Point3D? LeaderStart { get; set; }
+    /// <summary>Marks only: replace the content with this text.</summary>
+    public string? ContentText { get; set; }
     public bool Delete { get; set; }
 }
 
@@ -176,6 +241,12 @@ public sealed class DrawingWriteResult
     public List<DrawingViewInfo> ViewPreview { get; set; } = new List<DrawingViewInfo>();
     public List<DrawingObjectInfo> ObjectPreview { get; set; } = new List<DrawingObjectInfo>();
     public List<string> OutputFiles { get; set; } = new List<string>();
+    /// <summary>
+    /// False when this write was committed to the OPEN drawing but not saved (issue #41) —
+    /// <c>CommitChanges</c> does not save; tekla_save_drawing does. True after a save. Null
+    /// when the write did not touch the open drawing.
+    /// </summary>
+    public bool? DrawingSaved { get; set; }
     public List<string> Errors { get; set; } = new List<string>();
     /// <summary>Non-fatal warnings, including possible partial changes after a failed commit.</summary>
     public List<string> Warnings { get; set; } = new List<string>();

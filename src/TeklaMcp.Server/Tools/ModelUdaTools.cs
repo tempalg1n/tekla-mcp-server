@@ -11,9 +11,10 @@ namespace TeklaMcp.Server.Tools;
 /// Tools for reading and writing user-defined attributes (UDA).
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelUdaTools
 {
-    [McpServerTool(Name = "tekla_get_object_udas")]
+    [McpServerTool(Name = "tekla_get_object_udas", ReadOnly = true, OpenWorld = false)]
     [Description("Read selected UDA fields from one object by GUID. " +
                  "Pass a comma/semicolon/newline separated list, e.g. 'USER_FIELD_1;USER_PHASE'.")]
     public static ObjectUdaResult GetObjectUdas(
@@ -22,7 +23,7 @@ public static class ModelUdaTools
         [Description("UDA names separated by comma/semicolon/newline.")] string udaNames)
         => model.GetObjectUdas(guid, ParseList(udaNames));
 
-    [McpServerTool(Name = "tekla_set_object_udas")]
+    [McpServerTool(Name = "tekla_set_object_udas", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Set UDA fields on one object by GUID. " +
                  "Use key/value pairs like 'USER_FIELD_1=ABC;USER_PHASE=KMD'. " +
                  "By default this runs in preview mode (apply=false).")]
@@ -35,7 +36,7 @@ public static class ModelUdaTools
         => ToolHelpers.Write(model, expectedModelPath,
             () => model.SetObjectUdas(guid, ParseKeyValuePairs(updates), apply));
 
-    [McpServerTool(Name = "tekla_set_udas_by_filter")]
+    [McpServerTool(Name = "tekla_set_udas_by_filter", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Set UDA fields on objects matching filters. " +
                  "Use key/value pairs like 'USER_FIELD_1=ABC;USER_PHASE=KMD'. " +
                  "By default this runs in preview mode (apply=false).")]
@@ -50,18 +51,19 @@ public static class ModelUdaTools
         [Description("Safety limit on number of matched objects. Default 200.")] int limit = 200,
         [Description("Safety switch: set true to apply changes. Default false = preview only.")] bool apply = false,
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
-        => ToolHelpers.Write(model, expectedModelPath, () => model.SetUdas(
-            new ObjectQuery
+        => ToolHelpers.Write(model, expectedModelPath, () =>
+        {
+            var query = new ObjectQuery
             {
                 Type = type,
                 Class = @class,
                 Profile = profile,
                 Material = material,
                 NameContains = nameContains,
-            },
-            ParseKeyValuePairs(updates),
-            apply,
-            limit));
+            };
+            ToolHelpers.RequireWriteScope(query);
+            return model.SetUdas(query, ParseKeyValuePairs(updates), apply, limit);
+        });
 
     private static IReadOnlyList<string> ParseList(string raw)
     {

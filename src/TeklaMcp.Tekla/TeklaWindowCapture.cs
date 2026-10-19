@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Tekla;
@@ -27,6 +28,13 @@ namespace TeklaMcp.Tekla;
 ///
 /// Never replace this with a screen copy (BitBlt/CopyFromScreen of the desktop): the same probe
 /// captured an overlapping Explorer window listing the user's private files instead of the model.
+///
+/// The drawing editor (<c>tekla_capture_drawing</c>, probed live on Tekla 2021, 2026-10-16) is one
+/// more MDI child of the same <c>MDIClient</c>: an <c>AfxFrameOrView140</c> titled with the drawing
+/// type letter and mark ("G   [268]") whose only child, titled "View_10 window_1", draws the sheet
+/// (GDI: <c>PrintWindow</c> returns it with or without <c>PW_RENDERFULLCONTENT</c>, ~40 ms for
+/// 2523×1208). Its window rectangle includes a 2-px sunken border — <see cref="ClientArea"/> cuts it
+/// off before the sheet is located. Model views stay open behind it as further MDI children.
 /// </summary>
 internal static class TeklaWindowCapture
 {
@@ -193,6 +201,94 @@ internal static class TeklaWindowCapture
             }
             return bitmap;
         }
+    }
+
+    /// <summary>
+    /// Capture until Tekla has finished redrawing: two identical frames in a row. With a
+    /// <paramref name="baseline"/> (the frame before a change) the stable frame must also differ
+    /// from it — or, if the picture never changes, have stayed the same for ~1 s. Gives up after
+    /// <paramref name="budgetMs"/> (300…10 000) and keeps the last frame. Caller disposes.
+    /// </summary>
+    public static Bitmap? CaptureSettled(
+        IntPtr surface, long? baseline, int budgetMs, int firstDelayMs,
+        out bool settled, out bool differsFromBaseline, out string error)
+    {
+        settled = false;
+        differsFromBaseline = false;
+        budgetMs = ClampSettleBudget(budgetMs);
+        var clock = Stopwatch.StartNew();
+        if (firstDelayMs > 0) Thread.Sleep(firstDelayMs);
+        Bitmap? last = null;
+        long? lastHash = null;
+        while (true)
+        {
+            var frame = Capture(surface, out error);
+            if (frame == null)
+            {
+                last?.Dispose();
+                return null;
+            }
+            var hash = Fingerprint(frame, out _);
+            if (baseline.HasValue && hash != baseline.Value) differsFromBaseline = true;
+            var stable = lastHash.HasValue && hash == lastHash.Value;
+            last?.Dispose();
+            last = frame;
+            lastHash = hash;
+
+            if (stable && (differsFromBaseline || !baseline.HasValue || clock.ElapsedMilliseconds > 1000))
+            {
+                settled = true;
+                return last;
+            }
+            if (clock.ElapsedMilliseconds >= budgetMs) return last;
+            Thread.Sleep(150);
+        }
+    }
+
+    public static int ClampSettleBudget(int budgetMs) => Math.Max(300, Math.Min(budgetMs, 10000));
+
+    /// <summary>
+    /// The client area of <paramref name="hwnd"/> relative to its window rectangle (what
+    /// <see cref="Capture"/> copies): the window minus its border. Empty when the window is gone.
+    /// </summary>
+    public static Rectangle ClientArea(IntPtr hwnd)
+    {
+        using (DpiScope.PerMonitor())
+        {
+            if (!GetWindowRect(hwnd, out var window) || !GetClientRect(hwnd, out var client)) return Rectangle.Empty;
+            var origin = new POINT();
+            if (!ClientToScreen(hwnd, ref origin)) return Rectangle.Empty;
+            return new Rectangle(origin.X - window.Left, origin.Y - window.Top,
+                client.Right - client.Left, client.Bottom - client.Top);
+        }
+    }
+
+    /// <summary>Pixels as 0xRRGGBB, row-major (for <c>SheetLocator</c>).</summary>
+    public static int[] ToRgb(Bitmap bitmap)
+    {
+        var width = bitmap.Width;
+        var height = bitmap.Height;
+        var result = new int[width * height];
+        var data = bitmap.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+        try
+        {
+            var stride = Math.Abs(data.Stride);
+            var row = new byte[stride];
+            for (var y = 0; y < height; y++)
+            {
+                Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), row, 0, stride);
+                for (var x = 0; x < width; x++)
+                {
+                    var i = x * 3;
+                    result[y * width + x] = (row[i + 2] << 16) | (row[i + 1] << 8) | row[i];
+                }
+            }
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+        return result;
     }
 
     /// <summary>Cheap fingerprint (sampled pixels) to tell whether Tekla finished redrawing.</summary>
@@ -407,7 +503,20 @@ internal static class TeklaWindowCapture
         public int Bottom;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
     private delegate bool EnumWindowsProc(IntPtr handle, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);

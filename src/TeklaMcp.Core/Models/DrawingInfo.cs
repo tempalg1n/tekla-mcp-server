@@ -9,6 +9,11 @@ public sealed class DrawingStatusInfo
     public bool Connected { get; set; }
     public bool AnyDrawingOpen { get; set; }
     public DrawingInfo? ActiveDrawing { get; set; }
+    /// <summary>
+    /// Writes this server committed to the open drawing since it was last saved or closed
+    /// (issue #41). Edits made by hand in Tekla are not counted.
+    /// </summary>
+    public int UnsavedMcpWrites { get; set; }
     public string Backend { get; set; } = "";
     public string? Message { get; set; }
 }
@@ -98,6 +103,14 @@ public sealed class DrawingViewInfo
     public Point3D? FrameOrigin { get; set; }
     public double Width { get; set; }
     public double Height { get; set; }
+    /// <summary>
+    /// The view frame on the sheet, paper mm (lower-left / upper-right). In a create preview it
+    /// is an ESTIMATE from the restriction box and scale, without Tekla's frame margins.
+    /// </summary>
+    public Point3D? FrameMin { get; set; }
+    public Point3D? FrameMax { get; set; }
+    /// <summary>The view label's text (tags A1–A5, unformatted, " | " between tags); "" = empty label.</summary>
+    public string? LabelText { get; set; }
     public double? Scale { get; set; }
     public Point3D? RestrictionMin { get; set; }
     public Point3D? RestrictionMax { get; set; }
@@ -164,6 +177,77 @@ public sealed class DrawingObjectInfo
     public Point3D? BoundingMax { get; set; }
     public Dictionary<string, string> Udas { get; set; } =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Straight dimension sets (issues #26, #38): the distance of the dimension line as Tekla
+    /// reports it — view units (model mm) at the view's CURRENT scale, so it doubles from 1:5 to
+    /// 1:10 although the line keeps its place on paper. Do not "correct" it after a rescale.
+    /// </summary>
+    public double? DimensionDistance { get; set; }
+
+    /// <summary>The same distance in paper mm (DimensionDistance / view scale) — the tools' unit.</summary>
+    public double? DimensionDistancePaperMm { get; set; }
+
+    /// <summary>Straight dimension sets: the direction from the points to the dimension line (view coordinates).</summary>
+    public Point3D? UpDirection { get; set; }
+
+    /// <summary>Straight dimension sets: Fixed (kept at the distance) or Free (Tekla may move it).</summary>
+    public string? DimensionPlacing { get; set; }
+
+    /// <summary>
+    /// Parts and bolts with includeModelGeometry (issue #38): the model object's geometry in the
+    /// view's DISPLAY coordinates (the coordinateSpace=view of the drawing tools). Null otherwise.
+    /// </summary>
+    public DrawingModelGeometry? ModelGeometry { get; set; }
+
+    /// <summary>
+    /// Marks only (issue #32): the content elements in order — kind "property" (Name = the
+    /// property, e.g. ASSEMBLY_POS, Value = what it shows now), "text" (fixed text) or the element
+    /// type. Null for other objects. <see cref="Text"/> holds the whole unformatted mark text.
+    /// </summary>
+    public List<MarkContentElement>? MarkContent { get; set; }
+
+    /// <summary>Marks only: true when the mark shows nothing (blank unformatted text).</summary>
+    public bool? IsEmptyMark { get; set; }
+
+    /// <summary>
+    /// Marks only: the drawing type of the model object the mark belongs to (Part, Bolt, …);
+    /// its model GUID/ID are in <see cref="ModelGuid"/>/<see cref="ModelId"/>.
+    /// </summary>
+    public string? RelatedObjectType { get; set; }
+}
+
+/// <summary>A drawing part's or bolt's model geometry in view display coordinates (issue #38).</summary>
+public sealed class DrawingModelGeometry
+{
+    public string Name { get; set; } = "";
+    public string Profile { get; set; } = "";
+    public string? AssemblyPos { get; set; }
+
+    /// <summary>Box in view display coordinates: x/y on the view, z = depth (+z toward the viewer).</summary>
+    public Point3D? Min { get; set; }
+    public Point3D? Max { get; set; }
+
+    /// <summary>Bolts: each bolt position in view display coordinates (filtered by any z range).</summary>
+    public List<Point3D>? BoltPositions { get; set; }
+    public string? BoltSize { get; set; }
+
+    /// <summary>solid vertices / bolt positions — where the box comes from.</summary>
+    public string Source { get; set; } = "";
+    public string? Message { get; set; }
+}
+
+/// <summary>One element of a mark's content.</summary>
+public sealed class MarkContentElement
+{
+    /// <summary>property, text, or the element's type name (symbol, new line, …).</summary>
+    public string Kind { get; set; } = "";
+
+    /// <summary>The property name for kind=property.</summary>
+    public string Name { get; set; } = "";
+
+    /// <summary>What the element shows now.</summary>
+    public string Value { get; set; } = "";
 }
 
 /// <summary>Filter for objects in the currently active drawing.</summary>
@@ -176,11 +260,29 @@ public sealed class DrawingObjectQuery
     public int? ViewId { get; set; }
     public int? ViewId2 { get; set; }
     public string? ModelGuid { get; set; }
+    /// <summary>
+    /// The represented model object's ID. Drawing objects carry only the model ID (no GUID) on
+    /// Tekla 2021, so a ModelGuid filter is resolved to this ID before the drawing is searched.
+    /// </summary>
+    public int? ModelId { get; set; }
     public string? TextContains { get; set; }
     public bool UseSelection { get; set; }
     public bool Recursive { get; set; } = true;
     public bool IncludeGeometry { get; set; } = true;
     public bool IncludeUdas { get; set; }
+    /// <summary>Only marks that show nothing (issue #32: Tekla leaves empty marks behind).</summary>
+    public bool EmptyMarksOnly { get; set; }
+    /// <summary>Read parts' and bolts' model geometry into the view (issue #38) — a solid read per part.</summary>
+    public bool IncludeModelGeometry { get; set; }
+    /// <summary>With model geometry: depth range (view z) the object must overlap; bolts keep only positions inside.</summary>
+    public double? ZMin { get; set; }
+    public double? ZMax { get; set; }
+    /// <summary>With model geometry: x/y box (view coordinates) the object must overlap.</summary>
+    public Point3D? RegionMin { get; set; }
+    public Point3D? RegionMax { get; set; }
+    /// <summary>With model geometry: substrings of the model object's name / profile.</summary>
+    public string? NameContains { get; set; }
+    public string? ProfileContains { get; set; }
 }
 
 /// <summary>Result of selecting objects in the active drawing editor.</summary>

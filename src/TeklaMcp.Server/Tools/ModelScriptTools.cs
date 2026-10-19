@@ -14,9 +14,10 @@ namespace TeklaMcp.Server.Tools;
 /// description obliges the agent to get the user's explicit go-ahead before setting it.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Scripting)]
 public static class ModelScriptTools
 {
-    [McpServerTool(Name = "tekla_run_csharp")]
+    [McpServerTool(Name = "tekla_run_csharp", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description(
         "ESCAPE HATCH — run a short C# script against the live Tekla model with the full Tekla Open API. " +
         "Use ONLY when no dedicated tekla_* tool covers the need; prefer dedicated tools (they are faster and safer). " +
@@ -25,7 +26,9 @@ public static class ModelScriptTools
         "RECOMMENDED WORKFLOW: (1) verify type/member signatures with tekla_search_api / tekla_get_api_doc — do not " +
         "guess them; (2) validate the exact source with tekla_check_csharp; (3) run it. For a mutation, show the user the " +
         "exact script plus the check result's codeSha256, and after approval pass that hash as expectedSha256 — a " +
-        "mutating run without it, or with a hash that no longer matches the source, is rejected unexecuted.\n" +
+        "mutating run without it, or with a hash that no longer matches the source, is rejected unexecuted. " +
+        "Instead of sending the source again, pass the check's checkId: the server runs exactly the checked text. " +
+        "The hash ignores line endings and trailing whitespace; everything else counts.\n" +
         "\n" +
         "SCRIPT ENVIRONMENT:\n" +
         "- C# top-level statements (no class/Main needed). Pre-imported namespaces: System, System.Collections.Generic, " +
@@ -59,7 +62,8 @@ public static class ModelScriptTools
         "with `foreach (var o in conn.GetSecondaryObjects()) { var mo = o as ModelObject; ... }`. " +
         "`Part.GetComponents()` IS an enumerator (use MoveNext).\n" +
         "- Reflection and `dynamic` are banned; the API is fully typed, so cast to the concrete type " +
-        "(`if (e.Current is Beam b)`, `var c = mo as Connection;`) and confirm members with tekla_search_api.\n" +
+        "(`if (e.Current is Beam b)`, `var c = mo as Connection;`) and confirm members with tekla_search_api. " +
+        "Only `x.GetType().Name` / `.FullName` is allowed, to label output.\n" +
         "\n" +
         "EXAMPLE (count beams longer than 12 m):\n" +
         "var model = new Model();\n" +
@@ -90,7 +94,7 @@ public static class ModelScriptTools
         "(tekla_group_weight_by / tekla_sum_weight with maxObjects + cursor).")]
     public static ScriptResult RunCsharp(
         ITeklaModelService model,
-        [Description("The C# script (top-level statements; last expression = return value).")] string code,
+        [Description("The C# script (top-level statements; last expression = return value). Omit it when passing checkId.")] string? code = null,
         [Description("Allow mutating Tekla API calls. Set true ONLY after the user explicitly approved this " +
                      "specific change in this conversation (show them the script first). Prefer the dedicated " +
                      "write tools (preview-by-default).")]
@@ -102,9 +106,37 @@ public static class ModelScriptTools
                      "and the run is rejected without compiling or executing.")]
         string? expectedSha256 = null,
         [Description(ToolHelpers.ExpectedModelPathDescription + " Checked before the script is compiled or run.")]
-        string? expectedModelPath = null)
+        string? expectedModelPath = null,
+        [Description("checkId from tekla_check_csharp: run exactly the checked text instead of sending code. " +
+                     "expectedSha256 still binds a mutating run to the approved version.")]
+        string? checkId = null)
     {
+        if (!string.IsNullOrWhiteSpace(checkId))
+        {
+            var checkedCode = CheckedScripts.Get(checkId);
+            if (checkedCode == null)
+                return CheckIdProblem(code ?? "",
+                    "checkId '" + checkId!.Trim() + "' is unknown or expired (checks live in server memory for " +
+                    "a few hours and are lost on a restart). Check the script again with tekla_check_csharp.");
+            if (!string.IsNullOrEmpty(code) &&
+                ScriptEngine.ComputeCodeSha256(code!) != ScriptEngine.ComputeCodeSha256(checkedCode))
+                return CheckIdProblem(code!,
+                    "code and checkId name different scripts. Pass only checkId to run the checked text.");
+            code = checkedCode;
+        }
         code ??= "";
+        // Read-only mode refuses every run, not only allowMutations=true: whether a script mutates is
+        // decided by a syntax-level policy, which is not a guarantee read-only mode can stand on.
+        if (ServerMode.ReadOnly)
+            return new ScriptResult
+            {
+                Success = false,
+                Stage = "policy",
+                CodeSha256 = ScriptEngine.ComputeCodeSha256(code),
+                Error = ToolExposure.ReadOnlyRefusal("tekla_run_csharp"),
+                Guidance = "Nothing was compiled or executed. tekla_check_csharp still compiles a script without running it.",
+            };
+
         var rejected = ScriptApprovalGate.Check(code, allowMutations, expectedSha256);
         if (rejected != null) return rejected;
 
@@ -136,7 +168,7 @@ public static class ModelScriptTools
         return result;
     }
 
-    [McpServerTool(Name = "tekla_check_csharp")]
+    [McpServerTool(Name = "tekla_check_csharp", ReadOnly = true, OpenWorld = false)]
     [Description(
         "COMPILE-ONLY safety check for the exact C# source intended for tekla_run_csharp. Applies the same banned-API " +
         "policy, resolves all installed Tekla.Structures*.dll references (including Drawing/Dialog when present), and " +
@@ -149,9 +181,31 @@ public static class ModelScriptTools
     public static ScriptResult CheckCsharp(
         ITeklaModelService model,
         [Description("The exact C# script to policy-check and compile without executing.")] string code)
-        => model.ExecuteScript(code ?? "", allowMutations: true, timeoutSeconds: 60, compileOnly: true);
+    {
+        var result = model.ExecuteScript(code ?? "", allowMutations: true, timeoutSeconds: 60, compileOnly: true);
+        // Only a script that passed the policy and compiled is worth running later by reference.
+        if (result.Compiled && result.PolicyViolations.Count == 0)
+            result.CheckId = CheckedScripts.Add(code ?? "");
+        return result;
+    }
 
-    [McpServerTool(Name = "tekla_search_api")]
+    /// <summary>Scripts that passed tekla_check_csharp, by checkId (issue #40).</summary>
+    private static readonly ScriptCheckStore CheckedScripts = new ScriptCheckStore();
+
+    private static ScriptResult CheckIdProblem(string code, string message)
+    {
+        var result = new ScriptResult
+        {
+            Success = false,
+            Stage = "policy",
+            CodeSha256 = ScriptEngine.ComputeCodeSha256(code),
+            Guidance = "Nothing was compiled or executed.",
+        };
+        result.PolicyViolations.Add(message);
+        return result;
+    }
+
+    [McpServerTool(Name = "tekla_search_api", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Search the local Tekla Open API reference by keywords (type names + member signature lines). " +
         "ALWAYS verify signatures here before writing a tekla_run_csharp script — do not guess API members. " +
@@ -165,7 +219,7 @@ public static class ModelScriptTools
         [Description("Max matching types to return (default 10, max 50).")] int limit = 10)
         => ApiReference.Search(query ?? "", limit, model.GetApiReferenceSource());
 
-    [McpServerTool(Name = "tekla_get_api_doc")]
+    [McpServerTool(Name = "tekla_get_api_doc", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Read the full local reference page for ONE Tekla Open API type: every constructor/property/method " +
         "signature with summaries (Markdown). Accepts a short name ('Beam') or a full name " +
@@ -176,7 +230,7 @@ public static class ModelScriptTools
         [Description("Truncate the page to this many characters (default 24000).")] int maxChars = 24_000)
         => ApiReference.GetTypeDoc(typeName ?? "", maxChars, model.GetApiReferenceSource());
 
-    [McpServerTool(Name = "tekla_get_api_reference_status")]
+    [McpServerTool(Name = "tekla_get_api_reference_status", ReadOnly = true, OpenWorld = false)]
     [Description("Check whether the offline Tekla Open API reference is available and return its " +
                  "resolved directory, origin (generated from the installed Tekla / configured / repository) " +
                  "or exact setup guidance. Call this before a scripting session — on the first call for a " +

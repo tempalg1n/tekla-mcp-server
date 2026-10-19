@@ -11,9 +11,10 @@ namespace TeklaMcp.Server.Tools;
 /// preview-by-default; opening another model is the most disruptive call in this server.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelLifecycleTools
 {
-    [McpServerTool(Name = "tekla_save_model")]
+    [McpServerTool(Name = "tekla_save_model", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Save the model open in Tekla (ModelHandler.Save; the comment lands in the save history, " +
                  "prefixed '[Tekla MCP]'). Preview unless apply=true — the preview says whether there are unsaved " +
                  "changes at all. Saving writes the model to disk for everyone who opens it: ask the user first.")]
@@ -24,7 +25,7 @@ public static class ModelLifecycleTools
         [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
         => ToolHelpers.Write(model, expectedModelPath, () => model.SaveModel(comment, apply));
 
-    [McpServerTool(Name = "tekla_open_model")]
+    [McpServerTool(Name = "tekla_open_model", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Switch Tekla to ANOTHER model (ModelHandler.Open). This CLOSES the model the user has open and " +
                  "Tekla DISCARDS its unsaved changes — so the call is refused while there are unsaved changes " +
                  "unless discardUnsavedChanges=true, which you may only pass after the user explicitly agreed to " +

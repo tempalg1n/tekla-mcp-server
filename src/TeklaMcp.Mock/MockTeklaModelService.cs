@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Mock;
@@ -80,6 +81,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
     public ConnectionInfo GetConnectionInfo() => new()
     {
         Connected = true,
+        ModelOpen = true,
         ModelName = _modelName,
         ModelPath = _modelPath,
         TeklaVersion = "2026 (mock)",
@@ -93,6 +95,36 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         ModelPath = _modelPath,
         Note = "Mock backend — no Tekla process.",
     };
+
+    public NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids)
+    {
+        // The mock never edits geometry behind its marks, so its numbering is always current.
+        var status = new NumberingStatus
+        {
+            Backend = BackendName,
+            ModelName = "MockModel",
+            ModelPath = "",
+            UpToDateAll = true,
+            Notes = { "Mock backend: numbering is always reported as up to date." },
+        };
+        var requested = (guids ?? new List<string>()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+        status.NotChecked = Math.Max(0, requested.Count - NumberingStatus.ObjectLimit);
+        foreach (var guid in requested.Take(NumberingStatus.ObjectLimit))
+        {
+            var obj = GetObjectByGuid(guid);
+            if (obj is null)
+            {
+                status.NotFound++;
+                status.Objects.Add(new NumberingObjectStatus { Guid = guid, Found = false });
+                continue;
+            }
+            status.Objects.Add(new NumberingObjectStatus
+            {
+                Guid = obj.Guid, Found = true, Type = obj.Type, UpToDate = true, AssemblyPos = obj.AssemblyPos,
+            });
+        }
+        return status;
+    }
 
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
@@ -703,6 +735,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         var result = new WriteResult { Operation = "modify", Applied = apply, Backend = BackendName };
         if (modifications == null || modifications.Count == 0) { result.Message = "No modifications provided."; return result; }
 
+        var check = new PartWriteCheck.Batch();
         foreach (var mod in modifications)
         {
             var obj = GetObjectByGuid(mod.Guid);
@@ -712,10 +745,16 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             if (result.Preview.Count < 20) result.Preview.Add(obj);
             if (!apply) continue;
 
-            if (mod.Profile != null) obj.Profile = mod.Profile;
-            if (mod.Material != null) obj.Material = mod.Material;
-            if (mod.Class != null) obj.Class = mod.Class;
-            if (mod.Name != null) obj.Name = mod.Name;
+            PartWriteCheck.ExpectedEnds(
+                mod,
+                obj.StartX.HasValue ? new Point3D(obj.StartX.Value, obj.StartY ?? 0, obj.StartZ ?? 0) : null,
+                obj.EndX.HasValue ? new Point3D(obj.EndX.Value, obj.EndY ?? 0, obj.EndZ ?? 0) : null,
+                out var expectedStart, out var expectedEnd);
+            // Blank fields are left alone, as in the live backend.
+            if (!string.IsNullOrWhiteSpace(mod.Profile)) obj.Profile = mod.Profile!;
+            if (!string.IsNullOrWhiteSpace(mod.Material)) obj.Material = mod.Material!;
+            if (!string.IsNullOrWhiteSpace(mod.Class)) obj.Class = mod.Class!;
+            if (!string.IsNullOrWhiteSpace(mod.Name)) obj.Name = mod.Name!;
             var position = ResolveMockPosition(mod.MatchPositionGuid, mod.Position, obj.Position);
             if (position != null) obj.Position = position;
             if (mod.SwapHandles) SwapEnds(obj);
@@ -724,7 +763,15 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             Recenter(obj);
             StampOrigin(obj.Guid, "mcp:modify");
             result.ModifiedCount++;
+            check.Add(mod, obj, expectedStart, expectedEnd);
         }
+        if (apply)
+        {
+            result.Verification = check.Build();
+            result.Errors.AddRange(check.Errors);
+        }
+        result.PreviewTotal = apply ? result.ModifiedCount : result.PlannedCount;
+        result.PreviewTruncated = result.Preview.Count < result.PreviewTotal;
         return result;
     }
 
@@ -931,6 +978,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             Connected = true,
             AnyDrawingOpen = active != null,
             ActiveDrawing = active,
+            UnsavedMcpWrites = active != null ? _drawingSaves.UnsavedWrites : 0,
             Backend = BackendName,
             Message = "Synthetic drawing data — no Tekla involved.",
         };
@@ -1075,7 +1123,29 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             rows = rows.Where(o => Eq(o.ModelGuid, query.ModelGuid));
         if (!string.IsNullOrWhiteSpace(query.TextContains))
             rows = rows.Where(o => Contains(o.Text, query.TextContains));
-        return Limit(rows.ToList(), limit);
+        if (query.EmptyMarksOnly)
+            rows = rows.Where(o => o.IsEmptyMark == true);
+        if (!query.IncludeModelGeometry) return Limit(rows.ToList(), limit);
+        // The mock's view coordinates are its model coordinates (issue #38 shape, not projection).
+        // Model-geometry filters run before the cap, as in the live backend (ViewGeometry.HasFilter).
+        var candidates = rows.ToList();
+        foreach (var row in candidates)
+        {
+            if (row.Type != "Part" && row.Type != "Bolt") continue;
+            var source = GetObjectByGuid(row.ModelGuid);
+            row.ModelGeometry = source == null
+                ? new DrawingModelGeometry { Message = "The model object was not found." }
+                : new DrawingModelGeometry
+                {
+                    Name = source.Name,
+                    Profile = source.Profile,
+                    AssemblyPos = source.AssemblyPos,
+                    Min = source.MinX.HasValue ? new Point3D(source.MinX.Value, source.MinY ?? 0, source.MinZ ?? 0) : null,
+                    Max = source.MaxX.HasValue ? new Point3D(source.MaxX.Value, source.MaxY ?? 0, source.MaxZ ?? 0) : null,
+                    Source = "mock bounding box",
+                };
+        }
+        return Limit(candidates.Where(row => ViewGeometry.Matches(row.ModelGeometry, query)).ToList(), limit);
     }
 
     public DrawingSelectionResult SelectDrawingObjects(DrawingObjectQuery query, int? limit = null)
@@ -1133,6 +1203,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         {
             _activeDrawingKey = null;
             result.ModifiedCount = 1;
+            result.DrawingSaved = save;
+            _drawingSaves.Reset();
         }
         return result;
     }
@@ -1152,6 +1224,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         {
             active.ModificationDate = DateTime.UtcNow;
             result.ModifiedCount = 1;
+            result.DrawingSaved = true;
+            _drawingSaves.Reset();
         }
         return result;
     }
@@ -1454,6 +1528,12 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     "Front/top/back/bottom/3D helpers do not support GA drawings; use ga_model.");
                 continue;
             }
+            var placeBy = ViewPlacement.Normalize(spec.PlaceBy);
+            if (placeBy == null)
+            {
+                result.Errors.Add("placeBy must be origin, frame_lower_left or frame_center.");
+                continue;
+            }
             var view = new DrawingViewInfo
             {
                 Index = baseViewCount + validSequence,
@@ -1467,13 +1547,49 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Scale = spec.Scale ?? 10,
                 ModelObjectCount = 12,
             };
+            if (spec.RestrictionMin != null && spec.RestrictionMax != null)
+            {
+                // The frame of a plan: the restriction box at the scale, plus a 15 mm margin.
+                var scale = view.Scale ?? 10;
+                view.FrameOrigin = new Point3D(spec.RestrictionMin.X / scale - 15, spec.RestrictionMin.Y / scale - 15, 0);
+                view.Width = (spec.RestrictionMax.X - spec.RestrictionMin.X) / scale + 30;
+                view.Height = (spec.RestrictionMax.Y - spec.RestrictionMin.Y) / scale + 30;
+            }
+            SetMockFrame(view);
+            if (placeBy != ViewPlacement.Origin)
+            {
+                view.Origin = ViewPlacement.OriginForFrame(
+                    placeBy, spec.InsertionPoint, view.Origin!, view.FrameMin!, view.FrameMax!);
+                SetMockFrame(view);
+            }
             validSequence++;
             result.ViewPreview.Add(view);
+            if ((kind == "section" || kind == "curved_section") && spec.Points != null && spec.Points.Count >= 2)
+                result.Message = Aggregation.Append(result.Message, SectionViews.Describe(
+                    spec.Points[0], spec.Points[spec.Points.Count - 1], spec.DepthUp ?? 0, spec.DepthDown ?? 0));
             if (!apply) continue;
             views.Add(view);
             result.CreatedCount++;
+            if (kind == "section" || kind == "curved_section" || kind == "detail")
+                result.ObjectPreview.Add(new DrawingObjectInfo
+                {
+                    Index = -1,
+                    ObjectId = 70000 + view.ViewId,
+                    Type = kind == "detail" ? "DetailMark" : kind == "curved_section" ? "CurvedSectionMark" : "SectionMark",
+                    ViewId = spec.SourceViewId ?? 0,
+                    ViewId2 = spec.SourceViewId2 ?? 0,
+                });
         }
+        _drawingSaves.Committed(result);
         return result;
+    }
+
+    private static void SetMockFrame(DrawingViewInfo view)
+    {
+        var origin = view.Origin ?? new Point3D();
+        var offset = view.FrameOrigin ?? new Point3D();
+        view.FrameMin = new Point3D(origin.X + offset.X, origin.Y + offset.Y, 0);
+        view.FrameMax = new Point3D(view.FrameMin.X + view.Width, view.FrameMin.Y + view.Height, 0);
     }
 
     public DrawingWriteResult ModifyDrawingViews(
@@ -1511,13 +1627,25 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 result.DeletedCount++;
                 continue;
             }
+            if (!string.IsNullOrWhiteSpace(mod.AttributeFile))
+            {
+                // The mock has no attribute files: scale, size and origin stay unless Keep* is off.
+                result.Warnings.Add("Mock backend: view attributes file '" + mod.AttributeFile +
+                                    "' is not evaluated; filters and model-object counts are unchanged.");
+                if (!mod.KeepScale) view.Scale = 1;
+            }
+            if (mod.LabelText != null) view.LabelText = mod.LabelText;
+            if (mod.RenameMark && mod.Name != null && mod.Name != view.Name)
+                result.Warnings.Add("Mock backend: no section or detail marks to rename.");
             if (mod.Name != null) view.Name = mod.Name;
             if (mod.Origin != null) view.Origin = mod.Origin;
             if (mod.Width.HasValue) view.Width = mod.Width.Value;
             if (mod.Height.HasValue) view.Height = mod.Height.Value;
             if (mod.Scale.HasValue) view.Scale = mod.Scale.Value;
+            SetMockFrame(view);
             result.ModifiedCount++;
         }
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1564,6 +1692,27 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 result.Errors.Add("sheet coordinates require viewIndex=-1 (the drawing sheet).");
                 continue;
             }
+            var points = (spec.Points ?? new List<Point3D>()).ToList();
+            if (Eq(spec.Kind, "radius_dimension") && points.Count >= 3)
+            {
+                // Same ordering as the live backend (issue #27); the mock's points stand for view space.
+                var ordered = DimensionMath.OrderArcClockwise(
+                    points[0], points[1], points[2], out var reversed);
+                if (ordered == null)
+                {
+                    result.Errors.Add(
+                        "radius_dimension needs three distinct points on an arc, not on a straight line.");
+                    continue;
+                }
+                if (reversed)
+                {
+                    points[0] = ordered[0];
+                    points[2] = ordered[2];
+                    result.Warnings.Add(
+                        "radius_dimension: points 1 and 3 were swapped so that Tekla's clockwise arc " +
+                        "from point 1 to point 3 passes through point 2.");
+                }
+            }
             var info = new DrawingObjectInfo
             {
                 Index = baseObjectCount + validSequence,
@@ -1576,7 +1725,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 Type = NormalizeDrawingObjectType(spec.Kind),
                 ModelGuid = spec.ModelGuid ?? "",
                 Text = spec.Text ?? "",
-                Points = (spec.Points ?? new List<Point3D>()).ToList(),
+                Points = points,
                 Radius = spec.Radius,
                 Bulge = spec.Bulge,
                 Udas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -1584,12 +1733,57 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                     ["MCP_ORIGIN"] = "mcp:create_drawing_object",
                 },
             };
+            if (info.Type == "StraightDimensionSet")
+            {
+                var paper = spec.Distance ?? 10;
+                info.DimensionDistancePaperMm = paper;
+                info.DimensionDistance = paper * (isSheet ? 1 : view!.Scale ?? 1);
+                info.UpDirection = spec.UpDirection ?? new Point3D(0, 1, 0);
+                info.DimensionPlacing = string.IsNullOrWhiteSpace(spec.Placing)
+                    ? "Free"
+                    : char.ToUpperInvariant(spec.Placing![0]) + spec.Placing.Substring(1).ToLowerInvariant();
+            }
+            if (info.Type == "Mark")
+            {
+                // A part mark showing the assembly position, like Tekla's default mark content.
+                var marked = GetObjectByGuid(spec.ModelGuid ?? "");
+                var mark = marked?.AssemblyPos ?? "";
+                info.MarkContent = new List<MarkContentElement>
+                {
+                    new MarkContentElement { Kind = "property", Name = "ASSEMBLY_POS", Value = mark },
+                };
+                if (!string.IsNullOrWhiteSpace(spec.CopyContentFromObjectId))
+                {
+                    var source = objects.FirstOrDefault(o => o.Type == "Mark" &&
+                        (o.ObjectId + ":" + o.ObjectId2 == spec.CopyContentFromObjectId!.Trim() ||
+                         o.ObjectId.ToString() == spec.CopyContentFromObjectId!.Trim()));
+                    if (source == null)
+                    {
+                        result.Errors.Add("No mark " + spec.CopyContentFromObjectId + " to copy the content from.");
+                        continue;
+                    }
+                    info.MarkContent = (source.MarkContent ?? new List<MarkContentElement>()).ToList();
+                    mark = source.Text;
+                }
+                if (!string.IsNullOrWhiteSpace(spec.ContentText))
+                {
+                    info.MarkContent = new List<MarkContentElement>
+                    {
+                        new MarkContentElement { Kind = "text", Value = spec.ContentText! },
+                    };
+                    mark = spec.ContentText!;
+                }
+                info.Text = mark;
+                info.IsEmptyMark = mark.Trim().Length == 0;
+                info.RelatedObjectType = marked == null ? null : "Part";
+            }
             validSequence++;
             result.ObjectPreview.Add(info);
             if (!apply) continue;
             objects.Add(info);
             result.CreatedCount++;
         }
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1606,7 +1800,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             modification.Text == null &&
             modification.MoveBy == null &&
             string.IsNullOrWhiteSpace(modification.Visibility) &&
-            string.IsNullOrWhiteSpace(modification.AttributeFile))
+            string.IsNullOrWhiteSpace(modification.AttributeFile) &&
+            modification.InsertionPoint == null && modification.LeaderStart == null &&
+            modification.ContentText == null)
         {
             result.Message = "No drawing-object changes were supplied.";
             return result;
@@ -1626,6 +1822,30 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
                 continue;
             }
             if (modification.Text != null && obj.Type == "Text") obj.Text = modification.Text;
+            if (modification.InsertionPoint != null || modification.LeaderStart != null ||
+                modification.ContentText != null)
+            {
+                if (obj.Type != "Mark")
+                {
+                    result.Errors.Add(obj.Type + " #" + obj.Index +
+                                      ": insertionPoint, leaderStart and contentText can only be changed on Mark objects.");
+                    continue;
+                }
+                if (modification.InsertionPoint != null)
+                {
+                    if (obj.Points.Count == 0) obj.Points.Add(modification.InsertionPoint);
+                    else obj.Points[0] = modification.InsertionPoint;
+                }
+                if (modification.ContentText != null)
+                {
+                    obj.Text = modification.ContentText;
+                    obj.MarkContent = new List<MarkContentElement>
+                    {
+                        new MarkContentElement { Kind = "text", Value = modification.ContentText },
+                    };
+                    obj.IsEmptyMark = modification.ContentText.Trim().Length == 0;
+                }
+            }
             if (modification.MoveBy != null)
             {
                 foreach (var p in obj.Points)
@@ -1641,6 +1861,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             result.ModifiedCount++;
         }
         ReindexMockDrawingObjects();
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1657,6 +1878,7 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         result.PlannedCount = targets.Count;
         result.ObjectPreview.AddRange(targets.Take(20));
         if (apply) result.ModifiedCount = targets.Count;
+        _drawingSaves.Committed(result);
         return result;
     }
 
@@ -1792,6 +2014,9 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
         return new string((value ?? "").Select(c => invalid.Contains(c) ? '_' : c).ToArray());
     }
 
+    /// <summary>Mock writes to the open drawing since its last save (issue #41), like the live backend.</summary>
+    private readonly DrawingSaveTracker _drawingSaves = new DrawingSaveTracker();
+
     private static DrawingWriteResult NewDrawingResult(string operation, bool apply) =>
         new DrawingWriteResult { Operation = operation, Applied = apply, Backend = BackendName };
 
@@ -1848,6 +2073,8 @@ public sealed partial class MockTeklaModelService : ITeklaModelService
             case "curved_radial": return "CurvedDimensionSetRadial";
             case "curved_orthogonal": return "CurvedDimensionSetOrthogonal";
             case "level_mark": return "LevelMark";
+            case "detail_mark": return "DetailMark";
+            case "section_mark": return "SectionMark";
         }
         if (value.Length == 0) return "";
         return char.ToUpperInvariant(value[0]) + value.Substring(1).ToLowerInvariant();

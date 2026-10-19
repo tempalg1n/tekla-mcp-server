@@ -80,6 +80,26 @@ internal static class ToolHelpers
             UseSelection = useSelection,
         };
 
+    /// <summary>
+    /// Refuses a write-by-filter that has no filter at all. MCP clients drop arguments a tool does
+    /// not declare, so a misspelled or unsupported filter left an empty query, and the write
+    /// applied to the first <c>limit</c> objects of the whole model — control points and
+    /// assemblies included (live Tekla 2021, a preview of tekla_set_udas_by_filter with guidIn).
+    /// </summary>
+    public static void RequireWriteScope(ObjectQuery query)
+    {
+        if (query.UseSelection || query.GuidIn.Count > 0 ||
+            !string.IsNullOrWhiteSpace(query.Type) || !string.IsNullOrWhiteSpace(query.Class) ||
+            !string.IsNullOrWhiteSpace(query.Profile) || !string.IsNullOrWhiteSpace(query.Material) ||
+            !string.IsNullOrWhiteSpace(query.NameContains) || !string.IsNullOrWhiteSpace(query.UdaName) ||
+            !string.IsNullOrWhiteSpace(query.AttributeName))
+            return;
+        throw new ModelContextProtocol.McpException(
+            "This write needs a scope: pass at least one of its filters (see the tool's parameters), or " +
+            "useSelection=true where the tool has it. Without one it would apply to the first `limit` objects " +
+            "of the whole model.");
+    }
+
     public static PartPosition? BuildPosition(
         string? plane,
         double? planeOffset,
@@ -124,9 +144,13 @@ internal static class ToolHelpers
         "call is refused before anything is written. Recommended whenever several Tekla instances or " +
         "models are in play.";
 
-    /// <summary>The model a write would go to now; throws (nothing written) on a mismatch.</summary>
+    /// <summary>
+    /// The model a write would go to now; throws (nothing written) on a mismatch — and in read-only
+    /// mode, which every Write(...) wrapper reaches through here before the backend is called.
+    /// </summary>
     public static WriteTarget ResolveTarget(ITeklaModelService model, string? expectedModelPath)
     {
+        ServerMode.ThrowIfReadOnly("this write (previews included)");
         var target = model.GetWriteTarget();
         if (!string.IsNullOrWhiteSpace(expectedModelPath) &&
             !ModelPaths.Same(expectedModelPath, target.ModelPath))

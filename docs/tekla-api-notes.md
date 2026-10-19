@@ -341,6 +341,38 @@ The Open API has no screenshot call (no member mentions one, 2021–2026). Probe
 - The server must run in the user's desktop session (a stdio child of the MCP client does); a
   service in session 0 cannot see Tekla's windows.
 
+### Drawing capture (`tekla_capture_drawing`, issue #31)
+
+Probed read-only on Tekla 2021 (model 3155, GA drawing [268] on an A2 sheet 594×420, editor as the
+user opened it, 2026-10-16):
+
+- Window tree: the drawing editor is one more MDI child of the same `MDIClient` as the model views —
+  `AfxFrameOrView140` titled with the drawing type letter and mark ("G   [268]"), maximized, with one
+  child (class `Afx:…`, title "View_10 window_1") that draws the sheet. The model view ("View 1 -
+  3D-view") stays open behind it. The main title becomes "Tekla Structures - <model path> - G   [268]".
+- `PrintWindow` returns the sheet with and without `PW_RENDERFULLCONTENT` (GDI drawing, unlike the
+  DirectX model view), ~40 ms for 2523×1208. The window rectangle includes a 2-px sunken border
+  (grey/white lines); the capture keeps only the client area.
+- The Open API has no drawing-editor zoom or scroll position (2021–2026: only
+  `DrawingInternal.LayoutManager.ZoomToLayout`, which zooms the LAYOUT editor). The sheet is
+  therefore located on the picture: freshly opened, the sheet filled the editor's height — left,
+  right and top edges drawn as full-length lines, the bottom edge on the window border — at
+  1703 px / 594 mm = 2.867 px/mm, sheet left edge at client x = 408. The title-block frame (20/5 mm
+  margins) is the next rectangle inside and does NOT have the paper's aspect ratio.
+- View frames: `View.GetAxisAlignedBoundingBox()` = `Origin + FrameOrigin` and `Width × Height`, in
+  sheet paper mm with the origin at the sheet's lower-left corner (sheet AABB 0,0–594,420). Both
+  views of the drawing, cropped with that mapping, framed exactly what Tekla drew for them.
+- End to end through the tool (own MCP client, same session): sheet zoomed out inside the window →
+  four edges at 1.964 px/mm, sheet and view crops correct; zoomed in on a plan → `scope="visible"`.
+- ⚠️ A first version took title-block CELLS for the sheet: zoomed in on the title block, the cells
+  around "Лист / №док. / Подпись" (91×65 px) matched A2's aspect ratio to 0.3 %. Table lines run on
+  past a cell's corners, the sheet's edges do not — `SheetLocator` now rejects a rectangle whose edge
+  lines continue beyond a corner.
+- With a drawing open, `tekla_capture_view` without `viewName` captured the drawing window as "the
+  active view" (title "G   [268]") — it does not tell model views from the drawing editor yet.
+- ⚠️ Not verified: the window title and a drawn sheet edge on 2022–2026; display scaling above
+  100 %.
+
 ### Cost of a whole-model export (why the exchange tools page)
 
 Measured on the field model (3155, ~65 700 parts, Tekla 2021): `Part.GetSolid()` + AABB ≈ **1.5 ms
@@ -451,6 +483,28 @@ reliable path is **copy from a working source detail** (`tekla_copy_connection`)
 `attributesFile` when a specific saved set is genuinely required. Not yet reduced to a minimal
 repro — treat as environment/component dependent.
 
+### 7. Every `GetUserProperty` overload succeeds for a set UDA
+
+Verified live on Tekla 2021 (model 3155, 300 beams, read-only, 2026-10-16; issue #21): for an
+attribute that is SET, the string, int and double overloads of `ModelObject.GetUserProperty` all
+return **true**, and only the one matching the stored type returns the value — the string
+overload gives `""` for an integer or double, the int/double overloads give `0` for a string. An
+attribute that is not set returns false from all three. "Try string, then int, then double"
+therefore read every numeric UDA as blank (exported empty, `udaIsEmpty` true, the import's
+non-empty guard open).
+
+The backend reads by the DECLARED type (`Core/UdaValues`): `UserPropertyItem { Name }.Select()`
+gives `Type` (`TYPE_INT`/`TYPE_DOUBLE`/`TYPE_STRING`) in ~6 ms per name — cached per model; the
+whole `CatalogHandler.GetUserPropertyItems()` list (620 items) took ~5 s. Names are
+case-sensitive (2021 defines both `comment` and `COMMENT`). Names the catalog does not declare
+(plugin attributes such as `DIMENSION_A`, `MCP_ORIGIN`) answer `Select() == false`; for those a
+non-empty string is a string, and a `""` is resolved once per name through
+`GetAllUserProperties`, whose boxed values carry the stored type. Writes use the declared type
+too: a string UDA keeps `"123"` a string (servers up to v0.8.1 stored it as an integer, which the
+string overload then reads as `""`), and a value that does not parse as a declared number is
+refused before anything is written. Option lists (raw index vs. displayed label) are not mapped
+yet — values are the raw stored numbers.
+
 ## Drawing API implementation notes
 
 `Tekla.Structures.Drawing.dll` is referenced only by the `net48` live backend and uses the same
@@ -458,9 +512,11 @@ repro — treat as environment/component dependent.
 common 2021 reference surface. The drawing layer arrived in v0.7.0 and is still **experimental**;
 v0.8.0 changed only its connection handling (guard, reconnect, no more empty lists without a
 connection) and write outcomes (a lost connection during apply → `unknown`). Apart from a v0.7.0
-smoke test on Tekla 2023 (which found and fixed the `DetailMark` enumeration fault) and what is
-stated below, the Drawing API path has **not** been exercised against a live Windows drawing
-editor.
+smoke test on Tekla 2023 (which found and fixed the `DetailMark` enumeration fault), what is
+stated below and the v0.9.0 live run on Tekla 2021 (2026-10-19, a test copy of model 3155: a new
+GA drawing with a plan by frame, a section, straight and radius dimensions, custom and copied
+marks, standalone detail/section marks, attribute files, labels, rescale, save), the Drawing API
+path has **not** been exercised against a live Windows drawing editor.
 
 | Area | API | Status |
 |---|---|---|
@@ -480,15 +536,16 @@ editor.
 | Sheet geometry/layout | `Drawing.GetSheet()` width/height/origin/frame + drawing `Layout.SheetSize`/size mode | ✅ 2021 signatures; ⚠️ auto-size semantics need live validation |
 | Basic view creation | `View.CreateFrontView/CreateTopView/CreateBackView/CreateBottomView/Create3dView` | ✅ 2021 signatures; ⚠️ sheet placement and default attributes unverified |
 | GA model-view creation | `new View(ContainerView, ViewCoordinateSystem, DisplayCoordinateSystem, AABB[, attributes])`, `Insert()` | ✅ 2021 signatures; ⚠️ axes/restriction/paper placement need live validation |
-| Section/detail views | `CreateSectionView`, `CreateCurvedSectionView`, `CreateDetailView` plus mark attributes | ✅ 2021 signatures; ⚠️ cut-point/depth/mark semantics unverified |
+| Section/detail views | `CreateSectionView`, `CreateCurvedSectionView`, `CreateDetailView` plus mark attributes | ✅ 2021 signatures; ✅ depth and look direction (Tekla 2021, issue #34): box z ∈ [−depthUp, +depthDown], +z toward the viewer, the view looks along the cut direction rotated +90° in the source view; a zero depth gives the box no thickness on that side (refused now); ⚠️ the `ViewAttributes` passed here are NOT applied on 2021 (parent filters/marks, 0 bolts) — the file is loaded after creation |
 | View edit | `View.Modify/Delete`, width/height/origin/scale, `RotateViewOnAxis*`, `RotateViewOnDrawingPlane` | ✅ 2021 signatures; ⚠️ rotations and frame effects unverified |
 | Object enumeration | placed `View.GetObjects/GetAllObjects`, sheet `ContainerView.GetObjects`, `DrawingObjectSelector.GetSelected/SelectObjects` | ✅ 2021 signatures; ⚠️ selection and recursive ordering unverified |
 | Object identity | DrawingInternal identifier plus enumeration-index fallback | ✅ 2021 signature; ⚠️ ID may be zero and index is intentionally ephemeral |
 | Object metadata | drawing `ModelObject.ModelIdentifier`, `IHideable`, type-specific geometry, optional database-object UDAs | ✅ 2021 signatures; ⚠️ geometry/visibility/UDA availability varies by type |
 | Coordinate transform | `MatrixFactory.ToCoordinateSystem(view.DisplayCoordinateSystem).Transform(point)` | ✅ common signature; ⚠️ global-to-view orientation must be checked on rotated/mirrored views |
 | Graphics/annotations | `Text`, `Line`, `Rectangle`, `Circle`, `Arc`, `Polyline`, `Polygon`, `Cloud`, `Symbol`, `LevelMark` | ✅ 2021 constructors/signatures; ⚠️ insertion/attributes/bulge behavior unverified |
-| Dimensions | straight and curved dimension-set handlers, `AngleDimension`, `RadiusDimension` | ✅ 2021 signatures; ⚠️ point order, paper distance and attributes need live validation |
+| Dimensions | straight and curved dimension-set handlers, `AngleDimension`, `RadiusDimension` | ✅ 2021 signatures; ✅ straight-set distance units and radius point order (Tekla 2021, issues #26/#27, see "Dimension quirks"); ⚠️ radius/curved distance units and attributes unverified |
 | Object marks | `View.GetModelObjects(Identifier)`, `new Mark(ModelObject)`, optional insertion/attributes | ✅ 2021 signatures; ⚠️ represented-object and duplicate-mark behavior unverified |
+| Mark content (issue #32) | `Mark.Attributes.Content` (`ContainerElement`: `PropertyElement.Name/Value`, `TextElement`, `GetUnformattedString()`), `DrawingObject.GetRelatedObjects()` → drawing `ModelObject.ModelIdentifier` | ✅ 2021 signatures; the field workaround script read exactly these on Tekla 2021; ⚠️ the listing itself, `WeldMark` (different attributes) not covered |
 | Mark merge/split | `Drawing.Operations.Operation.MergeMarks` / `SplitMarks` | ✅ 2021 signatures; ⚠️ mark compatibility/result identity unverified |
 | Object edit | `IMovableRelative.MoveObjectRelative`, `IHideable.Hideable`, `Attributes.LoadAttributes`, `Modify/Delete` | ✅ 2021 signatures; ⚠️ capability varies by concrete object type |
 | Drawing origin tag | drawing `DatabaseObject.SetUserProperty("MCP_ORIGIN", ...)` + `Modify()` | ✅ common database signature; ⚠️ support/persistence varies by object/environment |
@@ -512,6 +569,77 @@ View placement/frame and dimension-line distances use paper millimetres; section
 are source-view-local and section depths are model millimetres. Read-side object geometry is
 returned in the coordinate system Tekla exposes for that object; callers should use the
 coordinate systems returned by `tekla_list_drawing_views` instead of assuming global values.
+
+### Dimension quirks (issues #26, #27)
+
+- **`StraightDimensionSetHandler.CreateDimensionSet(…, Distance)` takes VIEW units**, not paper mm
+  — verified live on Tekla 2021 (v0.8.1, plan view at 1:50): `distance = 8` put the dimension line
+  8 model-mm (0.16 paper mm) off the parts and the set read back `Distance = 8`; `400` gave the
+  intended 8 paper mm. The Open API docs call `StraightDimensionSet.Distance` paper mm. The line
+  is offset from the OUTERMOST point of the set along the up direction. The tools keep paper mm as
+  their contract and multiply by `View.Attributes.Scale` (`DimensionMath.PaperToViewDistance`;
+  the sheet counts as 1).
+- **Reading behaves like writing** (Tekla 2021, truss node views at 1:5/1:10): `StraightDimensionSet.Distance` reads back in view units at the view's CURRENT scale. After a scale change Tekla keeps the line at the same paper offset by itself, so the value read doubles from 1:5 to 1:10 although nothing moved — an agent that "fixed" it doubled the real offset. The listing reports both `dimensionDistance` (as read) and `dimensionDistancePaperMm`.
+- With the default FREE placing Tekla moved dimension lines away from nearby marks, so the requested offset was not kept; `Placing.Placing = Placings.Fixed` keeps it (`placing=fixed`).
+- `AngleDimension.Distance` and `CurvedDimensionSetBase.Distance` are documented as paper mm and
+  are passed unchanged; `RadiusDimension.Distance` is undocumented and passed unchanged
+  (`TODO(windows)`). None of the three is verified live yet.
+- **`RadiusDimension` draws its arc CLOCKWISE (view XY) from point 1 to point 3**, whatever point 2
+  — verified live on Tekla 2021 on five arcs (R1715, R2500 ×3, R2800): a counter-clockwise arc
+  passed start → mid → end comes out as the complementary, near-full circle; the radius value is
+  right either way. `DimensionMath.OrderArcClockwise` swaps points 1 and 3 for counter-clockwise
+  input (a warning says so) and refuses collinear points. Rounded input points shift the value
+  (`R1714.5` for R1715); take the points from `tekla_get_part_curve_geometry`'s view block.
+
+### Enumerating view objects with AutoFetch: one DetailMark empties the view (Tekla 2021)
+
+With `DrawingEnumeratorBase.AutoFetch = true` (set since v0.7.0) Tekla fetches the whole snapshot
+when the enumerator is CREATED, and a `DetailMark` cannot be serialized
+(`DetailMarkSymbolAttributes` is not `[Serializable]`). On Tekla 2021 the
+`SerializationException` therefore comes out of `View.GetObjects()` itself — not out of
+`MoveNext()`, where `SafeMoveNext` would have skipped the object (that is what v0.7.0 saw on
+2023). Before v0.9.0's fix, one detail mark in a view (a standalone callout, or the mark of a
+detail view) made `tekla_list_drawing_objects` answer `[]` for the whole drawing, and modify,
+delete, `keepMarkOffsets` and `renameMark` found nothing. `ReadOwnedObjects` now reads such an
+owner again without AutoFetch (one object per `MoveNext`, under a lock, AutoFetch restored); the
+detail mark then enumerates fine (live, 2026-10-19). A read-only script that ran before any
+listing had enabled AutoFetch enumerated the same view without errors — that is how the cause was
+found.
+
+### View placement and view attribute files (issues #33, #28)
+
+- `View.Origin` is where the MODEL origin lands on the sheet, not the frame: a plan restricted to
+  X 55 200…62 600 at 1:50 with origin 720,150 lands ~1 100 mm off the sheet (Tekla 2021, field
+  report). Frame margins (grid labels, ~13–23 mm) exist only after the insert. `placeBy=frame_*`
+  therefore inserts, commits, reads `GetAxisAlignedBoundingBox()` (sheet paper mm) and moves the
+  origin by the difference (`Core/Geometry/ViewPlacement`), then commits again. ⚠️ The bounding
+  box right after the insert is not verified live (`TODO(windows)` in `PlaceViewsByFrame`).
+- `View.Attributes.LoadAttributes(name)` + `Modify()` overwrites scale and view size from the
+  file — and also the view **label** (`Attributes.TagsAttributes`) and the view **Name** (~20
+  detail/section views, Tekla 2021). Working recipe: keep tags, name, scale and restriction box;
+  load; restore them; `Modify()`; `Select()`, restriction box (and origin); `Modify()` again.
+  `tekla_modify_drawing_view attributeFile` does that and reports the view's model-object count
+  before and after. File names are used verbatim: `" Truss node"` (leading space) loads only with
+  the space. Reloading recreates marks for newly visible parts only.
+- **`LoadAttributes` rewrites the `TagsAttributes` object it holds IN PLACE** (Tekla 2021,
+  2026-10-19, read-only script: the reference kept before the load showed the file's label after
+  it, `ReferenceEquals` true). So "keep tags, load, restore" restored the file's label. The server
+  loads the file into a NEW `View.ViewAttributes` and takes scale, label and label position from
+  the view's untouched attributes (`LoadViewAttributeFile`); verified live afterwards: the label
+  stays, scale/box/origin/name stay, and the file's filters apply (449 → 372 objects).
+- After `LoadAttributes` + `Modify`, `GetAxisAlignedBoundingBox()` returns the OLD box within the
+  same call — re-list views before laying them out.
+- A section created by `View.CreateSectionView` gets a mark named by Tekla (`"1"`), not the view
+  name, so `renameMark` (which looks for a mark named like the view's old name) finds nothing and
+  says so (Tekla 2021, 2026-10-19).
+- **The view frame includes HIDDEN marks** (Tekla 2021): hidden member marks stay at their parts'
+  midpoints, often far outside a detail view's restriction box, and still extend
+  `Origin + FrameOrigin`/`Width × Height` and push the view label. Moving each hidden mark to its
+  leader start (or the restriction-box centre) made frames hug the visible content. Placement by
+  frame warns when a view has hidden marks.
+- **Tekla caches view filters by attribute-file NAME within a session** (verified on Tekla 2021 by
+  counting parts in the view): after editing `<name>.vi.npfilter`, loading `<name>` again keeps the
+  old neighbour filter, while edits to the `.vi` itself apply. Save under a new name instead.
 
 ### Drawing editor preconditions
 

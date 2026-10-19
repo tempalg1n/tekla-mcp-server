@@ -47,8 +47,23 @@ public sealed class WriteResult
     /// </summary>
     public List<int> CreatedIds { get; set; } = new List<int>();
 
-    /// <summary>A lightweight preview of the planned/affected objects (capped).</summary>
+    /// <summary>A lightweight preview of the planned/affected objects (capped at 20).</summary>
     public List<ModelObjectInfo> Preview { get; set; } = new List<ModelObjectInfo>();
+
+    /// <summary>
+    /// How many objects <see cref="Preview"/> was drawn from, where the backend knows it; null
+    /// when the operation does not report it.
+    /// </summary>
+    public int? PreviewTotal { get; set; }
+
+    /// <summary>True when <see cref="Preview"/> lists fewer objects than <see cref="PreviewTotal"/>.</summary>
+    public bool PreviewTruncated { get; set; }
+
+    /// <summary>
+    /// Field-by-field check of the written objects against the request, after the commit
+    /// (tekla_modify_parts). Covers every written object, not just the preview.
+    /// </summary>
+    public WriteVerification? Verification { get; set; }
 
     /// <summary>Connection/component preview for component write operations (capped).</summary>
     public List<ComponentInfo> ComponentPreview { get; set; } = new List<ComponentInfo>();

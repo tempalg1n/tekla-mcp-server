@@ -7,6 +7,7 @@ using TeklaMcp.Core;
 using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
+using TSC = Tekla.Structures.Catalogs;
 using TSM = Tekla.Structures.Model;
 using TSMC = Tekla.Structures.Model.Collaboration;
 using TSMI = Tekla.Structures.ModelInternal;
@@ -155,12 +156,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             ConnectModel(out var info); // reconnects after a Tekla restart, like every other tool
+            var open = ModelPaths.IsOpenModel(info.ModelName, info.ModelPath);
             return new ConnectionInfo
             {
                 Connected = true,
+                ModelOpen = open,
                 Backend = BackendName,
                 ModelName = info.ModelName ?? "",
                 ModelPath = info.ModelPath ?? "",
+                Message = open ? null : ModelPaths.NoOpenModelMessage(info.ModelName, info.ModelPath),
                 LastReconnect = TeklaRemotingChannel.LastReconnect,
             };
         }
@@ -179,9 +183,66 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
+    public NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids)
+    {
+        // A lost connection propagates (the tool-error filter diagnoses it): never "unknown".
+        var model = ConnectModel(out var info);
+        var status = new NumberingStatus
+        {
+            Backend = BackendName,
+            ModelName = info.ModelName ?? "",
+            ModelPath = info.ModelPath ?? "",
+        };
+        status.Notes.Add(
+            "Status queries only (Operation.IsNumberingUpToDateAll / IsNumberingUpToDate): nothing " +
+            "was numbered, saved or changed. Marks without '?' are not proof of current numbering.");
+
+        try
+        {
+            status.UpToDateAll = TSM.Operations.Operation.IsNumberingUpToDateAll();
+        }
+        catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+        {
+            status.Message = "IsNumberingUpToDateAll failed: " + ErrorText.Flatten(ex);
+        }
+
+        var requested = (guids ?? new List<string>()).Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
+        status.NotChecked = Math.Max(0, requested.Count - NumberingStatus.ObjectLimit);
+        foreach (var guid in requested.Take(NumberingStatus.ObjectLimit))
+        {
+            var row = new NumberingObjectStatus { Guid = guid.Trim() };
+            status.Objects.Add(row);
+            var mo = TrySelectObjectByGuid(model, row.Guid);
+            if (mo is null)
+            {
+                status.NotFound++;
+                continue;
+            }
+            row.Found = true;
+            row.Type = mo.GetType().Name;
+            try
+            {
+                row.UpToDate = TSM.Operations.Operation.IsNumberingUpToDate(mo);
+            }
+            catch (Exception ex) when (!ConnectionErrors.IsTeklaConnectionFailure(ex))
+            {
+                row.Error = ErrorText.Flatten(ex);
+            }
+            var partPos = "";
+            if (mo.GetReportProperty("PART_POS", ref partPos) && partPos.Length > 0) row.PartPos = partPos;
+            var assemblyPos = "";
+            if (mo.GetReportProperty("ASSEMBLY_POS", ref assemblyPos) && assemblyPos.Length > 0) row.AssemblyPos = assemblyPos;
+        }
+        if (status.NotChecked > 0)
+            status.Message = Aggregation.Append(status.Message,
+                $"Only the first {NumberingStatus.ObjectLimit} GUIDs were checked; {status.NotChecked} were not.");
+        return status;
+    }
+
     public ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         var summary = new ModelSummary { Backend = BackendName };
         var totalWeight = 0.0;
 
@@ -240,6 +301,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public int CountObjects(ObjectQuery query)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         query = query ?? new ObjectQuery();
 
         // Completely unfiltered whole-model count: the enumerator knows its size — no walk.
@@ -271,6 +333,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
     public IReadOnlyList<ModelObjectInfo> GetAllObjects(int? limit = null)
     {
         var model = GetConnectedModel();
+        RequireOpenModel();
         return InGlobalWorkPlane(model, () =>
         {
             var result = new List<ModelObjectInfo>();
@@ -939,6 +1002,15 @@ public sealed partial class TeklaModelService : ITeklaModelService
             if (preview != null) result.Preview.Add(preview);
             result.MatchedObjects = 1;
 
+            var typeProblems = CheckUdaUpdateTypes(updates);
+            if (typeProblems.Count > 0)
+            {
+                result.Message = (apply ? "Nothing was written: " : "These values cannot be written: ") +
+                                 string.Join(" ", typeProblems);
+                if (apply) result.MatchedObjects = 0;
+                return Stamp(result, progress);
+            }
+
             if (!apply) return Stamp(result, progress);
 
             progress.BeginWrite(); // SetUserProperty writes straight to the model
@@ -974,6 +1046,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
         try
         {
             var model = GetConnectedModel();
+            var typeProblems = CheckUdaUpdateTypes(updates);
+            if (typeProblems.Count > 0)
+            {
+                result.Message = "Nothing was matched or written: " + string.Join(" ", typeProblems);
+                return Stamp(result, progress);
+            }
+
             foreach (var mo in EnumerateSource(model, query))
             {
                 var info = MapBasic(mo);
@@ -1141,14 +1220,18 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
             if (!apply)
             {
+                var found = 0;
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
                     var moPrev = TrySelectObjectByGuid(model, mod.Guid);
                     if (moPrev is null) { result.Errors.Add("Not found: " + mod.Guid); continue; }
+                    found++;
+                    if (result.Preview.Count >= 20) continue;
                     var info = Map(moPrev);
-                    if (info != null && result.Preview.Count < 20) result.Preview.Add(info);
+                    if (info != null) result.Preview.Add(info);
                 }
+                SetPreviewCoverage(result, found);
                 return Stamp(result, progress);
             }
 
@@ -1157,12 +1240,17 @@ public sealed partial class TeklaModelService : ITeklaModelService
             wph.SetCurrentTransformationPlane(new TSM.TransformationPlane()); // global
             try
             {
-                var writtenGuids = new List<string>();
+                var written = new List<WrittenPart>();
                 foreach (var mod in modifications)
                 {
                     result.PlannedCount++;
                     var mo = TrySelectObjectByGuid(model, mod.Guid);
                     if (mo is null) { result.Errors.Add("Not found: " + mod.Guid); continue; }
+                    Point3D? expectedStart = null, expectedEnd = null;
+                    if (mo is TSM.Beam original)
+                        PartWriteCheck.ExpectedEnds(
+                            mod, ToPoint3D(original.StartPoint), ToPoint3D(original.EndPoint),
+                            out expectedStart, out expectedEnd);
                     try
                     {
                         if (mo is TSM.Part part)
@@ -1194,9 +1282,13 @@ public sealed partial class TeklaModelService : ITeklaModelService
                             throw new InvalidOperationException(
                                 "Tekla rejected Modify() for " + mod.Guid + " — the geometry/properties were not changed.");
                         result.ModifiedCount++;
-                        var writtenGuid = ModelGuid(mo);
-                        if (!string.IsNullOrWhiteSpace(writtenGuid) && writtenGuids.Count < 20)
-                            writtenGuids.Add(writtenGuid);
+                        written.Add(new WrittenPart
+                        {
+                            Modification = mod,
+                            Guid = ModelGuid(mo),
+                            ExpectedStart = expectedStart,
+                            ExpectedEnd = expectedEnd,
+                        });
                     }
                     catch (Exception exItem)
                     {
@@ -1211,13 +1303,32 @@ public sealed partial class TeklaModelService : ITeklaModelService
                 // canonicalizes Position on commit — TOP+180° comes back as BELOW+0°, LEFT
                 // flips to RIGHT (verified live, Tekla 2023) — so echoing the in-memory object
                 // would hand the caller values the model does not actually agree with, and a
-                // follow-up read looks like the write was lost.
-                foreach (var guid in writtenGuids)
+                // follow-up read looks like the write was lost. EVERY written part is compared
+                // with the request (issue #22: Modify() returned true, Class stayed 14 instead
+                // of 50); only the preview stays capped at 20.
+                var check = new PartWriteCheck.Batch();
+                foreach (var part in written)
                 {
-                    var fresh = TrySelectObjectByGuid(model, guid);
-                    var info = fresh is null ? null : Map(fresh);
-                    if (info != null) result.Preview.Add(info);
+                    ModelObjectInfo? stored = null;
+                    try
+                    {
+                        var fresh = string.IsNullOrWhiteSpace(part.Guid) ? null : TrySelectObjectByGuid(model, part.Guid);
+                        stored = fresh is null ? null : MapBasic(fresh);
+                        if (fresh != null && result.Preview.Count < 20)
+                        {
+                            var info = Map(fresh);
+                            if (info != null) result.Preview.Add(info);
+                        }
+                    }
+                    catch
+                    {
+                        // Counted as unread below; the commit itself already happened.
+                    }
+                    check.Add(part.Modification, stored, part.ExpectedStart, part.ExpectedEnd);
                 }
+                result.Verification = check.Build();
+                result.Errors.AddRange(check.Errors);
+                SetPreviewCoverage(result, written.Count);
             }
             finally { wph.SetCurrentTransformationPlane(previous); }
         }
@@ -1227,6 +1338,20 @@ public sealed partial class TeklaModelService : ITeklaModelService
             result.Message = ErrorText.Flatten(ex);
         }
         return Stamp(result, progress);
+    }
+
+    private sealed class WrittenPart
+    {
+        public PartModification Modification { get; set; } = null!;
+        public string Guid { get; set; } = "";
+        public Point3D? ExpectedStart { get; set; }
+        public Point3D? ExpectedEnd { get; set; }
+    }
+
+    private static void SetPreviewCoverage(WriteResult result, int total)
+    {
+        result.PreviewTotal = total;
+        result.PreviewTruncated = result.Preview.Count < total;
     }
 
     public WriteResult DeleteObjects(ObjectQuery query, bool apply, int? limit = null)
@@ -1251,6 +1376,7 @@ public sealed partial class TeklaModelService : ITeklaModelService
             }
 
             result.PlannedCount = matched.Count;
+            SetPreviewCoverage(result, matched.Count);
             if (!apply) return Stamp(result, progress);
 
             foreach (var mo in matched)
@@ -2564,6 +2690,21 @@ public sealed partial class TeklaModelService : ITeklaModelService
 
     private static TSM.Model GetConnectedModel() => ConnectModel(out _);
 
+    /// <summary>What the last <see cref="ConnectModel"/> saw; scans refuse when no model was open.</summary>
+    private static TSM.ModelInfo? LastConnectedInfo;
+
+    /// <summary>
+    /// Model reads that would answer "nothing" for a closed model refuse instead (issue #25 §8:
+    /// a closed model gave connected=true and a zero-object summary). Called by
+    /// <see cref="EnumerateSource"/> and the whole-model scans, after the call connected.
+    /// </summary>
+    private static void RequireOpenModel()
+    {
+        var info = LastConnectedInfo;
+        if (info != null && !ModelPaths.IsOpenModel(info.ModelName, info.ModelPath))
+            throw new InvalidOperationException(ModelPaths.NoOpenModelMessage(info.ModelName, info.ModelPath));
+    }
+
     /// <summary>
     /// A Model client that has just answered a real call. <c>GetConnectionStatus()</c> is only a
     /// local null check, so a Tekla restart used to surface as a RemotingException in the middle of
@@ -2596,6 +2737,10 @@ public sealed partial class TeklaModelService : ITeklaModelService
             model = new TSM.Model();
             info = model.GetInfo();
         }
+
+        // Another model has another UDA catalog.
+        UdaKinds.ResetIfScopeChanged(info.ModelPath + "|" + info.ModelName);
+        LastConnectedInfo = info;
 
         // First successful connection = the only moment we KNOW the channels are aligned and
         // Tekla is up — initialize the write-path proxies (ModuleManager base channel) now,
@@ -2683,14 +2828,33 @@ public sealed partial class TeklaModelService : ITeklaModelService
     private static IEnumerable<TSM.ModelObject> EnumerateSource(
         TSM.Model model, ObjectQuery query, bool partsFallback = false)
     {
+        RequireOpenModel();
         if (query != null && query.UseSelection)
             return Drain(new TSMUI.ModelObjectSelector().GetSelectedObjects());
+        if (query?.GuidIn != null && query.GuidIn.Count > 0)
+            return SelectByGuids(model, query.GuidIn);
         if (query != null && !string.IsNullOrWhiteSpace(query.Type) &&
             TypeEnumMap.TryGetValue(query.Type!.Trim(), out var objectType))
             return Drain(model.GetModelObjectSelector().GetAllObjectsWithType(objectType));
         if (partsFallback && (query is null || string.IsNullOrWhiteSpace(query.Type)))
             return EnumerateParts(model);
         return Drain(model.GetModelObjectSelector().GetAllObjects());
+    }
+
+    /// <summary>
+    /// The objects a GuidIn filter names, selected directly. The filter used to be applied after
+    /// a whole-model scan: deleting one beam by GUID took ~60 s on a 443k-object model (live Tekla
+    /// 2021) — past the MCP client's timeout, so the delete happened and its answer was lost.
+    /// Malformed and unknown GUIDs are skipped; Matches still applies the other filters.
+    /// </summary>
+    private static IEnumerable<TSM.ModelObject> SelectByGuids(TSM.Model model, IEnumerable<string> guids)
+    {
+        foreach (var text in guids.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Guid.TryParse((text ?? "").Trim(), out var guid)) continue;
+            var mo = model.SelectModelObject(new TS.Identifier(guid));
+            if (mo != null) yield return mo;
+        }
     }
 
     /// <summary>Chain the per-type enumerators for every physical part type.</summary>
@@ -2918,31 +3082,89 @@ public sealed partial class TeklaModelService : ITeklaModelService
         }
     }
 
+    /// <summary>UDA types of the connected model (reset in <see cref="ConnectModel"/>).</summary>
+    private static readonly UdaKindCache UdaKinds = new UdaKindCache();
+
+    /// <summary>
+    /// One UDA of one object, read by its type (issue #21): Tekla 2021's string getter answers
+    /// "" for a number, so the old "first getter that succeeds" exported integers as blanks.
+    /// </summary>
     private static bool TryGetUserPropertyAsString(TSM.ModelObject mo, string udaName, out string value)
     {
-        value = "";
-        var strVal = "";
-        if (mo.GetUserProperty(udaName, ref strVal))
+        var found = UdaValues.TryRead(
+            UdaKindOf(udaName), new TeklaUdaGetters(mo, udaName), out value, out var learned);
+        UdaKinds.Learn(udaName, learned);
+        return found;
+    }
+
+    /// <summary>
+    /// The declared type from the UDA catalog, looked up once per name and model
+    /// (<c>UserPropertyItem.Select()</c>, ~6 ms on Tekla 2021; the whole catalog would take ~5 s),
+    /// or what an earlier read learned. Callers are inside a tool call, after
+    /// <see cref="GetConnectedModel"/>.
+    /// </summary>
+    private static UdaValueKind UdaKindOf(string udaName)
+    {
+        if (UdaKinds.TryGet(udaName, out var kind)) return kind;
+        kind = UdaValueKind.Unknown;
+        try
         {
-            value = strVal ?? "";
-            return true;
+            var item = new TSC.UserPropertyItem { Name = udaName };
+            if (item.Select()) kind = UdaValues.FromCatalogType(item.Type.ToString());
+        }
+        catch
+        {
+            // Catalog unreachable: the read falls back to what Tekla stored on the object.
+        }
+        UdaKinds.SetDeclared(udaName, kind);
+        return kind;
+    }
+
+    private sealed class TeklaUdaGetters : IUdaGetters
+    {
+        private readonly TSM.ModelObject _mo;
+        private readonly string _name;
+
+        public TeklaUdaGetters(TSM.ModelObject mo, string name)
+        {
+            _mo = mo;
+            _name = name;
         }
 
-        var intVal = 0;
-        if (mo.GetUserProperty(udaName, ref intVal))
+        public bool TryGetString(out string value)
         {
-            value = intVal.ToString(CultureInfo.InvariantCulture);
-            return true;
+            value = "";
+            var ok = _mo.GetUserProperty(_name, ref value);
+            value ??= "";
+            return ok;
         }
 
-        var doubleVal = 0.0;
-        if (mo.GetUserProperty(udaName, ref doubleVal))
+        public bool TryGetInteger(out int value)
         {
-            value = doubleVal.ToString("G", CultureInfo.InvariantCulture);
-            return true;
+            value = 0;
+            return _mo.GetUserProperty(_name, ref value);
         }
 
-        return false;
+        public bool TryGetDouble(out double value)
+        {
+            value = 0;
+            return _mo.GetUserProperty(_name, ref value);
+        }
+
+        public UdaValueKind ReadStoredKind()
+        {
+            try
+            {
+                var all = new Hashtable();
+                return _mo.GetAllUserProperties(ref all) && all.ContainsKey(_name)
+                    ? UdaValues.FromStoredValue(all[_name])
+                    : UdaValueKind.Unknown;
+            }
+            catch
+            {
+                return UdaValueKind.Unknown;
+            }
+        }
     }
 
     private static bool TryGetAttributeValue(TSM.ModelObject mo, string attributeName, out string value)
@@ -3071,6 +3293,23 @@ public sealed partial class TeklaModelService : ITeklaModelService
         return (obj.Type ?? "") + ":" + profile;
     }
 
+    /// <summary>
+    /// The UDA values that cannot be written as their declared type ("abc" into an integer
+    /// attribute), one message each; empty when all can. Checked BEFORE the first write.
+    /// </summary>
+    private static List<string> CheckUdaUpdateTypes(IEnumerable<KeyValuePair<string, string>> updates)
+    {
+        var problems = new List<string>();
+        foreach (var kv in updates)
+        {
+            var key = (kv.Key ?? "").Trim();
+            if (key.Length == 0) continue;
+            if (!UdaValues.TryConvertForWrite(UdaKindOf(key), key, kv.Value, out _, out var error))
+                problems.Add(error!);
+        }
+        return problems;
+    }
+
     private static bool ApplyUdaUpdates(
         TSM.ModelObject mo,
         IReadOnlyDictionary<string, string> updates,
@@ -3082,14 +3321,18 @@ public sealed partial class TeklaModelService : ITeklaModelService
             var key = (kv.Key ?? "").Trim();
             if (string.IsNullOrWhiteSpace(key)) continue;
 
-            var raw = kv.Value ?? "";
+            // Written as the declared type: a string attribute keeps "123" a string (it used to
+            // become an integer, which the string getter then reads as ""). Callers check the
+            // types first; a mismatch here is skipped, never written as another type.
+            if (!UdaValues.TryConvertForWrite(UdaKindOf(key), key, kv.Value, out var typed, out _))
+                continue;
             bool ok;
-            if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var intVal))
-                ok = mo.SetUserProperty(key, intVal);
-            else if (double.TryParse(raw, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleVal))
-                ok = mo.SetUserProperty(key, doubleVal);
-            else
-                ok = mo.SetUserProperty(key, raw);
+            switch (typed)
+            {
+                case int intVal: ok = mo.SetUserProperty(key, intVal); break;
+                case double doubleVal: ok = mo.SetUserProperty(key, doubleVal); break;
+                default: ok = mo.SetUserProperty(key, (string)typed); break;
+            }
 
             if (ok) changedFields++;
         }

@@ -5,8 +5,17 @@ namespace TeklaMcp.Core.Models;
 /// <summary>Result of probing the connection to a running Tekla Structures model.</summary>
 public sealed class ConnectionInfo
 {
-    /// <summary>True if a model is open and the API answered.</summary>
+    /// <summary>
+    /// True when the Open API answered. Whether a model is open is <see cref="ModelOpen"/>: Tekla
+    /// can run with no model, and then every model read would see an empty model.
+    /// </summary>
     public bool Connected { get; set; }
+
+    /// <summary>
+    /// True when a model is open in the connected Tekla (a model path and name). False with
+    /// Connected=true means Tekla runs without a model; model tools refuse until one is open.
+    /// </summary>
+    public bool ModelOpen { get; set; }
 
     /// <summary>Model name, e.g. "MyTower". Empty when not connected.</summary>
     public string ModelName { get; set; } = "";
@@ -37,6 +46,15 @@ public sealed class ConnectionInfo
 
     /// <summary>Local start time of the MCP server process (ISO 8601 with offset).</summary>
     public string ServerStartedAt { get; set; } = "";
+
+    /// <summary>
+    /// True when the operator started the server read-only (TEKLA_MCP_READ_ONLY): only read tools are
+    /// served and every write path refuses.
+    /// </summary>
+    public bool ServerReadOnly { get; set; }
+
+    /// <summary>The toolsets this server serves (TEKLA_MCP_TOOLSETS); all of them unless the operator narrowed it.</summary>
+    public List<string> ServerToolsets { get; set; } = new List<string>();
 
     /// <summary>Tekla Open API version this build was compiled for; only one Tekla year works. Null on Mock.</summary>
     public string? CompiledTeklaVersion { get; set; }

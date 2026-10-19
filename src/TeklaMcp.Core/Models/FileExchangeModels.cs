@@ -163,6 +163,12 @@ public sealed class UdaFileWriteResult
     public long InvalidRows { get; set; }
 
     /// <summary>
+    /// Values left out because they do not fit the attribute's declared type ("abc" for an
+    /// integer UDA); the first few are named in <see cref="Message"/>. Never written as another type.
+    /// </summary>
+    public long InvalidValues { get; set; }
+
+    /// <summary>
     /// UDA columns this call considered, taken from the file (after any UdaColumns filtering).
     /// Shows WHICH fields the run is about; whether each one changed is in the per-row sample
     /// and the Updated/SkippedNonEmpty/Unchanged counters.

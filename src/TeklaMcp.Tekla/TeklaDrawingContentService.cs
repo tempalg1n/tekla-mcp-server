@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -16,6 +17,8 @@ public sealed partial class TeklaModelService
     {
         public TSD.DrawingObject Object { get; set; } = null!;
         public bool AlreadyInserted { get; set; }
+        /// <summary>What the server changed in the request before sending it, if anything.</summary>
+        public string? Warning { get; set; }
     }
 
     public DrawingWriteResult CreateDrawingObjects(
@@ -29,7 +32,11 @@ public sealed partial class TeklaModelService
         if (!apply)
         {
             foreach (var spec in safeSpecs)
-                result.ObjectPreview.Add(PreviewDrawingObject(spec));
+            {
+                var preview = PreviewDrawingObject(spec);
+                PreviewRadiusOrder(spec, preview, result);
+                result.ObjectPreview.Add(preview);
+            }
             return result;
         }
 
@@ -49,13 +56,17 @@ public sealed partial class TeklaModelService
                 try
                 {
                     var target = ResolveTargetView(active, views, spec);
-                    var created = CreateOneDrawingObject(target, spec);
+                    var copiedContent = string.IsNullOrWhiteSpace(spec.CopyContentFromObjectId)
+                        ? null
+                        : FindMarkContent(handler, active, spec.CopyContentFromObjectId!);
+                    var created = CreateOneDrawingObject(target, spec, copiedContent);
                     if (created.Object == null)
                         throw new InvalidOperationException("Drawing object creation returned null.");
                     if (!created.AlreadyInserted && !created.Object.Insert())
                         throw new InvalidOperationException("Tekla rejected drawing object Insert().");
 
                     StampDrawingOrigin(created.Object, "mcp:create_drawing_object");
+                    if (created.Warning != null) result.Warnings.Add(created.Warning);
                     createdRecords.Add(new DrawingObjectRecord
                     {
                         Object = created.Object,
@@ -74,7 +85,7 @@ public sealed partial class TeklaModelService
             }
 
             if (result.CreatedCount > 0)
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: create drawing objects", result);
             result.ObjectPreview = createdRecords
                 .Select(record => MapDrawingObject(record, new DrawingObjectQuery()))
@@ -100,7 +111,9 @@ public sealed partial class TeklaModelService
             modification.Text == null &&
             modification.MoveBy == null &&
             string.IsNullOrWhiteSpace(modification.Visibility) &&
-            string.IsNullOrWhiteSpace(modification.AttributeFile))
+            string.IsNullOrWhiteSpace(modification.AttributeFile) &&
+            modification.InsertionPoint == null && modification.LeaderStart == null &&
+            modification.ContentText == null)
         {
             result.Message = "No drawing-object changes were supplied.";
             return result;
@@ -123,6 +136,7 @@ public sealed partial class TeklaModelService
                 records.Take(20).Select(r => MapDrawingObject(r, effective)));
             if (!apply) return result;
 
+            var modified = new List<DrawingObjectRecord>();
             foreach (var record in records)
             {
                 try
@@ -140,6 +154,7 @@ public sealed partial class TeklaModelService
                         throw new InvalidOperationException("Tekla rejected Modify().");
                     StampDrawingOrigin(record.Object, "mcp:modify_drawing_object");
                     result.ModifiedCount++;
+                    modified.Add(record);
                 }
                 catch (Exception exItem)
                 {
@@ -149,8 +164,19 @@ public sealed partial class TeklaModelService
             }
 
             if (result.ModifiedCount > 0 || result.DeletedCount > 0)
-                CommitDrawingChanges(
+                CommitActiveDrawingChanges(
                     active, "Tekla MCP: modify drawing objects", result);
+            if (modified.Count > 0)
+            {
+                // Read the edited objects back: the preview holds their state BEFORE the edit (a
+                // mark given new content came back with its old text, live Tekla 2021).
+                result.ObjectPreview.Clear();
+                foreach (var record in modified.Take(20))
+                {
+                    try { record.Object.Select(); } catch { }
+                    result.ObjectPreview.Add(MapDrawingObject(record, effective));
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -209,7 +235,7 @@ public sealed partial class TeklaModelService
             {
                 throw new ArgumentException("operation must be merge or split.");
             }
-            CommitDrawingChanges(
+            CommitActiveDrawingChanges(
                 active, "Tekla MCP: " + op + " drawing marks", result);
         }
         catch (Exception ex)
@@ -245,6 +271,8 @@ public sealed partial class TeklaModelService
             case "curved_radial": return "CurvedDimensionSetRadial";
             case "curved_orthogonal": return "CurvedDimensionSetOrthogonal";
             case "level_mark": return "LevelMark";
+            case "detail_mark": return "DetailMark";
+            case "section_mark": return "SectionMark";
             default:
                 var text = (kind ?? "").Trim();
                 return text.Length == 0
@@ -273,9 +301,66 @@ public sealed partial class TeklaModelService
         return view;
     }
 
+    /// <summary>The content of an existing mark ('id:id2'), cloned, for a new mark (issue #37).</summary>
+    private static TSD.ContainerElement FindMarkContent(TSD.DrawingHandler handler, TSD.Drawing active, string objectId)
+    {
+        var parts = objectId.Trim().Split(':');
+        if (!int.TryParse(parts[0], out var id) || (parts.Length > 1 && !int.TryParse(parts[1], out _)))
+            throw new ArgumentException("copyContentFromMarkId must be 'id:id2'.");
+        var id2 = parts.Length > 1 ? int.Parse(parts[1]) : 0;
+        var query = new DrawingObjectQuery();
+        query.ObjectIds.Add(new TeklaIdentifierInfo { Id = id, Id2 = id2 });
+        var record = GetDrawingObjectRecords(handler, active, query, 1).FirstOrDefault();
+        if (!(record?.Object is TSD.Mark source))
+            throw new ArgumentException("No mark " + objectId + " in the active drawing to copy the content from.");
+        return (TSD.ContainerElement)source.Attributes.Content.Clone();
+    }
+
+    /// <summary>Leader/base-line/along-line/point placing of a mark (issue #37), points in the spec's space.</summary>
+    private static void ApplyMarkPlacing(TSD.Mark mark, TSD.ViewBase target, DrawingObjectSpec spec)
+    {
+        var placing = (spec.Placing ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        if (placing.Length == 0 && spec.LeaderStart == null) return;
+        var linePoints = new List<Point3D>();
+        if (spec.LeaderStart != null) linePoints.Add(spec.LeaderStart);
+        if (spec.LineEnd != null) linePoints.Add(spec.LineEnd);
+        var transformed = TransformPoints(target,
+            new DrawingObjectSpec { Points = linePoints, CoordinateSpace = spec.CoordinateSpace });
+        switch (placing)
+        {
+            case "":
+            case "leader_line":
+                if (transformed.Count < 1) throw new ArgumentException("leader_line placing needs leaderStart.");
+                mark.Placing = new TSD.LeaderLinePlacing(transformed[0]);
+                break;
+            case "base_line":
+            case "along_line":
+                if (transformed.Count < 2)
+                    throw new ArgumentException(placing + " placing needs leaderStart and lineEnd (the line).");
+                mark.Placing = placing == "base_line"
+                    ? (TSD.PlacingBase)new TSD.BaseLinePlacing(transformed[0], transformed[1])
+                    : new TSD.AlongLinePlacing(transformed[0], transformed[1]);
+                break;
+            case "point":
+                mark.Placing = new TSD.PointPlacing();
+                break;
+            default:
+                throw new ArgumentException("Mark placing must be leader_line, base_line, along_line or point.");
+        }
+    }
+
+    private static void SetMarkText(TSD.Mark mark, string text)
+    {
+        var attributes = mark.Attributes;
+        attributes.Content.Clear();
+        attributes.Content.Add(new TSD.TextElement(text));
+        mark.Attributes = attributes;
+    }
+
     private static CreatedDrawingObject CreateOneDrawingObject(
         TSD.ViewBase target,
-        DrawingObjectSpec spec)
+        DrawingObjectSpec spec,
+        TSD.ContainerElement? copiedContent = null)
     {
         var points = TransformPoints(target, spec);
         var kind = (spec.Kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
@@ -370,19 +455,29 @@ public sealed partial class TeklaModelService
                     ? new TSG.Vector(0, 1, 0)
                     : ToDrawingVector(spec.UpDirection);
                 var straightHandler = new TSD.StraightDimensionSetHandler();
+                // The tool contract is paper mm; CreateDimensionSet takes view units (issue #26).
+                var straightDistance = DimensionMath.PaperToViewDistance(
+                    spec.Distance ?? 10, ViewScale(target));
                 TSD.StraightDimensionSet straight;
-                if (string.IsNullOrWhiteSpace(spec.AttributeFile))
+                var placing = (spec.Placing ?? "").Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(spec.AttributeFile) && placing.Length == 0)
                 {
                     straight = straightHandler.CreateDimensionSet(
-                        target, ToPointList(points), up, spec.Distance ?? 10);
+                        target, ToPointList(points), up, straightDistance);
                 }
                 else
                 {
-                    var straightAttributes =
-                        new TSD.StraightDimensionSet.StraightDimensionSetAttributes(
-                            null, spec.AttributeFile);
+                    var straightAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                        ? new TSD.StraightDimensionSet.StraightDimensionSetAttributes((TSD.ModelObject)null!)
+                        : new TSD.StraightDimensionSet.StraightDimensionSetAttributes(null, spec.AttributeFile);
+                    // Free placing moved lines away from nearby marks, so the offset was not kept
+                    // (Tekla 2021, issue #26); Fixed keeps it.
+                    if (placing == "fixed")
+                        straightAttributes.Placing.Placing = TSD.DimensionSetBaseAttributes.Placings.Fixed;
+                    else if (placing == "free")
+                        straightAttributes.Placing.Placing = TSD.DimensionSetBaseAttributes.Placings.Free;
                     straight = straightHandler.CreateDimensionSet(
-                        target, ToPointList(points), up, spec.Distance ?? 10, straightAttributes);
+                        target, ToPointList(points), up, straightDistance, straightAttributes);
                 }
                 if (straight == null) throw new InvalidOperationException("CreateDimensionSet returned null.");
                 return New(straight, true);
@@ -395,11 +490,16 @@ public sealed partial class TeklaModelService
                         : new TSD.AngleDimensionAttributes(spec.AttributeFile)));
             case "radius_dimension":
                 RequirePoints(points, 3, kind);
-                return New(new TSD.RadiusDimension(
+                // Tekla draws the arc clockwise from point 1 to point 3 (issue #27).
+                // TODO(windows): Distance units of RadiusDimension are undocumented; passed as is.
+                var radiusWarning = OrderRadiusPoints(points);
+                var radius = New(new TSD.RadiusDimension(
                     target, points[0], points[1], points[2], spec.Distance ?? 10,
                     string.IsNullOrWhiteSpace(spec.AttributeFile)
                         ? new TSD.RadiusDimensionAttributes()
                         : new TSD.RadiusDimensionAttributes(spec.AttributeFile)));
+                radius.Warning = radiusWarning;
+                return radius;
             case "curved_radial":
             case "curved_orthogonal":
                 RequirePoints(points, 4, kind);
@@ -436,8 +536,53 @@ public sealed partial class TeklaModelService
                 var mark = new TSD.Mark(modelObject);
                 if (!string.IsNullOrWhiteSpace(spec.AttributeFile))
                     mark.Attributes = new TSD.Mark.MarkAttributes(modelObject, spec.AttributeFile);
+                ApplyMarkPlacing(mark, markView, spec);
                 if (points.Count > 0) mark.InsertionPoint = points[0];
+                if (copiedContent != null)
+                {
+                    var markAttributes = mark.Attributes;
+                    markAttributes.Content = copiedContent;
+                    mark.Attributes = markAttributes;
+                }
+                if (!string.IsNullOrWhiteSpace(spec.ContentText)) SetMarkText(mark, spec.ContentText!);
                 return New(mark);
+            case "detail_mark":
+            {
+                // A callout without a view (issue #36): circle + label referencing another sheet.
+                if (!(target is TSD.View detailView))
+                    throw new ArgumentException("detail_mark requires a real drawing view, not the sheet.");
+                RequirePoints(points, 2, kind);
+                TSG.Point boundary, label;
+                if (points.Count >= 3)
+                {
+                    boundary = points[1];
+                    label = points[2];
+                }
+                else if (spec.Radius.HasValue && spec.Radius.Value > 0)
+                {
+                    boundary = new TSG.Point(points[0].X + spec.Radius.Value, points[0].Y, points[0].Z);
+                    label = points[1];
+                }
+                else
+                    throw new ArgumentException(
+                        "detail_mark needs center, boundary and label points, or center and label plus radius.");
+                var detailAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                    ? new TSD.DetailMark.DetailMarkAttributes()
+                    : new TSD.DetailMark.DetailMarkAttributes(spec.AttributeFile);
+                if (!string.IsNullOrWhiteSpace(spec.Text)) detailAttributes.MarkName = spec.Text;
+                return New(new TSD.DetailMark(detailView, points[0], boundary, label, detailAttributes));
+            }
+            case "section_mark":
+            {
+                if (!(target is TSD.View sectionView))
+                    throw new ArgumentException("section_mark requires a real drawing view, not the sheet.");
+                RequirePoints(points, 2, kind);
+                var sectionAttributes = string.IsNullOrWhiteSpace(spec.AttributeFile)
+                    ? new TSD.SectionMarkBase.SectionMarkAttributes()
+                    : new TSD.SectionMarkBase.SectionMarkAttributes(spec.AttributeFile);
+                if (!string.IsNullOrWhiteSpace(spec.Text)) sectionAttributes.MarkName = spec.Text;
+                return New(new TSD.SectionMark(sectionView, points[0], points[1], sectionAttributes));
+            }
             case "level_mark":
                 RequirePoints(points, 2, kind);
                 var levelMark = new TSD.LevelMark(
@@ -463,12 +608,60 @@ public sealed partial class TeklaModelService
                 throw new ArgumentException(
                     "Unknown kind. Use text, line, rectangle, circle, arc, polyline, polygon, cloud, " +
                     "straight_dimension, angle_dimension, radius_dimension, curved_radial, " +
-                    "curved_orthogonal, mark, level_mark or symbol.");
+                    "curved_orthogonal, mark, level_mark, detail_mark, section_mark or symbol.");
         }
     }
 
     private static CreatedDrawingObject New(TSD.DrawingObject obj, bool alreadyInserted = false) =>
         new CreatedDrawingObject { Object = obj, AlreadyInserted = alreadyInserted };
+
+    /// <summary>The scale of a placed view (1:Scale); the sheet and unknown views count as 1.</summary>
+    private static double ViewScale(TSD.ViewBase target)
+    {
+        if (!(target is TSD.View view)) return 1.0;
+        try { return view.Attributes.Scale; }
+        catch { return 1.0; }
+    }
+
+    /// <summary>
+    /// Reorders the three view-space arc points in place (<see cref="DimensionMath.OrderArcClockwise"/>)
+    /// and says so; refuses points that do not span an arc.
+    /// </summary>
+    private static string? OrderRadiusPoints(List<TSG.Point> points)
+    {
+        var ordered = DimensionMath.OrderArcClockwise(
+            ToPoint3D(points[0]), ToPoint3D(points[1]), ToPoint3D(points[2]), out var reversed);
+        if (ordered == null)
+            throw new ArgumentException(
+                "radius_dimension needs three distinct points on an arc, not on a straight line.");
+        if (!reversed) return null;
+        var first = points[0];
+        points[0] = points[2];
+        points[2] = first;
+        return "radius_dimension: points 1 and 3 were swapped so that Tekla's clockwise arc " +
+               "from point 1 to point 3 passes through point 2.";
+    }
+
+    /// <summary>
+    /// The preview of a radius dimension given in view/sheet coordinates says what apply will do:
+    /// swap points 1 and 3 or refuse collinear points (the preview used to plan both silently).
+    /// Model-space points are checked at apply, after the view transform.
+    /// </summary>
+    private static void PreviewRadiusOrder(DrawingObjectSpec spec, DrawingObjectInfo preview, DrawingWriteResult result)
+    {
+        if (NormalizeDrawingObjectKind(spec.Kind) != "RadiusDimension" || preview.Points.Count != 3) return;
+        if ((spec.CoordinateSpace ?? "view").Trim().Equals("model", StringComparison.OrdinalIgnoreCase)) return;
+        var ordered = DimensionMath.OrderArcClockwise(preview.Points[0], preview.Points[1], preview.Points[2], out var reversed);
+        if (ordered == null)
+        {
+            result.Errors.Add("radius_dimension needs three distinct points on an arc, not on a straight line.");
+            return;
+        }
+        if (!reversed) return;
+        preview.Points = ordered.ToList();
+        result.Warnings.Add("radius_dimension: points 1 and 3 will be swapped so that Tekla's clockwise arc " +
+                            "from point 1 to point 3 passes through point 2.");
+    }
 
     private static List<TSG.Point> TransformPoints(TSD.ViewBase target, DrawingObjectSpec spec)
     {
@@ -569,6 +762,18 @@ public sealed partial class TeklaModelService
                     throw new ArgumentException(
                         "visibility must be drawing, view, show_drawing or show_view.");
             }
+        }
+
+        if (modification.InsertionPoint != null || modification.LeaderStart != null ||
+            modification.ContentText != null)
+        {
+            if (!(obj is TSD.Mark mark))
+                throw new InvalidOperationException(
+                    "insertionPoint, leaderStart and contentText can only be changed on Mark objects.");
+            if (modification.LeaderStart != null)
+                mark.Placing = new TSD.LeaderLinePlacing(ToDrawingPoint(modification.LeaderStart));
+            if (modification.InsertionPoint != null) mark.InsertionPoint = ToDrawingPoint(modification.InsertionPoint);
+            if (modification.ContentText != null) SetMarkText(mark, modification.ContentText);
         }
 
         if (!string.IsNullOrWhiteSpace(modification.AttributeFile))

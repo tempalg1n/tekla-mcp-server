@@ -79,6 +79,14 @@ public interface ITeklaModelService
     ModelSummary GetModelSummary(bool includeWeights = true, int? maxObjects = null);
 
     /// <summary>
+    /// Read-only numbering status (issue #23): whether numbering of the whole model is up to
+    /// date, plus the status of up to <see cref="NumberingStatus.ObjectLimit"/> parts/assemblies
+    /// by GUID. Never numbers or changes anything. A GUID not in the model is reported with
+    /// Found=false, not as an error; a failed status call leaves its value null with a message.
+    /// </summary>
+    NumberingStatus GetNumberingStatus(IReadOnlyList<string>? guids);
+
+    /// <summary>
     /// Count objects matching <paramref name="query"/> WITHOUT materializing them.
     /// Implementations should use the cheapest possible path (e.g. an enumerator size for
     /// an unfiltered count) and must not read properties the query does not filter on.
@@ -317,6 +325,19 @@ public interface ITeklaModelService
     /// throws: failures go into <see cref="ViewCaptureResult.Message"/>.
     /// </summary>
     ViewCaptureResult CaptureView(ViewCaptureRequest request);
+
+    /// <summary>
+    /// Picture of the ACTIVE drawing for <c>tekla_capture_drawing</c>: the whole sheet, one view's
+    /// frame (<see cref="DrawingCaptureRequest.ViewId"/>) or a sheet region. Read-only — nothing in
+    /// Tekla changes. The live backend copies the pixels of the drawing editor's own window
+    /// (PrintWindow, never a screen copy) and locates the sheet on them
+    /// (<c>TeklaMcp.Core.Rendering.SheetLocator</c>); when the sheet cannot be located it returns
+    /// the whole editor window with <see cref="DrawingCaptureResult.Scope"/> = "visible" and says
+    /// so. No open drawing, a minimized or covered editor, or an unknown view fail with a
+    /// <see cref="DrawingCaptureResult.Message"/>. The mock backend returns a labelled stand-in
+    /// (<see cref="DrawingCaptureResult.Source"/>). Throws only when Tekla cannot be reached.
+    /// </summary>
+    DrawingCaptureResult CaptureDrawing(DrawingCaptureRequest request);
 
     // -- Mutations (create / modify / delete) ---------------------------------------------
     //

@@ -127,6 +127,28 @@ public class ScriptPolicyTests
         Assert.NotEmpty(ScriptPolicy.Validate("Operation.Split(beam, point);", allowMutations: false));
     }
 
+    [Theory]
+    // Issue #23: the exact field script, rejected by v0.8.x as mutating.
+    [InlineData("return Tekla.Structures.Model.Operations.Operation.IsNumberingUpToDateAll();")]
+    [InlineData("Operation.IsNumberingUpToDateAll()")]
+    [InlineData("var ok = Operation.IsNumberingUpToDate(part);\nok")]
+    [InlineData("Operation.IsNumberingAllowed()")]
+    public void Numbering_status_queries_are_read_only(string code)
+    {
+        var analysis = ScriptPolicy.Analyze(code, allowMutations: false);
+        Assert.Empty(analysis.Violations);
+        Assert.DoesNotContain("Operation", analysis.MutatingMembers);
+    }
+
+    [Theory]
+    [InlineData("Operation.RunMacro(\"x.cs\");")]
+    [InlineData("Operation.IsNumberingUpToDateAll(); Operation.Split(beam, point);")]
+    [InlineData("Func<bool> f = Operation.IsNumberingUpToDateAll;\nf()")] // a method group
+    [InlineData("using Op = Tekla.Structures.Model.Operations.Operation;\nOp.IsNumberingUpToDateAll()")]
+    [InlineData("using static Tekla.Structures.Model.Operations.Operation;\nIsNumberingUpToDateAll()")]
+    public void The_rest_of_operation_stays_gated(string code) =>
+        Assert.NotEmpty(ScriptPolicy.Validate(code, allowMutations: false));
+
     [Fact]
     public void Banned_name_used_as_a_declaration_says_rename_your_declaration()
     {

@@ -3,15 +3,17 @@ using System.ComponentModel;
 using System.Linq;
 using ModelContextProtocol.Server;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 
 namespace TeklaMcp.Server.Tools;
 
 /// <summary>Active-drawing view, annotation, graphic, dimension and mark editing.</summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Drawings)]
 public static class DrawingContentTools
 {
-    [McpServerTool(Name = "tekla_create_drawing_view")]
+    [McpServerTool(Name = "tekla_create_drawing_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a front/top/back/bottom/3D view on an ACTIVE assembly/single-part/" +
                  "cast-unit drawing (not GA). insertionPoint is on the sheet in paper mm. " +
                  "Preview unless apply=true.")]
@@ -51,14 +53,19 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_create_ga_drawing_view")]
+    [McpServerTool(Name = "tekla_create_ga_drawing_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a model view on the ACTIVE general-arrangement drawing from explicit " +
                  "global model coordinate systems and a restriction box. insertionPoint is on " +
-                 "the sheet in paper mm; restriction bounds are in view coordinates. Preview " +
-                 "unless apply=true.")]
+                 "the sheet in paper mm; restriction bounds are in view coordinates. By default " +
+                 "(placeBy=origin) insertionPoint is where the MODEL ORIGIN lands, so a restricted " +
+                 "plan can end up far off the sheet; placeBy=frame_lower_left / frame_center puts the " +
+                 "view FRAME there instead (moved after the insert, by the real frame with its " +
+                 "margins). The result's frameMin/frameMax give the frame on the sheet (in a preview: " +
+                 "an estimate without margins). Tekla counts HIDDEN marks in the frame, so a hidden mark " +
+                 "far from its part shifts frame and label (a warning says so). Preview unless apply=true.")]
     public static DrawingWriteResult CreateGaDrawingView(
         ITeklaModelService model,
-        [Description("Sheet insertion point 'x,y,z' in paper mm.")] string insertionPoint,
+        [Description("Sheet point 'x,y,z' in paper mm; its meaning is set by placeBy.")] string insertionPoint,
         [Description("View-coordinate-system origin in global model coordinates.")] string viewOrigin,
         [Description("View-coordinate-system X axis vector.")] string viewAxisX,
         [Description("View-coordinate-system Y axis vector.")] string viewAxisY,
@@ -71,8 +78,14 @@ public static class DrawingContentTools
         [Description("Optional view name.")] string name = "",
         [Description("Optional view scale.")] double? scale = null,
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("What insertionPoint places: origin (model origin, default), frame_lower_left or frame_center.")]
+        string placeBy = "origin")
     {
+        if (ViewPlacement.Normalize(placeBy) == null)
+            return ToolValidationFailure(
+                "create_drawing_views", apply,
+                "placeBy must be origin, frame_lower_left or frame_center.");
         var insertion = ToolHelpers.ParsePoint(insertionPoint);
         var viewO = ToolHelpers.ParsePoint(viewOrigin);
         var viewX = ToolHelpers.ParsePoint(viewAxisX);
@@ -138,6 +151,7 @@ public static class DrawingContentTools
                 RestrictionMax = max,
                 AttributeFile = attributeFile ?? "",
                 Name = name ?? "",
+                PlaceBy = ViewPlacement.Normalize(placeBy)!,
                 Scale = scale,
             },
         }, apply));
@@ -154,9 +168,15 @@ public static class DrawingContentTools
         return crossX * crossX + crossY * crossY + crossZ * crossZ < 1e-18;
     }
 
-    [McpServerTool(Name = "tekla_create_section_view")]
+    [McpServerTool(Name = "tekla_create_section_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a straight or curved section view from an existing view on the ACTIVE " +
-                 "drawing. Cut points are view-local; insertionPoint is sheet paper mm. Preview unless apply=true.")]
+                 "drawing. Cut points are view-local; insertionPoint is sheet paper mm. The section " +
+                 "looks along the cut direction rotated +90° in the source view (a cut drawn upwards " +
+                 "looks toward −x; the preview states it). depthUp = how far it sees BEHIND the cut " +
+                 "plane, depthDown = the slab between the cut and the viewer; both must be > 0. " +
+                 "attributeFile is loaded after creation (Tekla ignores it in CreateSectionView), " +
+                 "keeping name, scale, label and restriction box. The created section mark is " +
+                 "returned in objectPreview (rename it with the view). Preview unless apply=true.")]
     public static DrawingWriteResult CreateSectionView(
         ITeklaModelService model,
         [Description("Source View ID from tekla_list_drawing_views.")] int sourceViewId,
@@ -165,8 +185,8 @@ public static class DrawingContentTools
         [Description("New view insertion point on sheet 'x,y,z' (paper mm).")] string insertionPoint,
         [Description("Ephemeral source-view index fallback when source IDs are zero.")] int sourceViewIndex = -1,
         [Description("true = curved section, false = straight.")] bool curved = false,
-        [Description("Depth above cut (model mm).")] double depthUp = 0,
-        [Description("Depth below cut (model mm).")] double depthDown = 0,
+        [Description("Depth BEHIND the cut plane, away from the viewer (model mm, > 0).")] double? depthUp = null,
+        [Description("Depth between the cut plane and the viewer (model mm, > 0; typically 5-10).")] double? depthDown = null,
         [Description("Saved view attributes file.")] string attributeFile = "",
         [Description("Saved section-mark attributes file.")] string markAttributeFile = "",
         [Description("Optional created-view name.")] string name = "",
@@ -186,6 +206,9 @@ public static class DrawingContentTools
             return ToolValidationFailure(
                 "create_drawing_views", apply,
                 "insertionPoint must use the 'x,y,z' format.");
+        var depthProblem = SectionViews.CheckDepths(depthUp, depthDown);
+        if (depthProblem != null)
+            return ToolValidationFailure("create_drawing_views", apply, depthProblem);
 
         return ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingViews(new[]
         {
@@ -207,9 +230,11 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_create_detail_view")]
+    [McpServerTool(Name = "tekla_create_detail_view", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a detail view from an existing view on the ACTIVE drawing. center/boundary/" +
-                 "label are view-local; insertionPoint is sheet paper mm. Preview unless apply=true.")]
+                 "label are view-local; insertionPoint is sheet paper mm. attributeFile is loaded after " +
+                 "creation, keeping name, scale, label and restriction box; the created detail mark is " +
+                 "returned in objectPreview. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDetailView(
         ITeklaModelService model,
         [Description("Source View ID.")] int sourceViewId,
@@ -253,9 +278,21 @@ public static class DrawingContentTools
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_modify_drawing_view")]
+    [McpServerTool(Name = "tekla_modify_drawing_view", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Modify one ACTIVE-drawing view by non-zero session ID/ID2 or ephemeral index: " +
-                 "name, sheet origin/frame size, scale and rotations. Angles are degrees. " +
+                 "name, sheet origin/frame size, scale and rotations, or load a saved view attributes " +
+                 "file (attributeFile, e.g. one carrying a part filter and neighbour-part filter) while " +
+                 "keeping the view's scale, restriction box, origin, label and name (keep* default true; " +
+                 "explicit origin/scale/name override them). The name is used verbatim (a leading space " +
+                 "is part of it). After loading, the message gives the view's model-object " +
+                 "count before and after, so you can see whether a filter took effect. Tekla caches view " +
+                 "filters by attribute-file NAME within a session: after editing <name>.vi.npfilter, " +
+                 "save it under a NEW name, or the view keeps the old filter. A new scale keeps the " +
+                 "paper offset of leader-line marks (keepMarkOffsets, default true); dimension lines keep " +
+                 "theirs by themselves, so never rescale their distances. labelText sets the view label " +
+                 "(API-created views often have an empty one; tekla_list_drawing_views shows labelText); " +
+                 "renameMark=true with a new name renames the section/detail mark of the same old name. " +
+                 "The label sits above the frame, and hidden marks extend the frame. Angles are degrees. " +
                  "Preview unless apply=true; re-list after structural edits.")]
     public static DrawingWriteResult ModifyDrawingView(
         ITeklaModelService model,
@@ -272,11 +309,27 @@ public static class DrawingContentTools
         [Description("Rotate around view Z in degrees.")] double? rotateZDegrees = null,
         [Description("Rotate on drawing plane in degrees.")] double? rotateOnDrawingPlaneDegrees = null,
         [Description("Set true to commit; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Saved view attributes file to load (name without extension); omit to keep.")] string? attributeFile = null,
+        [Description("Keep the current scale when loading attributeFile (default true).")] bool keepScale = true,
+        [Description("Keep the current restriction box when loading attributeFile (default true).")] bool keepRestrictionBox = true,
+        [Description("Keep the current sheet origin when loading attributeFile (default true).")] bool keepOrigin = true,
+        [Description("Keep the current view label when loading attributeFile (default true).")] bool keepLabel = true,
+        [Description("Keep the current view name when loading attributeFile (default true).")] bool keepName = true,
+        [Description("With a new scale: move leader-line marks so their paper offset stays (default true).")] bool keepMarkOffsets = true,
+        [Description("New view label text (replaces tag A1); omit to keep.")] string? labelText = null,
+        [Description("Label font name; default = the current label's font, else Arial.")] string? labelFont = null,
+        [Description("Label text height in paper mm; default = the current label's, else 3.5.")] double? labelHeight = null,
+        [Description("Label vertical position: top or bottom; omit to keep.")] string? labelVertical = null,
+        [Description("Label horizontal position: centered_by_frame, centered_by_restriction_box, left_by_frame, right_by_frame, left_by_restriction_box, right_by_restriction_box; omit to keep.")] string? labelHorizontal = null,
+        [Description("With labelText: empty the other label tags A2-A5 (default true).")] bool clearOtherTags = true,
+        [Description("With a new name: also rename the section/detail mark named like the view's old name.")] bool renameMark = false)
     {
         if (name == null && origin == null && !width.HasValue && !height.HasValue &&
             !scale.HasValue && !rotateXDegrees.HasValue && !rotateYDegrees.HasValue &&
-            !rotateZDegrees.HasValue && !rotateOnDrawingPlaneDegrees.HasValue)
+            !rotateZDegrees.HasValue && !rotateOnDrawingPlaneDegrees.HasValue &&
+            string.IsNullOrWhiteSpace(attributeFile) && labelText == null &&
+            string.IsNullOrWhiteSpace(labelVertical) && string.IsNullOrWhiteSpace(labelHorizontal))
             return ToolValidationFailure(
                 "modify_drawing_views", apply,
                 "No view changes were supplied.");
@@ -307,11 +360,26 @@ public static class DrawingContentTools
                 RotateYDegrees = rotateYDegrees,
                 RotateZDegrees = rotateZDegrees,
                 RotateOnDrawingPlaneDegrees = rotateOnDrawingPlaneDegrees,
+                // Verbatim: Tekla 2021 loads " Truss node" (leading space) only with the space.
+                AttributeFile = string.IsNullOrWhiteSpace(attributeFile) ? null : attributeFile,
+                KeepScale = keepScale,
+                KeepRestrictionBox = keepRestrictionBox,
+                KeepOrigin = keepOrigin,
+                KeepLabel = keepLabel,
+                KeepName = keepName,
+                KeepMarkOffsets = keepMarkOffsets,
+                LabelText = labelText,
+                LabelFont = labelFont,
+                LabelHeight = labelHeight,
+                LabelVertical = string.IsNullOrWhiteSpace(labelVertical) ? null : labelVertical,
+                LabelHorizontal = string.IsNullOrWhiteSpace(labelHorizontal) ? null : labelHorizontal,
+                ClearOtherTags = clearOtherTags,
+                RenameMark = renameMark,
             },
         }, apply));
     }
 
-    [McpServerTool(Name = "tekla_delete_drawing_view")]
+    [McpServerTool(Name = "tekla_delete_drawing_view", ReadOnly = false, Destructive = true, Idempotent = true, OpenWorld = false)]
     [Description("Delete one view and its children from the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult DeleteDrawingView(
         ITeklaModelService model,
@@ -331,7 +399,7 @@ public static class DrawingContentTools
             },
         }, apply));
 
-    [McpServerTool(Name = "tekla_create_drawing_objects")]
+    [McpServerTool(Name = "tekla_create_drawing_objects", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Batch-create up to 200 annotations/graphics/dimensions/marks in the ACTIVE " +
                  "drawing. Structured DrawingObjectSpec items. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingObjects(
@@ -342,7 +410,7 @@ public static class DrawingContentTools
         ToolHelpers.Write(model, expectedModelPath, () => model.CreateDrawingObjects(
             (objects ?? new List<DrawingObjectSpec>()).Take(200).ToList(), apply));
 
-    [McpServerTool(Name = "tekla_create_drawing_text")]
+    [McpServerTool(Name = "tekla_create_drawing_text", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create text in a view (view-local/model coordinates) or on the sheet (paper mm). " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingText(
@@ -360,7 +428,7 @@ public static class DrawingContentTools
             attributeFile, text: text, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_line")]
+    [McpServerTool(Name = "tekla_create_drawing_line", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a line in the ACTIVE drawing. Points use view-local/model/sheet coordinates. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingLine(
@@ -378,7 +446,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_rectangle")]
+    [McpServerTool(Name = "tekla_create_drawing_rectangle", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a rectangle from two opposite points in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingRectangle(
         ITeklaModelService model,
@@ -395,7 +463,7 @@ public static class DrawingContentTools
             attributeFile, angleDegrees: angleDegrees, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_circle")]
+    [McpServerTool(Name = "tekla_create_drawing_circle", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a circle in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingCircle(
         ITeklaModelService model,
@@ -412,7 +480,7 @@ public static class DrawingContentTools
             attributeFile, radius: radius, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_arc")]
+    [McpServerTool(Name = "tekla_create_drawing_arc", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create an arc from three points, or two points plus radius. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingArc(
         ITeklaModelService model,
@@ -429,7 +497,7 @@ public static class DrawingContentTools
             attributeFile, radius: radius, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_polyline")]
+    [McpServerTool(Name = "tekla_create_drawing_polyline", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a polyline in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingPolyline(
         ITeklaModelService model,
@@ -446,7 +514,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_drawing_polygon")]
+    [McpServerTool(Name = "tekla_create_drawing_polygon", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a closed polygon in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingPolygon(
         ITeklaModelService model,
@@ -463,7 +531,7 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_revision_cloud")]
+    [McpServerTool(Name = "tekla_create_revision_cloud", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a revision cloud in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateRevisionCloud(
         ITeklaModelService model,
@@ -480,21 +548,33 @@ public static class DrawingContentTools
             attributeFile, bulge: bulge, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_straight_dimension")]
+    [McpServerTool(Name = "tekla_create_straight_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a straight dimension set in a real view of the ACTIVE drawing. Distance " +
-                 "is paper mm; points may be view-local or global model coordinates. Preview unless apply=true.")]
+                 "is paper mm (the server multiplies it by the view scale, which is what Tekla " +
+                 "expects); Tekla offsets the line from the OUTERMOST point of the set along " +
+                 "upDirection. Points may be view-local or global model coordinates. Use placing=fixed " +
+                 "when the line must stay at that offset (free placing moves it away from marks). When " +
+                 "reading dimension sets back (tekla_list_drawing_objects), dimensionDistance is in view " +
+                 "units at the CURRENT scale and doubles after 1:5 → 1:10 although nothing moved: use " +
+                 "dimensionDistancePaperMm. Preview unless apply=true.")]
     public static DrawingWriteResult CreateStraightDimension(
         ITeklaModelService model,
         [Description("Two or more dimension points 'x,y,z; ...'.")] string points,
         [Description("Target View ID.")] int viewId,
         [Description("Target View ID2.")] int viewId2 = 0,
         [Description("Up direction 'x,y,z' in view coordinates.")] string upDirection = "0,1,0",
-        [Description("Dimension line distance in paper mm.")] double distance = 10,
+        [Description("Dimension line distance in paper mm, from the outermost point along upDirection.")] double distance = 10,
         [Description("view or model.")] string coordinateSpace = "view",
         [Description("Saved dimension attributes file.")] string attributeFile = "",
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("fixed = keep the line exactly at distance; free = Tekla may move it away from marks " +
+                     "(the offset is then not kept); empty = the attribute file's setting.")] string placing = "")
     {
+        var normalizedPlacing = (placing ?? "").Trim().ToLowerInvariant();
+        if (normalizedPlacing.Length > 0 && normalizedPlacing != "fixed" && normalizedPlacing != "free")
+            return ToolValidationFailure(
+                "create_drawing_objects", apply, "placing must be fixed, free or empty.");
         var up = ToolHelpers.ParsePoint(upDirection);
         if (up == null || IsZeroVector(up))
             return ToolValidationFailure(
@@ -504,10 +584,10 @@ public static class DrawingContentTools
             model, "straight_dimension", points,
             viewId, viewId2, -1, coordinateSpace,
             attributeFile, upDirection: up, distance: distance, apply: apply,
-            expectedModelPath: expectedModelPath);
+            expectedModelPath: expectedModelPath, placing: normalizedPlacing);
     }
 
-    [McpServerTool(Name = "tekla_create_angle_dimension")]
+    [McpServerTool(Name = "tekla_create_angle_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create an angle dimension from origin, point1, point2. Distance is paper mm. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult CreateAngleDimension(
@@ -524,11 +604,17 @@ public static class DrawingContentTools
             attributeFile, distance: distance, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_radius_dimension")]
-    [Description("Create a radius dimension from three arc points. Distance is paper mm. Preview unless apply=true.")]
+    [McpServerTool(Name = "tekla_create_radius_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [Description("Create a radius dimension from three arc points: start, a point on the arc " +
+                 "between, end — in either direction. Tekla draws the arc clockwise from point 1 " +
+                 "to point 3, so the server swaps points 1 and 3 when they run counter-clockwise " +
+                 "in the view (a warning says so); a wrong middle point dimensions the " +
+                 "complementary arc. For exact values take the points from " +
+                 "tekla_get_part_curve_geometry's view block rather than rounding them. " +
+                 "Distance is paper mm. Preview unless apply=true.")]
     public static DrawingWriteResult CreateRadiusDimension(
         ITeklaModelService model,
-        [Description("Three arc points 'x,y,z; ...'.")] string points,
+        [Description("Arc start; a point on the arc between; arc end, as 'x,y,z; x,y,z; x,y,z'.")] string points,
         [Description("Target View ID.")] int viewId,
         [Description("Target View ID2.")] int viewId2 = 0,
         [Description("Dimension distance in paper mm.")] double distance = 10,
@@ -540,7 +626,7 @@ public static class DrawingContentTools
             attributeFile, distance: distance, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_create_curved_dimension")]
+    [McpServerTool(Name = "tekla_create_curved_dimension", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a radial or orthogonal curved dimension. First 3 points define the arc; " +
                  "remaining points are dimension points. Preview unless apply=true.")]
     public static DrawingWriteResult CreateCurvedDimension(
@@ -572,8 +658,13 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath);
     }
 
-    [McpServerTool(Name = "tekla_create_drawing_mark")]
-    [Description("Create a mark for a model object already represented in a target view. Preview unless apply=true.")]
+    [McpServerTool(Name = "tekla_create_drawing_mark", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    [Description("Create a mark for a model object already represented in a target view. Optional: " +
+                 "leaderStart (a point on the VISIBLE part — a member mark with default placing sits at " +
+                 "the part's midpoint, often outside a detail view, and still counts in the view frame), " +
+                 "placing (leader_line / base_line / along_line with lineEnd / point), contentText to " +
+                 "replace the content, or copyContentFromMarkId to clone another mark's content (e.g. a " +
+                 "bolt mark). Points are view coordinates. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingMark(
         ITeklaModelService model,
         [Description("Represented model-object GUID.")] string modelGuid,
@@ -582,12 +673,82 @@ public static class DrawingContentTools
         [Description("Optional mark insertion point 'x,y,z' in view coordinates.")] string? insertionPoint = null,
         [Description("Saved mark attributes file.")] string attributeFile = "",
         [Description("Set true to create; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
-        CreateOne(model, "mark", insertionPoint ?? "", viewId, viewId2, -1, "view",
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Leader-line start 'x,y,z' (view coordinates), on the visible part.")] string? leaderStart = null,
+        [Description("leader_line (default with leaderStart), base_line, along_line or point.")] string placing = "",
+        [Description("base_line / along_line: the line's end 'x,y,z'.")] string? lineEnd = null,
+        [Description("Replace the mark content with this text.")] string? contentText = null,
+        [Description("Copy the content of this existing mark ('id:id2' from tekla_list_drawing_objects).")] string? copyContentFromMarkId = null)
+    {
+        var start = ToolHelpers.ParsePoint(leaderStart);
+        var end = ToolHelpers.ParsePoint(lineEnd);
+        if ((!string.IsNullOrWhiteSpace(leaderStart) && start == null) || (!string.IsNullOrWhiteSpace(lineEnd) && end == null))
+            return ToolValidationFailure("create_drawing_objects", apply, "leaderStart and lineEnd must use 'x,y,z'.");
+        var mode = (placing ?? "").Trim().Replace("-", "_").ToLowerInvariant();
+        if (mode.Length > 0 && mode != "leader_line" && mode != "base_line" && mode != "along_line" && mode != "point")
+            return ToolValidationFailure("create_drawing_objects", apply,
+                "placing must be leader_line, base_line, along_line or point.");
+        return CreateOne(model, "mark", insertionPoint ?? "", viewId, viewId2, -1, "view",
             attributeFile, modelGuid: modelGuid, apply: apply,
-            expectedModelPath: expectedModelPath);
+            expectedModelPath: expectedModelPath, placing: mode,
+            leaderStart: start, lineEnd: end, contentText: contentText,
+            copyContentFrom: copyContentFromMarkId);
+    }
 
-    [McpServerTool(Name = "tekla_create_level_mark")]
+    [McpServerTool(Name = "tekla_create_detail_mark", ReadOnly = false, Destructive = false,
+        Idempotent = false, OpenWorld = false)]
+    [Description("Create a standalone DETAIL MARK (callout circle + label) in a view of the ACTIVE drawing, " +
+                 "WITHOUT creating a detail view — e.g. to reference a node drawn on another sheet (issue #36). " +
+                 "Give center + boundary + label points, or center + label + radius (model mm). Points are " +
+                 "view-local, or global model coordinates with coordinateSpace=model. The created mark's " +
+                 "ID is returned in objectPreview (detail marks cannot be listed back reliably). Preview " +
+                 "unless apply=true.")]
+    public static DrawingWriteResult CreateDetailMark(
+        ITeklaModelService model,
+        [Description("Target View ID.")] int viewId,
+        [Description("Detail centre 'x,y,z'.")] string centerPoint,
+        [Description("Label point 'x,y,z'.")] string labelPoint,
+        [Description("Target View ID2.")] int viewId2 = 0,
+        [Description("Boundary point 'x,y,z' on the circle; omit when giving radius.")] string? boundaryPoint = null,
+        [Description("Circle radius (model mm) when no boundaryPoint is given.")] double? radius = null,
+        [Description("Mark name, e.g. the node number.")] string markName = "",
+        [Description("Saved detail-mark attributes file.")] string markAttributeFile = "",
+        [Description("view or model.")] string coordinateSpace = "view",
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+    {
+        var points = string.IsNullOrWhiteSpace(boundaryPoint)
+            ? centerPoint + "; " + labelPoint
+            : centerPoint + "; " + boundaryPoint + "; " + labelPoint;
+        if (string.IsNullOrWhiteSpace(boundaryPoint) && (!radius.HasValue || radius.Value <= 0))
+            return ToolValidationFailure(
+                "create_drawing_objects", apply, "Give boundaryPoint, or radius > 0.");
+        return CreateOne(model, "detail_mark", points, viewId, viewId2, -1, coordinateSpace,
+            markAttributeFile, text: markName, radius: radius, apply: apply,
+            expectedModelPath: expectedModelPath);
+    }
+
+    [McpServerTool(Name = "tekla_create_section_mark", ReadOnly = false, Destructive = false,
+        Idempotent = false, OpenWorld = false)]
+    [Description("Create a standalone SECTION MARK (cut symbols) in a view of the ACTIVE drawing, WITHOUT " +
+                 "creating a section view — e.g. to reference a section drawn on another sheet (issue #36). " +
+                 "Two points: left and right symbol; the look direction follows the same rule as " +
+                 "tekla_create_section_view (the cut direction rotated +90°). Points are view-local, or " +
+                 "global model coordinates with coordinateSpace=model. Preview unless apply=true.")]
+    public static DrawingWriteResult CreateSectionMark(
+        ITeklaModelService model,
+        [Description("Target View ID.")] int viewId,
+        [Description("Left point; right point as 'x,y,z; x,y,z'.")] string points,
+        [Description("Target View ID2.")] int viewId2 = 0,
+        [Description("Mark name, e.g. '6'.")] string markName = "",
+        [Description("Saved section-mark attributes file.")] string markAttributeFile = "",
+        [Description("view or model.")] string coordinateSpace = "view",
+        [Description("Set true to create; false returns preview.")] bool apply = false,
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null) =>
+        CreateOne(model, "section_mark", points, viewId, viewId2, -1, coordinateSpace,
+            markAttributeFile, text: markName, apply: apply, expectedModelPath: expectedModelPath);
+
+    [McpServerTool(Name = "tekla_create_level_mark", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a level mark from insertion and base points. Preview unless apply=true.")]
     public static DrawingWriteResult CreateLevelMark(
         ITeklaModelService model,
@@ -618,7 +779,7 @@ public static class DrawingContentTools
             expectedModelPath: expectedModelPath);
     }
 
-    [McpServerTool(Name = "tekla_create_drawing_symbol")]
+    [McpServerTool(Name = "tekla_create_drawing_symbol", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Create a symbol from a Tekla .sym library in the ACTIVE drawing. Preview unless apply=true.")]
     public static DrawingWriteResult CreateDrawingSymbol(
         ITeklaModelService model,
@@ -636,10 +797,11 @@ public static class DrawingContentTools
             attributeFile, symbolFile: symbolFile, symbolIndex: symbolIndex, apply: apply,
             expectedModelPath: expectedModelPath);
 
-    [McpServerTool(Name = "tekla_modify_drawing_objects")]
+    [McpServerTool(Name = "tekla_modify_drawing_objects", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Batch edit active-drawing objects: change Text contents, move, set visibility, " +
-                 "or load an attributes file. Address by non-zero session Object ID:ID2 or current selection. " +
-                 "Preview unless apply=true.")]
+                 "or load an attributes file; on marks also set insertionPoint, leaderStart (puts the mark " +
+                 "on a leader line) and contentText. Address by non-zero session Object ID:ID2 or current " +
+                 "selection. Preview unless apply=true.")]
     public static DrawingWriteResult ModifyDrawingObjects(
         ITeklaModelService model,
         [Description("Object IDs 'id:id2; id:id2'.")] string? objectIds = null,
@@ -651,10 +813,19 @@ public static class DrawingContentTools
         [Description("Saved attributes file to load; omit to keep.")] string? attributeFile = null,
         [Description("Safety cap (default 200).")] int limit = 200,
         [Description("Set true to commit; false returns preview.")] bool apply = false,
-        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null)
+        [Description(ToolHelpers.ExpectedModelPathDescription)] string? expectedModelPath = null,
+        [Description("Marks: new insertion point 'x,y,z' (view coordinates).")] string? insertionPoint = null,
+        [Description("Marks: leader-line start 'x,y,z' (view coordinates).")] string? leaderStart = null,
+        [Description("Marks: replace the content with this text.")] string? contentText = null)
     {
         var rejected = RejectEmptyMutationScope(
             model, "modify_drawing_objects", objectIds, types, useSelection, apply);
+        var parsedInsertion = ToolHelpers.ParsePoint(insertionPoint);
+        var parsedLeader = ToolHelpers.ParsePoint(leaderStart);
+        if ((!string.IsNullOrWhiteSpace(insertionPoint) && parsedInsertion == null) ||
+            (!string.IsNullOrWhiteSpace(leaderStart) && parsedLeader == null))
+            return ToolValidationFailure(
+                "modify_drawing_objects", apply, "insertionPoint and leaderStart must use 'x,y,z'.");
         if (rejected != null) return rejected;
         var parsedMove = ToolHelpers.ParsePoint(moveBy);
         if (!string.IsNullOrWhiteSpace(moveBy) && parsedMove == null)
@@ -679,12 +850,15 @@ public static class DrawingContentTools
                 MoveBy = parsedMove,
                 Visibility = normalizedVisibility.Length == 0 ? null : normalizedVisibility,
                 AttributeFile = attributeFile,
+                InsertionPoint = parsedInsertion,
+                LeaderStart = parsedLeader,
+                ContentText = contentText,
             },
             apply,
             limit));
     }
 
-    [McpServerTool(Name = "tekla_delete_drawing_objects")]
+    [McpServerTool(Name = "tekla_delete_drawing_objects", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Delete matched objects from the ACTIVE drawing by non-zero session IDs/type/selection. " +
                  "Preview unless apply=true.")]
     public static DrawingWriteResult DeleteDrawingObjects(
@@ -707,7 +881,7 @@ public static class DrawingContentTools
             limit));
     }
 
-    [McpServerTool(Name = "tekla_merge_drawing_marks")]
+    [McpServerTool(Name = "tekla_merge_drawing_marks", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Merge compatible Mark objects in the ACTIVE drawing. Address by IDs or use " +
                  "the current selection. Preview unless apply=true.")]
     public static DrawingWriteResult MergeDrawingMarks(
@@ -727,7 +901,7 @@ public static class DrawingContentTools
             "merge", apply, limit));
     }
 
-    [McpServerTool(Name = "tekla_split_drawing_marks")]
+    [McpServerTool(Name = "tekla_split_drawing_marks", ReadOnly = false, Destructive = true, Idempotent = false, OpenWorld = false)]
     [Description("Split merged Mark/MarkSet objects in the ACTIVE drawing. Address by IDs or use " +
                  "the current selection. Preview unless apply=true.")]
     public static DrawingWriteResult SplitDrawingMarks(
@@ -767,7 +941,12 @@ public static class DrawingContentTools
         Point3D? upDirection = null,
         double? distance = null,
         bool apply = false,
-        string? expectedModelPath = null)
+        string? expectedModelPath = null,
+        string placing = "",
+        Point3D? leaderStart = null,
+        Point3D? lineEnd = null,
+        string? contentText = null,
+        string? copyContentFrom = null)
     {
         var normalizedKind = (kind ?? "").Trim().Replace("-", "_").ToLowerInvariant();
         var normalizedSpace = (coordinateSpace ?? "view").Trim().ToLowerInvariant();
@@ -842,6 +1021,11 @@ public static class DrawingContentTools
                 AngleDegrees = angleDegrees,
                 UpDirection = upDirection,
                 Distance = distance,
+                Placing = placing.Length == 0 ? null : placing,
+                LeaderStart = leaderStart,
+                LineEnd = lineEnd,
+                ContentText = string.IsNullOrWhiteSpace(contentText) ? null : contentText,
+                CopyContentFromObjectId = string.IsNullOrWhiteSpace(copyContentFrom) ? null : copyContentFrom,
             },
         }, apply));
     }
@@ -861,6 +1045,8 @@ public static class DrawingContentTools
             case "straight_dimension":
             case "dimension":
             case "level_mark": return 2;
+            case "detail_mark":
+            case "section_mark": return 2;
             case "polygon":
             case "cloud":
             case "angle_dimension":

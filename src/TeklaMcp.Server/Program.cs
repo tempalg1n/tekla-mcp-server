@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using TeklaMcp.Core;
 using TeklaMcp.Mock;
+using TeklaMcp.Server; // WithSelectedTools
 
 // ---------------------------------------------------------------------------
 // Tekla MCP server — entry point.
@@ -18,6 +19,29 @@ using TeklaMcp.Mock;
 // Console.WriteLine("Connection failed : …") when a remoting channel fails — one such line
 // would corrupt the JSON-RPC framing. Route all Console.Out writers to stderr up front.
 Console.SetOut(Console.Error);
+
+// --- Operator switches (ToolExposure) -----------------------------------------
+// TEKLA_MCP_READ_ONLY serves only tools annotated ReadOnly = true and makes every write path refuse
+// (ServerMode); a value it does not recognize turns it ON. TEKLA_MCP_TOOLSETS narrows tools/list to
+// whole tool files; an unknown name stops the server rather than silently hiding tools.
+var readOnly = ToolExposure.ParseReadOnly(
+    Environment.GetEnvironmentVariable(ToolExposure.ReadOnlyVariable), out var readOnlyWarning);
+if (readOnlyWarning != null) Console.Error.WriteLine("[tekla-mcp] " + readOnlyWarning);
+var toolsets = ToolExposure.ParseToolsets(
+    Environment.GetEnvironmentVariable(ToolExposure.ToolsetsVariable), out var toolsetsError);
+if (toolsetsError != null)
+{
+    Console.Error.WriteLine("[tekla-mcp] " + toolsetsError);
+    return 2;
+}
+TeklaMcp.Server.ServerMode.Configure(readOnly, toolsets);
+var allTools = TeklaMcp.Server.ToolRegistration.Discover();
+var servedTools = TeklaMcp.Server.ToolRegistration.Select(allTools, readOnly, toolsets);
+if (readOnly || toolsets != null)
+    Console.Error.WriteLine(
+        "[tekla-mcp] serving " + servedTools.Count + " of " + allTools.Count + " tools" +
+        (readOnly ? "; read-only mode (" + ToolExposure.ReadOnlyVariable + ")" : "") +
+        (toolsets != null ? "; toolsets " + string.Join(",", toolsets) : "") + ".");
 
 // The server has no appsettings/user-secrets dependency. Disabling generic-host defaults keeps
 // stdio startup deterministic and avoids host configuration/file-watcher stalls when a net8
@@ -107,7 +131,8 @@ const string serverInstructions =
     "validate the exact script with tekla_check_csharp, show the user the script and what it will " +
     "change, get their explicit go-ahead, only then run it with allowMutations=true and " +
     "expectedSha256 = the codeSha256 the check returned (any edit after approval changes the hash " +
-    "and the run is refused — check and approve again) — and keep changes traceable (MCP_ORIGIN " +
+    "and the run is refused — check and approve again; line endings and trailing whitespace do " +
+    "not count). Pass the check's checkId instead of re-sending the code — and keep changes traceable (MCP_ORIGIN " +
     "UDA) and reversible (Tekla Ctrl+Z).\n\n" +
     "WRITE RESULTS say what happened: outcome = planned (preview) / not_written / committed / " +
     "partial (see errors) / unknown, plus target = the model path and Tekla PID the write went to. " +
@@ -119,7 +144,11 @@ const string serverInstructions =
     "marks) is EXPERIMENTAL: new in v0.7.0 with limited live " +
     "testing, and Tekla's Drawing API has version-specific quirks. If a drawing tool fails " +
     "unexpectedly, tell the user plainly and report it with tekla_report_gap instead of " +
-    "retrying blindly or scripting around it.\n\n" +
+    "retrying blindly or scripting around it. A write to the OPEN drawing that says committed is " +
+    "NOT saved (drawingSaved=false): Tekla drops unsaved drawing edits when the model is reopened, " +
+    "so ask the user to save — or call tekla_save_drawing — after each milestone. Model object IDs " +
+    "and drawing/view IDs can change when a (multi-user) model is reopened: keep GUIDs, not IDs, " +
+    "across sessions.\n\n" +
     "CURVED PARTS: radius and curved dimensions need exact arc points. Get them from " +
     "tekla_get_part_curve_geometry (bends with radius/chord/sagitta/arc length, inner/outer arcs " +
     "of round tubes and bars, optional view coordinates) — never estimate them from bounding " +
@@ -129,7 +158,10 @@ const string serverInstructions =
     "restored change on the user's screen). tekla_render_schematic (BETA — an early, simplified " +
     "sketch that can look cluttered on dense models) draws a numbered plan/elevation/iso with real " +
     "grid labels and a legend with GUIDs, without touching Tekla. Use them to orient yourself, to " +
-    "identify what the user points at, and to check what a write created before you report success.\n\n" +
+    "identify what the user points at, and to check what a write created before you report success. " +
+    "After DRAWING edits, look at the result with tekla_capture_drawing (the open drawing: whole sheet, " +
+    "one view by viewId, or a sheet region; read-only) before you report success: dimensions on top of " +
+    "parts, a radius drawn as a full circle or a wrong view label are obvious on the picture.\n\n" +
     "KNOWN MODEL-LAYER QUIRKS (verified on live Tekla — trust the tools over a raw script here):\n" +
     "- Connection.UpVector is only STORED under auto-direction NA. Under BASIC the Open API " +
     "returns success and silently recomputes the vector. Use tekla_modify_connections, which " +
@@ -146,6 +178,10 @@ const string serverInstructions =
     "component inserts fine without it (field report, not yet reduced to a repro). Prefer " +
     "tekla_copy_connection from a working detail; pass attributesFile only when a specific " +
     "saved set is genuinely required.\n" +
+    "- In a script, every GetUserProperty overload returns TRUE for a set UDA (Tekla 2021): the " +
+    "string overload gives \"\" for a number, the int/double overloads give 0 for a string. Read a " +
+    "UDA with the overload of its declared type (tekla_list_catalog kind=uda_definitions) or use " +
+    "tekla_get_object_udas, which does that for you.\n" +
     "- Prefer the batch tools (tekla_modify_parts, tekla_modify_connections, tekla_create_beams) " +
     "over N single-object calls when editing a whole axis or frame.";
 
@@ -153,7 +189,7 @@ var informationalVersion = System.Reflection.Assembly.GetExecutingAssembly()
     .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
     .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
     .FirstOrDefault()?.InformationalVersion;
-var serverVersion = (informationalVersion ?? "0.8.1").Split('+')[0];
+var serverVersion = (informationalVersion ?? "0.9.0").Split('+')[0];
 
 builder.Services
     .AddMcpServer(options =>
@@ -164,10 +200,12 @@ builder.Services
             Title = "Tekla MCP Server",
             Version = serverVersion,
         };
-        options.ServerInstructions = serverInstructions;
+        // A reduced tool surface is announced first: the regular text names tools that may be missing.
+        options.ServerInstructions = ToolExposure.DescribeMode(readOnly, toolsets) + serverInstructions;
     })
     .WithStdioServerTransport()
-    .WithToolsFromAssembly() // discovers [McpServerToolType] classes in this assembly
+    // The [McpServerTool] methods of this assembly that the operator's switches allow (ToolRegistration).
+    .WithSelectedTools(servedTools)
     // Pass the real exception text to the agent instead of the SDK's bare
     // "An error occurred invoking '<tool>'." (see ToolErrorFilter).
     .WithRequestFilters(filters => filters.AddCallToolFilter(
@@ -177,3 +215,4 @@ var app = builder.Build();
 // End with the MCP client and never hang in shutdown (orphaned servers, see ShutdownGuard).
 TeklaMcp.Server.ShutdownGuard.Start(app.Services.GetRequiredService<IHostApplicationLifetime>());
 await app.RunAsync();
+return 0;

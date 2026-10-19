@@ -33,6 +33,12 @@ public interface IUdaImportTarget
     /// <summary>Current UDA value, or null when the attribute is not set on the object.</summary>
     string? ReadUda(object handle, string name);
 
+    /// <summary>
+    /// Why <paramref name="value"/> cannot be written to UDA <paramref name="name"/> (an
+    /// integer attribute given "abc"), or null when it can. Asked in preview and apply alike.
+    /// </summary>
+    string? CheckValue(string name, string value);
+
     /// <summary>Write the given UDA values. Returns how many fields were actually written.</summary>
     int WriteUdas(object handle, IReadOnlyList<KeyValuePair<string, string>> values);
 
@@ -161,6 +167,7 @@ public static class UdaImportRunner
 
                     var changes = new List<KeyValuePair<string, string>>();
                     var skippedHere = 0;
+                    var invalidHere = 0;
 
                     foreach (var pair in requested)
                     {
@@ -169,6 +176,18 @@ public static class UdaImportRunner
                         if (writtenFieldSet.Add(name)) writtenFields.Add(name);
 
                         var newValue = pair.Value ?? "";
+                        var typeProblem = target.CheckValue(name, newValue);
+                        if (typeProblem != null)
+                        {
+                            // Never written as another type; the rest of the row still is.
+                            invalidHere++;
+                            result.InvalidValues++;
+                            if (result.InvalidValues <= SampleLimit)
+                                result.Message = Aggregation.Append(result.Message,
+                                    $"line {row.LineNumber}: {typeProblem}");
+                            continue;
+                        }
+
                         var current = target.ReadUda(handle, name);
 
                         // Already correct: not a write, not a skip — genuinely nothing to do.
@@ -189,6 +208,7 @@ public static class UdaImportRunner
                     if (changes.Count == 0)
                     {
                         if (skippedHere > 0) preview.Action = "skip-non-empty";
+                        else if (invalidHere > 0) preview.Action = "invalid";
                         else { result.Unchanged++; preview.Action = "unchanged"; }
                         AddSample(result, preview, null);
                         continue;

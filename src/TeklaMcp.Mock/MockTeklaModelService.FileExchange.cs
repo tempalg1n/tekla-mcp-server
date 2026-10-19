@@ -249,6 +249,9 @@ public sealed partial class MockTeklaModelService
             return udas.TryGetValue(name, out var value) ? value : null;
         }
 
+        /// <summary>The mock's attributes are untyped strings: every value fits.</summary>
+        public string? CheckValue(string name, string value) => null;
+
         public int WriteUdas(object handle, IReadOnlyList<KeyValuePair<string, string>> values)
         {
             var info = (ModelObjectInfo)handle;

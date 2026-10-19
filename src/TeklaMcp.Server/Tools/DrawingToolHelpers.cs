@@ -47,9 +47,12 @@ internal static class DrawingToolHelpers
         bool useSelection = false,
         bool recursive = true,
         bool includeGeometry = true,
-        bool includeUdas = false) =>
+        bool includeUdas = false,
+        bool emptyMarksOnly = false) =>
         new DrawingObjectQuery
         {
+            EmptyMarksOnly = emptyMarksOnly,
+            // Model geometry and its filters are set by tekla_list_drawing_objects itself.
             ObjectIds = ParseIdentifiers(objectIds),
             IndexIn = ParseInts(indices),
             TypeIn = ToolHelpers.ParseList(types),
@@ -67,7 +70,8 @@ internal static class DrawingToolHelpers
     public static List<TeklaIdentifierInfo> ParseIdentifiers(string? raw)
     {
         var result = new List<TeklaIdentifierInfo>();
-        if (string.IsNullOrWhiteSpace(raw)) return result;
+        // net48's string.IsNullOrWhiteSpace carries no [NotNullWhen] annotation.
+        if (raw is null || string.IsNullOrWhiteSpace(raw)) return result;
         foreach (var token in raw.Split(
                      new[] { ',', ';', '\r', '\n' },
                      StringSplitOptions.RemoveEmptyEntries))

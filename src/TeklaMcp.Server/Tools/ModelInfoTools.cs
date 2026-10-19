@@ -17,9 +17,10 @@ namespace TeklaMcp.Server.Tools;
 /// Return values are serialized to JSON automatically.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Core)]
 public static class ModelInfoTools
 {
-    [McpServerTool(Name = "tekla_get_connection_info")]
+    [McpServerTool(Name = "tekla_get_connection_info", ReadOnly = true, OpenWorld = false)]
     [Description("Check whether a Tekla Structures model is open and reachable. Returns " +
                  "model name, path, the active backend (Mock or Tekla) and a status message, plus which " +
                  "server answered: server version/runtime/PID/start time, the Tekla version it was built " +
@@ -27,7 +28,9 @@ public static class ModelInfoTools
                  "that started BEFORE the Tekla process it should talk to, or a build for another Tekla " +
                  "year, explains most connection failures. A non-empty assemblyLoadProblems is the cause " +
                  "whatever the message says: the Tekla installation's files could not be loaded, and " +
-                 "restarting Tekla does not help. Call this first to verify connectivity.")]
+                 "restarting Tekla does not help. connected=true with modelOpen=false means Tekla runs " +
+                 "with no model open: model tools refuse until one is, rather than reporting an empty " +
+                 "model. Call this first to verify connectivity.")]
     public static ConnectionInfo GetConnectionInfo(ITeklaModelService model)
     {
         var info = model.GetConnectionInfo();
@@ -50,6 +53,9 @@ public static class ModelInfoTools
 
     private static void AddServerIdentity(ConnectionInfo info)
     {
+        // The operator's switches explain a missing tool or a refused write: not garnish, set first.
+        info.ServerReadOnly = ServerMode.ReadOnly;
+        info.ServerToolsets = (ServerMode.Toolsets ?? ToolExposure.AllToolsets).ToList();
         try
         {
             var asm = typeof(ModelInfoTools).Assembly;
@@ -65,7 +71,7 @@ public static class ModelInfoTools
         }
     }
 
-    [McpServerTool(Name = "tekla_get_model_summary")]
+    [McpServerTool(Name = "tekla_get_model_summary", ReadOnly = true, OpenWorld = false)]
     [Description("Return aggregated statistics for the whole model: total object count, " +
                  "total weight in kg, and counts grouped by type, class, profile and material. " +
                  "Use this for a high-level overview before drilling into individual objects. " +
@@ -78,4 +84,19 @@ public static class ModelInfoTools
         [Description("Stop after scanning this many objects; 0 = scan everything. A capped result has truncated=true.")]
         int maxObjects = 0)
         => model.GetModelSummary(includeWeights, maxObjects > 0 ? maxObjects : (int?)null);
+
+    [McpServerTool(Name = "tekla_get_numbering_status", ReadOnly = true, Destructive = false,
+        Idempotent = true, OpenWorld = false)]
+    [Description("READ-ONLY numbering status: whether numbering of the whole model is up to date " +
+                 "(Operation.IsNumberingUpToDateAll — every assembly, part and rebar) and, for up to " +
+                 "200 parts/assemblies given by GUID, each one's own status plus its current " +
+                 "PART_POS/ASSEMBLY_POS. Never numbers, saves or changes anything, so it needs no " +
+                 "approval. Use it before trusting marks in an audit: visible marks without '?' do " +
+                 "not prove numbering is current. Running the numbering is a separate, user-approved " +
+                 "action in Tekla.")]
+    public static NumberingStatus GetNumberingStatus(
+        ITeklaModelService model,
+        [Description("Optional part/assembly GUIDs to check individually (separated by ',', ';' or new lines; max 200).")]
+        string? guids = null)
+        => model.GetNumberingStatus(ToolHelpers.ParseList(guids));
 }

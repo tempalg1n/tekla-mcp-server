@@ -11,9 +11,10 @@ namespace TeklaMcp.Server.Tools;
 /// ("between axes 1 and 2 along axis Д") into model coordinates before creating geometry.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Model)]
 public static class ModelGeometryTools
 {
-    [McpServerTool(Name = "tekla_list_grids")]
+    [McpServerTool(Name = "tekla_list_grids", ReadOnly = true, OpenWorld = false)]
     [Description("List grid lines and levels with their real Tekla labels: axis ('X'/'Y' lines, 'Z' " +
                  "levels), label, coordinate (global mm), gridId, and start/end points of X/Y lines. " +
                  "Use to translate axis references like '1', '2', 'Д' or '+3.300' into coordinates. A " +
@@ -23,7 +24,7 @@ public static class ModelGeometryTools
     public static IReadOnlyList<GridLineInfo> ListGrids(ITeklaModelService model)
         => model.GetGrids();
 
-    [McpServerTool(Name = "tekla_resolve_point")]
+    [McpServerTool(Name = "tekla_resolve_point", ReadOnly = true, OpenWorld = false)]
     [Description("Resolve a model point (X,Y,Z mm) from an X-axis label, a Y-axis label and an " +
                  "elevation, using the model grids. Example: axisX='1', axisY='Д', z=6000.")]
     public static PointResult ResolvePoint(
@@ -33,10 +34,11 @@ public static class ModelGeometryTools
         [Description("Elevation Z in mm.")] double z)
         => model.ResolvePoint(axisX, axisY, z);
 
-    [McpServerTool(Name = "tekla_get_part_curve_geometry")]
+    [McpServerTool(Name = "tekla_get_part_curve_geometry", ReadOnly = true, OpenWorld = false)]
     [Description(
         "Exact centerline geometry of ONE part, for dimensioning curved members (PolyBeam, e.g. " +
-        "curved tubes, bent bars, curved monorails) in drawings. Read-only. Returns: 'segments' — " +
+        "curved tubes, bent bars, curved monorails; and curved Beams — a Beam with a RADIUS — " +
+        "as one arc through its centerline) in drawings. Read-only. Returns: 'segments' — " +
         "lines and arcs exactly as Tekla computes them (arc: start/mid/end/center/normal, radius, " +
         "sweepAngle, arc length, chord, sagitta); 'arcs' — one entry per physical bend (Tekla splits " +
         "an ARC_POINT bend into two arcs; these are merged), use THESE for radius, chord, rise and " +
@@ -67,7 +69,7 @@ public static class ModelGeometryTools
 
     private const int MaxSolidGuids = 20;
 
-    [McpServerTool(Name = "tekla_get_part_solid")]
+    [McpServerTool(Name = "tekla_get_part_solid", ReadOnly = true, OpenWorld = false)]
     [Description("The actual shape of up to 20 parts: faces (outward normal, the part that produced the " +
                  "face — a cutting part for a cut face), boundary loops and vertices, GLOBAL mm, with cuts, " +
                  "fittings and chamfers applied (solidType NORMAL, default; RAW = the uncut profile sweep). " +

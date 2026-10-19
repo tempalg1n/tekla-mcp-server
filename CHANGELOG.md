@@ -7,6 +7,216 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-19
+
+Field fixes from Tekla 2021 audit and drawing sessions (monorail plans, truss nodes): numeric UDAs
+that read as blank, edits that Tekla accepted but did not store, dimensions in the wrong units or on
+the wrong arc, section views without their properties, drawing edits that were committed but never
+saved, and a closed model that looked empty. Plus a read-only numbering status, curved Beams in the
+curve tool, mark contents and custom marks, view labels, standalone callouts, view-coordinate
+geometry of parts and bolts, approval of scripts by reference, and a picture of the open drawing so
+agents can check their own drawing edits. Every tool now carries MCP annotations, and operators can
+start the server read-only or with fewer toolsets. Four tools added (120 in total, 54 for drawings).
+
+### Added
+
+- **`tekla_capture_drawing` — a picture of the open drawing** ([#31](https://github.com/tempalg1n/tekla-mcp-server/issues/31)).
+  The whole sheet, one view's frame (`viewId`/`viewId2`, plus `marginMm`) or a sheet region, as Tekla
+  draws it in the drawing editor, returned as an image plus JSON: every view's frame and pixel box on
+  the picture, `pixelToSheet` (picture pixel → sheet paper mm), `shownMin`/`shownMax`, `clipped`.
+  Agents can now check their own dimensions, marks and labels instead of asking the user for a
+  screenshot. Read-only: the pixels come from Tekla's own drawing window (`PrintWindow`, never a screen
+  copy), and nothing is zoomed or selected. The Open API cannot read the drawing editor's zoom, so the
+  sheet is located from its edges on the picture; zoomed in past them, the tool returns the whole
+  window with `scope="visible"` and says so. A minimized or covered drawing window is refused. The
+  mock returns a labelled stand-in of the sheet and view frames.
+- **`tekla_get_numbering_status`** ([#23](https://github.com/tempalg1n/tekla-mcp-server/issues/23)).
+  Read-only: `Operation.IsNumberingUpToDateAll()` for the model, plus `IsNumberingUpToDate` and the
+  current `PART_POS`/`ASSEMBLY_POS` for up to 200 parts/assemblies by GUID, with the model identity.
+  It never numbers or saves. In scripts, a direct call of `Operation.IsNumberingUpToDate`,
+  `IsNumberingUpToDateAll` or `IsNumberingAllowed` no longer counts as a mutation; every other use
+  of `Operation` (method groups, aliases, `using static` included) still does.
+- **Curved Beams in `tekla_get_part_curve_geometry`** ([#30](https://github.com/tempalg1n/tekla-mcp-server/issues/30)).
+  A Beam with a `RADIUS` came back as one straight chord. It is now one arc through its
+  centerline — the vertices of `Part.GetCenterLine`, which lie on the arc (live Tekla 2021) — with
+  the same merged arcs, inner/outer arcs and view block as a PolyBeam. `RADIUS` cross-checks the
+  radius; a difference means the part is offset from its reference line.
+- **Mark content in `tekla_list_drawing_objects`** ([#32](https://github.com/tempalg1n/tekla-mcp-server/issues/32)).
+  Marks carry `markContent` (property name + current value, or fixed text), the whole text in
+  `text`, `isEmptyMark` and the marked model object (`modelGuid`/`modelId`, `relatedObjectType`).
+  `modelGuid` and `textContains` filter marks too; `emptyMarksOnly=true` finds the empty marks Tekla
+  leaves on neighbour parts.
+- **GA views placed by frame** ([#33](https://github.com/tempalg1n/tekla-mcp-server/issues/33)).
+  `tekla_create_ga_drawing_view placeBy=frame_lower_left|frame_center` puts the view FRAME at
+  `insertionPoint` instead of the model origin: the view is inserted, measured with its real frame
+  (margins included) and moved. Views report `frameMin`/`frameMax`; a preview estimates them.
+- **View attribute files on existing views** ([#28](https://github.com/tempalg1n/tekla-mcp-server/issues/28)).
+  `tekla_modify_drawing_view attributeFile` loads a saved view attributes file (with its part and
+  neighbour-part filters) and keeps the scale, restriction box and origin the file would overwrite
+  (`keepScale`/`keepRestrictionBox`/`keepOrigin`, default true); the message gives the view's
+  model-object count before and after. The description warns that Tekla caches view filters by
+  file name within a session.
+  The file also replaces the view label and name, so those are kept too (`keepLabel`/`keepName`), and
+  the file name is used verbatim (`" Truss node"` loads only with its leading space).
+- **Standalone detail and section marks** ([#36](https://github.com/tempalg1n/tekla-mcp-server/issues/36)) —
+  `tekla_create_detail_mark` and `tekla_create_section_mark` insert a callout circle or cut symbols
+  WITHOUT creating a view (to reference a node or section drawn on another sheet), with a name, an
+  attribute file and view or model coordinates; also as kinds `detail_mark`/`section_mark` in
+  `tekla_create_drawing_objects`.
+- **View labels** ([#35](https://github.com/tempalg1n/tekla-mcp-server/issues/35)) —
+  `tekla_modify_drawing_view labelText` (with font, height, position and `clearOtherTags`) sets the
+  label of an existing view (API-created views often have an empty one; `tekla_list_drawing_views`
+  now shows `labelText`), and `renameMark=true` renames the section/detail mark that has the view's
+  old name.
+- **Marks with a leader start and custom content** ([#37](https://github.com/tempalg1n/tekla-mcp-server/issues/37)) —
+  `tekla_create_drawing_mark` takes `leaderStart`, `placing` (leader/base/along line, point),
+  `contentText` and `copyContentFromMarkId`; `tekla_modify_drawing_objects` sets `insertionPoint`,
+  `leaderStart` and `contentText` on existing marks.
+- **Parts, bolts and dimensions in view coordinates** ([#38](https://github.com/tempalg1n/tekla-mcp-server/issues/38)) —
+  `tekla_list_drawing_objects includeModelGeometry=true` adds, for parts, a box from the solid's own
+  vertices with the z depth range, and for bolts their positions, in the view's display coordinates;
+  `zRange` (bolts keep only positions inside it), `region`, `nameContains` and `profileContains`
+  filter on it. Straight dimension sets now list their points, `upDirection`, placing and the
+  distance in both view units and paper mm.
+- **Mark offsets kept on rescale** ([#39](https://github.com/tempalg1n/tekla-mcp-server/issues/39)) —
+  a new scale in `tekla_modify_drawing_view` moves leader-line marks so their paper distance to the
+  leader start stays (`keepMarkOffsets`, default true).
+- **Scripts approved by reference** ([#40](https://github.com/tempalg1n/tekla-mcp-server/issues/40)) —
+  `tekla_check_csharp` returns a `checkId` that `tekla_run_csharp` runs instead of re-sent code
+  (`expectedSha256` still binds a mutating run); `codeSha256` ignores line endings and trailing
+  whitespace; `x.GetType().Name`/`.FullName` is allowed for labels.
+- `placing=fixed|free` on `tekla_create_straight_dimension` ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26)):
+  free placing moved lines away from nearby marks.
+- `connectionInfo.modelOpen` ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8),
+  `previewTotal`/`previewTruncated` on part write results, and `drawingSaved` on drawing write
+  results ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
+- **MCP tool annotations on every tool.** Each of the 120 tools now says whether it only reads
+  (`readOnlyHint`, 50 tools), and the 70 others whether they can modify or delete what exists
+  (`destructiveHint`) and whether a repeat changes anything more (`idempotentHint`); all are
+  `openWorldHint=false`. Clients such as Claude Desktop and Codex use these to approve reads
+  without asking and to ask before writes. The hints describe what a tool can do with
+  `apply=true`, not its preview default; selection, `tekla_capture_view` and `tekla_open_drawing`
+  count as (non-destructive) writers because they change the Tekla UI, and the file exports and
+  `tekla_report_gap` because they write files. The MCP smoke now fails on a tool without hints.
+- **Read-only mode: `TEKLA_MCP_READ_ONLY=1`.** The server then serves only the 50 read-only tools
+  (no writes, no `tekla_run_csharp`, no selection or model-view capture, no file exports), says so in
+  its instructions and in `tekla_get_connection_info` (`serverReadOnly`), and the write paths
+  refuse at runtime as well — the write wrappers, the script tool and the tools that write outside
+  the wrappers — so a tool annotated read-only by mistake still cannot write. Unset means off; any
+  value other than `0`/`false`/`no`/`off` turns it on.
+- **Toolsets: `TEKLA_MCP_TOOLSETS`** (`core`, `model`, `analytics`, `files`, `drawings`,
+  `scripting`, `visual`; `core` is always served) narrows `tools/list` for clients that load every
+  tool description into the context: the full list is about 195k characters, the 54 drawing
+  tools alone about 82k. Not a safety feature. An unknown name stops the server with a message
+  instead of hiding tools. `tekla_get_connection_info` reports the served set (`serverToolsets`).
+
+### Fixed
+
+- **Numeric UDAs read as blank** ([#21](https://github.com/tempalg1n/tekla-mcp-server/issues/21)).
+  For a set UDA, Tekla 2021 answers true from every `GetUserProperty` overload, and only the one
+  matching the stored type has the value (measured live on 300 beams): the string overload gives
+  `""` for numbers. Trying string first therefore exported integers as blanks, and the same reader
+  fed named reads, grouping, `udaEquals`/`udaIsEmpty` and the import's non-empty guard (an integer
+  0 looked empty and could be overwritten). Reads now use the type the UDA catalog declares
+  (`UserPropertyItem.Select`, cached per model) and learn the stored type once for undeclared
+  names. Writes follow the declared type as well: a string UDA keeps `"123"` a string (it used to be
+  stored as an integer), and a value that does not fit a declared number is refused before anything
+  is written (`tekla_set_udas_from_file` counts it in `invalidValues`).
+- **`tekla_modify_parts` reported edits Tekla did not store** ([#22](https://github.com/tempalg1n/tekla-mcp-server/issues/22)).
+  A Class 14 → 50 edit returned `committed` with no errors while the part kept 14, and only 20 of
+  200 parts were read back. Every written part is now re-selected and compared with the request
+  (profile, material, class, name, end points); `verification` gives the status and each mismatching
+  field (requested vs stored), and a mismatch makes the outcome `partial`. Position is not compared,
+  because Tekla canonicalizes it on commit.
+- **Straight dimensions sat on the parts** ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26)).
+  `distance` is paper mm, but `CreateDimensionSet` takes view units: at 1:50 the line landed 0.16 mm
+  from the parts. It is multiplied by the view scale now. If you passed `paper mm × scale` as a
+  workaround, pass paper mm again.
+- **Radius dimensions drew the complementary arc** ([#27](https://github.com/tempalg1n/tekla-mcp-server/issues/27)).
+  Tekla draws the arc clockwise from point 1 to point 3 whatever point 2; a counter-clockwise arc
+  came out as a near-full circle. Points 1 and 3 are swapped for counter-clockwise input (a warning
+  says so), and collinear points are refused.
+- **A closed model looked empty** ([#25](https://github.com/tempalg1n/tekla-mcp-server/issues/25) §8).
+  With the model closed and Tekla running, connection info said `connected=true` and the summary
+  counted zero objects. `modelOpen=false` now says so, and model scans, counts and the summary
+  refuse instead of answering for an empty model.
+- **Committed drawing edits were lost on reopen** ([#41](https://github.com/tempalg1n/tekla-mcp-server/issues/41)).
+  A day of edits to an open drawing, each ending in `CommitChanges` and reported as committed, was
+  lost when the multi-user model was reopened — the drawing was never saved. Writes to the open
+  drawing now return `drawingSaved=false` with a warning to save, `tekla_get_active_drawing`'s
+  status counts the MCP writes waiting for a save (`unsavedMcpWrites`), and the server instructions
+  say to save after each milestone and to keep GUIDs rather than IDs across a reopen.
+- **Section views ignored their attribute file** ([#34](https://github.com/tempalg1n/tekla-mcp-server/issues/34)).
+  `CreateSectionView` does not apply the `ViewAttributes` it is given on Tekla 2021 (the section took
+  the parent's filters and marks, or showed 0 bolts). The file is now loaded after creation (also for
+  curved sections and detail views), keeping name, scale, label and restriction box. `depthUp`
+  (behind the cut) and `depthDown` (toward the viewer) are described as measured and must both be
+  > 0; the preview gives the look direction, and the created section/detail mark is returned.
+- **Dimension distances read back in view units** ([#26](https://github.com/tempalg1n/tekla-mcp-server/issues/26),
+  [#39](https://github.com/tempalg1n/tekla-mcp-server/issues/39)): `StraightDimensionSet.Distance`
+  doubles after a 1:5 → 1:10 rescale although the line keeps its paper offset. Listings report
+  `dimensionDistancePaperMm` next to it, and the tool descriptions say not to "correct" it.
+- **View frames include hidden marks** ([#33](https://github.com/tempalg1n/tekla-mcp-server/issues/33)):
+  placement by frame warns when a view has hidden marks, and frames stay stale within the call that
+  loaded an attribute file (the result says to re-list).
+- **Drawing objects listed without a model GUID** (found live while testing this release): drawing
+  parts and marks carry only the model ID on Tekla 2021, so `modelGuid` came back empty and a
+  `modelGuid` filter in `tekla_list_drawing_objects` never matched. Listed rows now get their GUID
+  from the model, and the filter matches by the resolved model ID.
+- **One detail mark emptied the whole drawing listing** (found in the live write test, Tekla 2021;
+  present since v0.7.0). With drawing AutoFetch on, `View.GetObjects()` itself throws the
+  `SerializationException` of a `DetailMark`, and the listing swallowed it: after a standalone
+  callout (or in any view with a detail view's mark), `tekla_list_drawing_objects` answered `[]` for
+  every query, and modify, delete, `keepMarkOffsets` and `renameMark` found nothing. Such a view is
+  now read again without AutoFetch, the detail mark included, and a drawing that cannot be read is
+  a tool error instead of an empty list.
+- **`includeModelGeometry` filters ran after the limit** ([#38](https://github.com/tempalg1n/tekla-mcp-server/issues/38)):
+  the first `limit` parts of a view were taken and then filtered, so `profileContains=I36M` found
+  none of the 17 monorails in a view of 419 parts. `nameContains`, `profileContains`, `zRange` and
+  `region` now run before the limit, and a part's solid is read only when its name and profile match.
+- **`keepLabel` did not keep the label** ([#28](https://github.com/tempalg1n/tekla-mcp-server/issues/28),
+  [#34](https://github.com/tempalg1n/tekla-mcp-server/issues/34)): `LoadAttributes` rewrites the label
+  object it holds in place, so the label "kept" before the load was already the file's. The file is
+  loaded into new view attributes now, and the label, scale and label position come from the view's.
+- **View and mark edits answered with the state before the edit**: `tekla_modify_drawing_view`
+  returned the old scale/label/name and `tekla_modify_drawing_objects` the old mark text. Both read
+  the edited objects back after the commit now.
+- **Radius-dimension previews** ([#27](https://github.com/tempalg1n/tekla-mcp-server/issues/27)) say
+  that points 1 and 3 will be swapped and refuse collinear points (view/sheet coordinates), as apply does.
+- **`guidIn` scanned the whole model**: `tekla_delete_objects` with one GUID took ~60 s on a
+  443k-object model — past the MCP client's timeout, so the delete happened and its answer was lost.
+  Objects named by `guidIn` are selected directly now (0.1 s); this also speeds up
+  `tekla_select_objects`, `tekla_swap_handles` and the other tools that take `guidIn`.
+- **A write by filter with no filter at all is refused** (`tekla_delete_objects`,
+  `tekla_set_udas_by_filter`, `tekla_swap_handles`). MCP clients drop arguments a tool does not
+  declare, so a misspelled filter left an empty query, and the write would have gone to the first
+  `limit` objects of the whole model (a `tekla_set_udas_by_filter` preview with an undeclared
+  `guidIn` listed 200 objects, control points included). Pass a filter or `useSelection=true`.
+- The net48 server build compiles without warnings again (CS8602 in `DrawingToolHelpers`).
+
+### Known limitations
+
+- Run live on Tekla 2021 only (a test copy of model 3155, 2026-10-19): a new GA drawing, a plan placed
+  by frame, a section with an attribute file and depths, straight (paper mm, fixed) and radius
+  (swapped points) dimensions, custom and copied marks, standalone detail and section marks, mark
+  edits, attribute files on views (label kept, filters applied, a file name with a leading space),
+  labels, rescale with mark offsets, save; `tekla_modify_parts` verification, typed UDA writes and
+  the file import, deletes by GUID. Not run live: any of it on 2022–2026, detail views, angle and
+  curved dimensions (distances passed unchanged; documented as paper mm), and `tekla_modify_parts`
+  against a part where `Modify()` succeeds but a field does not change (an unknown profile was
+  refused by `Modify()` and reported as `not_written`).
+- `renameMark` finds the section/detail mark by the view's old name: a section created through the
+  API gets a mark named by Tekla (`"1"`), which is not found (a warning says so); detail marks may
+  also not be readable on some versions.
+- `unsavedMcpWrites` counts the writes of the running server process; a restarted server starts at 0.
+- Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
+- `tekla_capture_drawing` is live-verified on Tekla 2021 only (one A2 GA sheet: as opened, zoomed out,
+  zoomed in). The drawing window's title and the drawn sheet edge on 2022–2026 are untested.
+- With a drawing open, `tekla_capture_view` without `viewName` captures the drawing window as if it
+  were the active model view.
+- Tool annotations and read-only mode are checked by the MCP smoke only: no client's approval UX
+  (Claude Desktop, Codex) and no live Tekla run has been checked against them yet.
+
 ## [0.8.1] - 2026-10-01
 
 A hotfix for the first Tekla 2026 field report — v0.8.0 could not connect to Tekla 2026 at all —
@@ -855,7 +1065,8 @@ Initial tagged release. Core MCP server and release automation.
 - UDA write tools require explicit `apply=true` to modify the model
 - Not affiliated with Trimble or Tekla Structures
 
-[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/tempalg1n/tekla-mcp-server/compare/v0.6.0...v0.7.0

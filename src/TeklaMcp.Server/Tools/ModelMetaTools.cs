@@ -13,9 +13,10 @@ namespace TeklaMcp.Server.Tools;
 /// formally report a missing capability instead of scripting around it.
 /// </summary>
 [McpServerToolType]
+[Toolset(ToolExposure.Core)]
 public static class ModelMetaTools
 {
-    [McpServerTool(Name = "tekla_report_gap")]
+    [McpServerTool(Name = "tekla_report_gap", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Report that this MCP tool set is missing a capability, or that an existing tool " +
                  "returns insufficient data. Call it whenever you hit a gap — INCLUDING when you " +
                  "bridged the gap with tekla_run_csharp (recurring scripts deserve a first-class tool). " +
@@ -28,6 +29,7 @@ public static class ModelMetaTools
         [Description("Existing tools you already tried, if any (comma-separated).")] string? attemptedTools = null,
         [Description("A suggested new tool name or parameter, if you have one.")] string? suggestedToolName = null)
     {
+        ServerMode.ThrowIfReadOnly("tekla_report_gap (it appends to a local log file)");
         var modelContext = SafeModelContext(model);
 
         var issuesUrl = Environment.GetEnvironmentVariable("TEKLA_MCP_ISSUES_URL");

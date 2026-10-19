@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using TeklaMcp.Core;
+using TeklaMcp.Core.Geometry;
 using TeklaMcp.Core.Models;
 using TS = Tekla.Structures;
 using TSD = Tekla.Structures.Drawing;
@@ -24,6 +25,9 @@ public sealed partial class TeklaModelService
     private const int DrawingBatchLimit = 50;
     private const int DrawingObjectBatchLimit = 200;
 
+    /// <summary>Objects scanned when model-geometry filters run before the result cap.</summary>
+    private const int DrawingObjectScanLimit = 50000;
+
     public DrawingStatusInfo GetDrawingStatus()
     {
         var result = new DrawingStatusInfo { Backend = BackendName };
@@ -40,6 +44,7 @@ public sealed partial class TeklaModelService
             var active = TryGetActiveDrawing(handler);
             result.AnyDrawingOpen = active != null;
             if (active != null) result.ActiveDrawing = MapDrawing(active, active);
+            result.UnsavedMcpWrites = active != null ? DrawingSaves.UnsavedWrites : 0;
         }
         catch (Exception ex)
         {
@@ -227,19 +232,33 @@ public sealed partial class TeklaModelService
         DrawingObjectQuery query,
         int? limit = null)
     {
-        var handler = GetDrawingHandler(); // no connection = tool error, not an empty list
-        try
+        // No connection, or a drawing that cannot be read, is a tool error — never an empty list:
+        // a swallowed exception used to answer [] ("nothing there") for a whole drawing.
+        var handler = GetDrawingHandler();
+        var active = TryGetActiveDrawing(handler);
+        if (active == null) return new List<DrawingObjectInfo>();
+        var effective = query ?? new DrawingObjectQuery();
+        var cap = NormalizeLimit(limit, DrawingObjectBatchLimit);
+        if (!effective.IncludeModelGeometry)
         {
-            var active = TryGetActiveDrawing(handler);
-            if (active == null) return new List<DrawingObjectInfo>();
-            return GetDrawingObjectRecords(handler, active, query ?? new DrawingObjectQuery(), limit)
-                .Select(r => MapDrawingObject(r, query ?? new DrawingObjectQuery()))
-                .ToList();
+            var plain = GetDrawingObjectRecords(handler, active, effective, cap)
+                .Select(r => MapDrawingObject(r, effective)).ToList();
+            ResolveModelGuids(plain);
+            return plain;
         }
-        catch
+
+        // Model-geometry filters run before the cap (see ViewGeometry.HasFilter).
+        var scan = ViewGeometry.HasFilter(effective) ? DrawingObjectScanLimit : cap;
+        var records = GetDrawingObjectRecords(handler, active, effective, scan, scan);
+        var rows = new List<DrawingObjectInfo>();
+        foreach (var match in WithModelGeometry(records, effective, cap))
         {
-            return new List<DrawingObjectInfo>();
+            var row = MapDrawingObject(match.Record, effective);
+            row.ModelGeometry = match.Geometry;
+            rows.Add(row);
         }
+        ResolveModelGuids(rows);
+        return rows;
     }
 
     public DrawingSelectionResult SelectDrawingObjects(
@@ -340,6 +359,8 @@ public sealed partial class TeklaModelService
                 return result;
             }
             result.ModifiedCount = 1;
+            result.DrawingSaved = save;
+            DrawingSaves.Reset();
             if (!save)
                 result.Message = "Active drawing closed WITHOUT saving; unsaved editor changes were discarded.";
         }
@@ -371,6 +392,8 @@ public sealed partial class TeklaModelService
                 return result;
             }
             result.ModifiedCount = 1;
+            result.DrawingSaved = true;
+            DrawingSaves.Reset();
         }
         catch (Exception ex)
         {
@@ -718,7 +741,7 @@ public sealed partial class TeklaModelService
                             if (!drawing.PlaceViews()) throw new InvalidOperationException("Tekla rejected PlaceViews().");
                             StampDrawingOrigin(drawing, "mcp:place_drawing_views");
                             result.ModifiedCount++;
-                            CommitDrawingChanges(
+                            CommitActiveDrawingChanges(
                                 drawing, "Tekla MCP: place drawing views", result);
                             break;
                         case "print":
@@ -1138,6 +1161,19 @@ public sealed partial class TeklaModelService
         {
             // TODO(windows): Drawing UDA support varies by object and environment.
         }
+    }
+
+    /// <summary>MCP writes committed to the open drawing since its last save (issue #41).</summary>
+    private static readonly DrawingSaveTracker DrawingSaves = new DrawingSaveTracker();
+
+    /// <summary>Commit to the OPEN drawing — committed is not saved, so the result says so.</summary>
+    private static void CommitActiveDrawingChanges(
+        TSD.Drawing drawing,
+        string message,
+        DrawingWriteResult result)
+    {
+        CommitDrawingChanges(drawing, message, result);
+        DrawingSaves.Committed(result);
     }
 
     private static void CommitDrawingChanges(

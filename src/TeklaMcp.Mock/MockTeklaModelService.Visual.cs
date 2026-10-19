@@ -183,6 +183,148 @@ public sealed partial class MockTeklaModelService
         return result;
     }
 
+    /// <summary>
+    /// Stand-in for <c>tekla_capture_drawing</c>: the active mock drawing's sheet and view frames,
+    /// drawn with the same crop and pixel mapping (<see cref="DrawingCapturePlan"/>) as the live
+    /// backend, under a MOCK BACKEND banner. The mock "editor" shows the whole sheet with a 10 mm
+    /// border, at the scale that fits the requested scope into maxWidth × maxHeight.
+    /// </summary>
+    public DrawingCaptureResult CaptureDrawing(DrawingCaptureRequest request)
+    {
+        request = request ?? new DrawingCaptureRequest();
+        var result = new DrawingCaptureResult { Backend = BackendName, Source = "mock-schematic" };
+        var active = ResolveMockDrawing(_activeDrawingKey ?? "");
+        if (active == null)
+        {
+            result.Message = "No drawing is open in the drawing editor. Open one with tekla_open_drawing, then capture again.";
+            return result;
+        }
+        result.DrawingKey = active.Key;
+        result.DrawingMark = active.Mark;
+        result.DrawingName = active.Name;
+        result.DrawingType = active.Type;
+        result.WindowTitle = "MOCK " + active.Mark;
+
+        var sheet = GetDrawingSheet();
+        var sheetWidth = sheet.Width ?? 841;
+        var sheetHeight = sheet.Height ?? 594;
+        result.SheetWidth = sheetWidth;
+        result.SheetHeight = sheetHeight;
+
+        foreach (var view in GetActiveMockDrawingViews())
+        {
+            var row = new DrawingCaptureView
+            {
+                ViewId = view.ViewId,
+                ViewId2 = view.ViewId2,
+                Name = view.Name,
+                Type = view.Type,
+                Scale = view.Scale,
+            };
+            if (DrawingCapturePlan.TryViewFrame(view, out var frameMin, out var frameMax))
+            {
+                row.FrameMin = frameMin;
+                row.FrameMax = frameMax;
+            }
+            result.Views.Add(row);
+        }
+
+        Point3D min, max;
+        double margin;
+        if (request.ViewId.HasValue)
+        {
+            var target = result.Views.FirstOrDefault(v =>
+                v.ViewId == request.ViewId.Value && (!request.ViewId2.HasValue || v.ViewId2 == request.ViewId2.Value));
+            if (target?.FrameMin == null || target.FrameMax == null)
+            {
+                result.Message = "View " + request.ViewId + " is not on the active drawing. Views: " +
+                                 string.Join(", ", result.Views.Select(v => v.ViewId + " '" + v.Name + "'")) + ".";
+                return result;
+            }
+            result.View = target;
+            (min, max, margin, result.Scope) = (target.FrameMin, target.FrameMax, request.MarginMm, "view");
+        }
+        else if (request.RegionMin != null && request.RegionMax != null)
+        {
+            (min, max, margin, result.Scope) = (request.RegionMin, request.RegionMax, request.MarginMm, "region");
+        }
+        else
+        {
+            (min, max, margin, result.Scope) = (new Point3D(0, 0, 0), new Point3D(sheetWidth, sheetHeight, 0),
+                DrawingCapturePlan.SheetMarginMm, "sheet");
+        }
+
+        const double Border = 10;
+        margin = Math.Max(0, margin);
+        var maxWidth = Math.Max(160, Math.Min(request.MaxWidth, 2400));
+        var maxHeight = Math.Max(120, Math.Min(request.MaxHeight, 2400));
+        var scale = Math.Min(4.0, Math.Min(
+            maxWidth / Math.Max(1, max.X - min.X + 2 * margin + 1),
+            maxHeight / Math.Max(1, max.Y - min.Y + 2 * margin + 1)));
+        var mapping = new SheetPixelMapping
+        {
+            Found = true,
+            Method = "mock",
+            PixelsPerMm = scale,
+            SheetLeftPx = Border * scale,
+            SheetTopPx = Border * scale,
+            EdgesFound = 4,
+        };
+        result.SheetMapping = mapping;
+        var pictureWidth = (int)Math.Ceiling((sheetWidth + 2 * Border) * scale);
+        var pictureHeight = (int)Math.Ceiling((sheetHeight + 2 * Border) * scale);
+        var crop = DrawingCapturePlan.ToCrop(mapping, sheetHeight, pictureWidth, pictureHeight, min, max, margin);
+        if (crop == null)
+        {
+            result.Message = "The " + result.Scope + " is outside the sheet shown in the (mock) drawing editor.";
+            return result;
+        }
+
+        var canvas = new RasterCanvas(crop.Width, crop.Height, Rgb.FromHex(0xD9D9D9));
+        double X(double sheetX) => mapping.SheetLeftPx + sheetX * scale - crop.Left;
+        double Y(double sheetY) => mapping.SheetTopPx + (sheetHeight - sheetY) * scale - crop.Top;
+        var ink = Rgb.FromHex(0x1F3B73);
+        canvas.FillRect(X(0), Y(sheetHeight), X(sheetWidth), Y(0), Rgb.FromHex(0xFEFEFB));
+        canvas.StrokeRect(X(0), Y(sheetHeight), X(sheetWidth), Y(0), ink);
+        foreach (var view in result.Views.Where(v => v.FrameMin != null && v.FrameMax != null))
+        {
+            canvas.StrokeRect(X(view.FrameMin!.X), Y(view.FrameMax!.Y), X(view.FrameMax.X), Y(view.FrameMin.Y), ink);
+            canvas.DrawText((int)X(view.FrameMin.X) + 4, (int)Y(view.FrameMax.Y) + 4,
+                view.Name + " 1:" + (view.Scale ?? 1), ink, scale >= 2 ? 2 : 1);
+        }
+        canvas.FillRect(0, 0, crop.Width, 22, Rgb.FromHex(0xC62828), 0.12);
+        canvas.DrawText(6, 3, "MOCK BACKEND: stand-in, not a Tekla drawing", Rgb.FromHex(0xC62828), 2);
+
+        result.Image = new RenderedImage
+        {
+            Bytes = PngEncoder.Encode(canvas),
+            MimeType = "image/png",
+            Width = canvas.Width,
+            Height = canvas.Height,
+        };
+        result.Width = canvas.Width;
+        result.Height = canvas.Height;
+        result.MimeType = "image/png";
+        result.Captured = true;
+        result.Settled = true;
+        result.Clipped = crop.Clipped;
+        result.ShownMin = crop.ShownMin;
+        result.ShownMax = crop.ShownMax;
+        result.PixelToSheet = DrawingCapturePlan.ImageMapping(mapping, sheetHeight, crop, canvas.Width);
+        foreach (var view in result.Views.Where(v => v.FrameMin != null && v.FrameMax != null))
+        {
+            view.Pixels = DrawingCapturePlan.ToImage(result.PixelToSheet, canvas.Width, canvas.Height, view.FrameMin!, view.FrameMax!);
+            view.OnPicture = view.Pixels != null;
+        }
+        if (crop.Clipped)
+            result.Warnings.Add("Part of the requested " + result.Scope + " lies outside the sheet shown in the (mock) editor.");
+        result.Warnings.Add("Mock backend: a stand-in drawn from the mock drawing's sheet size and view frames, not a capture " +
+                            "of Tekla's drawing editor; no drawing content (parts, dimensions, marks) is shown.");
+        if (!string.IsNullOrWhiteSpace(request.Format) && !Eq(request.Format.Trim(), "png"))
+            result.Warnings.Add("Mock backend always returns PNG.");
+        return result;
+    }
+
     private SchematicItem? ToSchematicItem(ModelObjectInfo obj)
     {
         var item = new SchematicItem

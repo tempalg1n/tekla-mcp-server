@@ -129,6 +129,19 @@ public class WriteOutcomeTests : IDisposable
         Assert.False(ModelPaths.Same(expected, actual));
     }
 
+    [Theory]
+    [InlineData("3155_Model_V3.db1", @"V:\3155\3155_Model_V3", true)]
+    [InlineData("3219_Model", @"V:\3219\3219_Model", true)]
+    [InlineData(".db1", "", false)]       // issue #25 §8: model closed, Tekla still running
+    [InlineData("", "", false)]
+    [InlineData(".db1", @"V:\3155", false)]
+    [InlineData("Model.db1", "  ", false)]
+    public void Closed_model_is_not_an_open_one(string name, string path, bool open)
+    {
+        Assert.Equal(open, ModelPaths.IsOpenModel(name, path));
+        if (!open) Assert.Contains("no model is open", ModelPaths.NoOpenModelMessage(name, path));
+    }
+
     // ------------------------------------------------- bulk UDA import runner ----
 
     private readonly string _root =
@@ -217,6 +230,8 @@ public class WriteOutcomeTests : IDisposable
         public UdaImportIdentity Describe(object handle) => new UdaImportIdentity { Guid = (string)handle, Type = "Beam" };
 
         public string? ReadUda(object handle, string name) => null;
+
+        public string? CheckValue(string name, string value) => null;
 
         public int WriteUdas(object handle, IReadOnlyList<KeyValuePair<string, string>> values)
         {

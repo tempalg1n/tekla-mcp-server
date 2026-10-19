@@ -17,6 +17,7 @@ their findings stay here because the open remainder builds on them.
 | 7 | Found after the first write-up | Fixes shipped. **Open:** AutoFetch snapshot cost, `GetAllObjectsWithType(Type[])` timing, partial version-mismatch recovery |
 | 8 | `tekla_analyze_by_material` is an unpaged whole-model scan | **Open** (found in the v0.8.0 release review) |
 | 9 | `tekla_export_drawings_pdf` writes outside the file allow-list | **By design** (user's responsibility, warned); opt-in restriction possible later |
+| 10 | Read-only mode: what it leaves out, how far its guard reaches | Shipped (annotations, `TEKLA_MCP_READ_ONLY`, `TEKLA_MCP_TOOLSETS`). **Open:** read-only scripting, a read-only view capture, the guard at the backend boundary |
 
 The per-API verification ledger and the full list of live runs still pending are in
 [docs/tekla-api-notes.md](tekla-api-notes.md) ("Live validation still pending").
@@ -311,3 +312,95 @@ Mitigated by preview-by-default, `overwrite=false` by default, a warning in the 
 **If it ever needs tightening:** an opt-in variable (e.g. `TEKLA_MCP_PDF_ROOT`) that routes the
 resolved paths through `FilePathPolicy` with `.pdf` allowed, and/or refusing `overwrite=true` for
 an existing file whose extension is not `.pdf`. Both are tool/backend-local; no interface change.
+
+---
+
+## Deferred in the v0.9.0 issue review (2026-10-16)
+
+v0.9.0 took #21, #22, #23, #26, #27, #28, #30, #32, #33, #25 §8, from the second batch the same
+day #34–#41, and #31 (merged into the release on 2026-10-19). Deferred, most valuable first:
+
+- **#20 — reconnect when a Tekla 2021 restart changes the Model channel** (`Model-Console:` ↔
+  `Model-:`). Same work as §2 (instance selection): a changed channel may be another Tekla, so the
+  reconnect must map channels to PIDs/models before adopting one. Do both together, with the
+  restart acceptance from §1 on Tekla 2021.
+- **#31 follow-ups — `tekla_capture_drawing`** (shipped after the review, live-verified on Tekla
+  2021 only). Check the drawing window's title and the drawn sheet edge on 2022–2026 and display
+  scaling above 100 % (a sheet partly off screen is refused, verified on 2021). If the sheet edge is not
+  drawn on some version, the issue's fallback remains: print the open drawing to a temporary PDF
+  and rasterize it (PrintWindow itself works, so it is not needed on 2021).
+- **#25 §2 — numbering-audit export** (native `PartNumber`/`AssemblyNumber` prefix/start number,
+  `PART_POS`, owner/main/parent assembly identities, manifest with counts/hash) — extend
+  `tekla_export_parts_file` fields; pairs with `tekla_get_numbering_status`.
+- **#29 — writing `.vi`/`.vi.filter`/`.vi.npfilter` files.** cp1251 with raw UTF-8 islands, writes
+  into the model's `attributes` folder (outside `FilePathPolicy`), and Tekla caches filters by name
+  (see "View placement and view attribute files" in `docs/tekla-api-notes.md`).
+- **#24 — Organizer.** Research first: read exported `.propertytemplate`/`.category` XML; no
+  public API is confirmed.
+- **#25 rest** — component inspection and grouped inputs (§1), reference-model inventory (§3), base
+  points and ProjectInfo UDAs (§4), bolt/weld details (§5), drawing revisions (§6), operation
+  receipts (§7), modelling requests (§9).
+- **Option-list UDAs** (#21 follow-up): raw stored index vs displayed label via
+  `UserPropertyItem.GetOptions`.
+- **Drawing follow-ups from #33/#37/#38/#41:** a frame computed from visible content only (today a
+  warning when hidden marks are in the view); a default `leaderStart` = the nearest point of the
+  part inside the view's restriction box; a helper that keeps one visible mark per part position and
+  hides the rest; an optional `save=true` on drawing write tools; a part's centre line in view
+  coordinates.
+- **#29 filter detail:** a ContourPlate's view-filter `PROFILE` is only the thickness (`PL6`), not
+  `PL6*240` — a future `.vi.filter` writer should warn or offer "thickness + class".
+- **Smaller requests from the same issues, not taken:** a radius dimension from centre + radius +
+  angular range (#27; the tool description points to the curve tool's exact points instead);
+  `WeldMark` content (#32); creating a GA view "like" an existing one by copying its
+  `ViewAttributes` (#33); label elements such as `NAME`/`SCALE` instead of fixed text (#35, read
+  side only today); mark `contentElements` with property names (#37, text or copied content today);
+  leader start and placing type of marks in `tekla_list_drawing_objects` (#38).
+
+### Found in the v0.9.0 live write test (Tekla 2021, 2026-10-19)
+
+The release-blocking ones were fixed before the release (CHANGELOG `[0.9.0]` Fixed). Left:
+
+- `tekla_get_active_drawing` answers an empty text when no drawing is open; say so instead.
+- `tekla_create_drawing` echoes the attribute file's drawing name, not the `name` it stored.
+- `tekla_list_drawing_objects` has no points for `RadiusDimension`, `DetailMark` and `SectionMark`,
+  and a created mark's row has an empty `modelGuid` (the listing resolves it).
+- `renameMark` cannot find the mark of a section created through the API (Tekla names it `"1"`);
+  `tekla_create_section_view` could name the mark like the view.
+- `tekla_set_udas_by_filter` has no `guidIn`, `udaName` or `useSelection`, unlike `tekla_delete_objects`.
+- `tekla_get_model_summary` took 85 s on the 443k-object model — past the client's ~60 s; it
+  needs the cursor/`maxObjects` contract of the other scans.
+- An outcome of `planned` for a preview whose only item is refused (radius preview with collinear
+  points, a section with zero depths): `not_written` would say it better.
+
+---
+
+## Tool annotations and read-only mode (2026-10-16)
+
+### 10. What read-only mode leaves out, and how far its guard reaches
+
+Annotations, `TEKLA_MCP_READ_ONLY` and `TEKLA_MCP_TOOLSETS` shipped together (v0.9.0). Verified: the MCP smoke (default, read-only and `drawings` launches) and the unit
+tests in `ToolExposureTests`; not run against live Tekla, and no MCP client's approval UX was
+checked against the new hints.
+
+Deliberately left out, each a candidate if operators ask:
+
+- **Read-only scripting.** `tekla_run_csharp` is hidden in read-only mode and refuses every run,
+  because `ScriptPolicy` decides "mutating" syntactically and is allowed false negatives. Offering
+  scripts there needs a stronger guarantee first (e.g. a run-time proxy that rejects
+  `Insert`/`Modify`/`Delete`/`CommitChanges`), not just `allowMutations=false`.
+- **`tekla_capture_view` without targets** is a pure read, but the tool can zoom, rotate and
+  highlight, so it is annotated as a writer and hidden. A separate read-only tool (no
+  `guids`/`direction`/`useSelection`) could be served in read-only mode.
+- **`tekla_report_gap`** appends to `%LOCALAPPDATA%\TeklaMcp\capability-requests.log` and is
+  therefore hidden too; the instructions tell the agent to describe the gap to the user instead. A
+  variant that returns the draft without logging would be read-only.
+- **`Title` annotations** are not set; clients fall back to the tool name.
+
+**How far the runtime guard reaches.** `ServerMode.ThrowIfReadOnly` sits in
+`ToolHelpers.ResolveTarget` (every `Write(...)` wrapper), in `tekla_run_csharp` and in the six
+tools that act outside the wrappers. It is not at the backend boundary: a future tool that calls a
+mutating `ITeklaModelService` member directly, bypasses the wrapper (already a bug per AGENTS.md)
+AND is annotated `ReadOnly = true` would still write. A decorator over `ITeklaModelService` that
+refuses the mutating members in read-only mode would close that, at the price of forwarding the
+whole interface. The guard is also not exercised end to end: in read-only mode no registered tool
+reaches it, so it is covered by code review, not by the smoke.

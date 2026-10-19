@@ -438,6 +438,9 @@ public sealed partial class TeklaModelService
         public string? ReadUda(object handle, string name) =>
             TryGetUserPropertyAsString((TSM.ModelObject)handle, name, out var value) ? value : null;
 
+        public string? CheckValue(string name, string value) =>
+            UdaValues.TryConvertForWrite(UdaKindOf(name), name, value, out _, out var error) ? null : error;
+
         public int WriteUdas(object handle, IReadOnlyList<KeyValuePair<string, string>> values)
         {
             var mo = (TSM.ModelObject)handle;

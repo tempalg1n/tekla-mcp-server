@@ -149,6 +149,31 @@ public static class CurveMath
         return warnings;
     }
 
+    /// <summary>
+    /// The arc of a curved <c>Beam</c> (issue #30) from the vertices of its segmented centerline
+    /// (<c>Part.GetCenterLine</c>: an inscribed polyline whose vertices lie ON the arc — verified
+    /// live on Tekla 2021, model 3155). The circle through the first, middle and last vertex is
+    /// exact; every other vertex must lie on it, else this is not one arc and the result is null.
+    /// <paramref name="reportedRadius"/> (the RADIUS report property, signed) is a cross-check
+    /// only: it belongs to the reference line, which an in-plane part offset moves.
+    /// </summary>
+    public static CurveSegmentInfo? ArcFromCenterlineVertices(
+        IReadOnlyList<Point3D> vertices, double? reportedRadius, List<string> warnings)
+    {
+        if (vertices == null || vertices.Count < 3) return null;
+        var arc = Arc(vertices[0], vertices[vertices.Count / 2], vertices[vertices.Count - 1]);
+        if (arc?.Center == null || !arc.Radius.HasValue) return null;
+
+        var radius = arc.Radius.Value;
+        var offCircle = vertices.Max(v => Math.Abs(Distance(v, arc.Center) - radius));
+        if (offCircle > Math.Max(0.5, 1e-4 * radius)) return null;
+
+        if (reportedRadius.HasValue && Math.Abs(Math.Abs(reportedRadius.Value) - radius) > 0.5)
+            warnings.Add(Invariant(
+                $"The centerline radius is {radius:0.###} mm but RADIUS reports {Math.Abs(reportedRadius.Value):0.###} mm: the part is offset from its reference line in the curve plane. The arcs here are the centerline."));
+        return arc;
+    }
+
     // ---------------------------------------------------------------- bends ----
 
     /// <summary>
