@@ -163,22 +163,52 @@ start the server read-only or with fewer toolsets. Four tools added (120 in tota
   parts and marks carry only the model ID on Tekla 2021, so `modelGuid` came back empty and a
   `modelGuid` filter in `tekla_list_drawing_objects` never matched. Listed rows now get their GUID
   from the model, and the filter matches by the resolved model ID.
+- **One detail mark emptied the whole drawing listing** (found in the live write test, Tekla 2021;
+  present since v0.7.0). With drawing AutoFetch on, `View.GetObjects()` itself throws the
+  `SerializationException` of a `DetailMark`, and the listing swallowed it: after a standalone
+  callout (or in any view with a detail view's mark), `tekla_list_drawing_objects` answered `[]` for
+  every query, and modify, delete, `keepMarkOffsets` and `renameMark` found nothing. Such a view is
+  now read again without AutoFetch, the detail mark included, and a drawing that cannot be read is
+  a tool error instead of an empty list.
+- **`includeModelGeometry` filters ran after the limit** ([#38](https://github.com/tempalg1n/tekla-mcp-server/issues/38)):
+  the first `limit` parts of a view were taken and then filtered, so `profileContains=I36M` found
+  none of the 17 monorails in a view of 419 parts. `nameContains`, `profileContains`, `zRange` and
+  `region` now run before the limit, and a part's solid is read only when its name and profile match.
+- **`keepLabel` did not keep the label** ([#28](https://github.com/tempalg1n/tekla-mcp-server/issues/28),
+  [#34](https://github.com/tempalg1n/tekla-mcp-server/issues/34)): `LoadAttributes` rewrites the label
+  object it holds in place, so the label "kept" before the load was already the file's. The file is
+  loaded into new view attributes now, and the label, scale and label position come from the view's.
+- **View and mark edits answered with the state before the edit**: `tekla_modify_drawing_view`
+  returned the old scale/label/name and `tekla_modify_drawing_objects` the old mark text. Both read
+  the edited objects back after the commit now.
+- **Radius-dimension previews** ([#27](https://github.com/tempalg1n/tekla-mcp-server/issues/27)) say
+  that points 1 and 3 will be swapped and refuse collinear points (view/sheet coordinates), as apply does.
+- **`guidIn` scanned the whole model**: `tekla_delete_objects` with one GUID took ~60 s on a
+  443k-object model — past the MCP client's timeout, so the delete happened and its answer was lost.
+  Objects named by `guidIn` are selected directly now (0.1 s); this also speeds up
+  `tekla_select_objects`, `tekla_swap_handles` and the other tools that take `guidIn`.
+- **A write by filter with no filter at all is refused** (`tekla_delete_objects`,
+  `tekla_set_udas_by_filter`, `tekla_swap_handles`). MCP clients drop arguments a tool does not
+  declare, so a misspelled filter left an empty query, and the write would have gone to the first
+  `limit` objects of the whole model (a `tekla_set_udas_by_filter` preview with an undeclared
+  `guidIn` listed 200 objects, control points included). Pass a filter or `useSelection=true`.
 - The net48 server build compiles without warnings again (CS8602 in `DrawingToolHelpers`).
 
 ### Known limitations
 
-- Not run live as tools yet (the recipes they follow were run live by script): every drawing write
-  of this release — frame placement, attribute files on views and sections, labels and mark
-  renames, standalone marks, custom marks, mark offsets on rescale, dimension placing — the
-  verification of `tekla_modify_parts` against a real refusal, the typed UDA writes, and the
-  distance units of radius, curved and angle dimensions (passed unchanged; angle and curved are
-  documented as paper mm, radius is undocumented). Run live and read-only on Tekla 2021 with this
-  build (model 3155, an open GA drawing): typed UDA reads, the numbering status, curved Beams,
-  `modelOpen`, a script run by `checkId` with `GetType().Name`, view frames and labels, mark
-  contents and empty marks, dimension sets in both units, part geometry in view coordinates, and the
-  model GUIDs of drawing objects.
-- Renaming a detail view's mark can miss it: detail marks do not always enumerate on Tekla 2021, and
-  the mark is found by its name (the Open API has no mark ↔ view link).
+- Run live on Tekla 2021 only (a test copy of model 3155, 2026-10-19): a new GA drawing, a plan placed
+  by frame, a section with an attribute file and depths, straight (paper mm, fixed) and radius
+  (swapped points) dimensions, custom and copied marks, standalone detail and section marks, mark
+  edits, attribute files on views (label kept, filters applied, a file name with a leading space),
+  labels, rescale with mark offsets, save; `tekla_modify_parts` verification, typed UDA writes and
+  the file import, deletes by GUID. Not run live: any of it on 2022–2026, detail views, angle and
+  curved dimensions (distances passed unchanged; documented as paper mm), and `tekla_modify_parts`
+  against a part where `Modify()` succeeds but a field does not change (an unknown profile was
+  refused by `Modify()` and reported as `not_written`).
+- `renameMark` finds the section/detail mark by the view's old name: a section created through the
+  API gets a mark named by Tekla (`"1"`), which is not found (a warning says so); detail marks may
+  also not be readable on some versions.
+- `unsavedMcpWrites` counts the writes of the running server process; a restarted server starts at 0.
 - Option-list UDAs are returned as their raw stored numbers, not their displayed labels.
 - `tekla_capture_drawing` is live-verified on Tekla 2021 only (one A2 GA sheet: as opened, zoomed out,
   zoomed in). The drawing window's title and the drawn sheet edge on 2022–2026 are untested.

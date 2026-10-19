@@ -349,6 +349,28 @@ day #34–#41, and #31 (merged into the release on 2026-10-19). Deferred, most v
   coordinates.
 - **#29 filter detail:** a ContourPlate's view-filter `PROFILE` is only the thickness (`PL6`), not
   `PL6*240` — a future `.vi.filter` writer should warn or offer "thickness + class".
+- **Smaller requests from the same issues, not taken:** a radius dimension from centre + radius +
+  angular range (#27; the tool description points to the curve tool's exact points instead);
+  `WeldMark` content (#32); creating a GA view "like" an existing one by copying its
+  `ViewAttributes` (#33); label elements such as `NAME`/`SCALE` instead of fixed text (#35, read
+  side only today); mark `contentElements` with property names (#37, text or copied content today);
+  leader start and placing type of marks in `tekla_list_drawing_objects` (#38).
+
+### Found in the v0.9.0 live write test (Tekla 2021, 2026-10-19)
+
+The release-blocking ones were fixed before the release (CHANGELOG `[0.9.0]` Fixed). Left:
+
+- `tekla_get_active_drawing` answers an empty text when no drawing is open; say so instead.
+- `tekla_create_drawing` echoes the attribute file's drawing name, not the `name` it stored.
+- `tekla_list_drawing_objects` has no points for `RadiusDimension`, `DetailMark` and `SectionMark`,
+  and a created mark's row has an empty `modelGuid` (the listing resolves it).
+- `renameMark` cannot find the mark of a section created through the API (Tekla names it `"1"`);
+  `tekla_create_section_view` could name the mark like the view.
+- `tekla_set_udas_by_filter` has no `guidIn`, `udaName` or `useSelection`, unlike `tekla_delete_objects`.
+- `tekla_get_model_summary` took 85 s on the 443k-object model — past the client's ~60 s; it
+  needs the cursor/`maxObjects` contract of the other scans.
+- An outcome of `planned` for a preview whose only item is refused (radius preview with collinear
+  points, a section with zero depths): `not_written` would say it better.
 
 ---
 
